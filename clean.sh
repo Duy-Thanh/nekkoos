@@ -1,0 +1,11 @@
+rm -rf *.exe
+rm -rf *.obj
+rm -rf *.map
+rm -rf *.efi
+rm -rf *.img
+rm -rf *.bin
+rm -rf *.o
+rm -rf *.pdb
+rm -rf *.mui
+rm -rf *.lib
+rm -rf *.log

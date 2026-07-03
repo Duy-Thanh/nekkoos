@@ -1,0 +1,36 @@
+# Ép dùng QEMU thay vì VZ (vì Monterey không hỗ trợ VZ tốt)
+vmType: "qemu"
+
+# Ép toàn bộ VM dùng reverse-sshfs (Đây là chỗ limactl 2.1.1 yêu cầu)
+# mountType: "reverse-sshfs"
+
+images:
+- location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+
+# Cấu hình tài nguyên (mày có thể chỉnh lại cho hợp máy)
+cpus: 2
+memory: "2GiB"
+
+# Mount thư mục home của mày vào VM
+# mounts:
+# - location: "/Users/nekkochan"
+#   writable: true
+
+# Tự động cài NASM và tool cho mày luôn
+provision:
+- mode: system
+  script: |
+    apt-get update
+    apt-get install -y build-essential nasm wget gcc make
+
+- mode: user
+  script: |
+    cd ~
+    if [ ! -f ~/bflat.tar.gz ]; then
+      wget https://github.com/bflattened/bflat/releases/download/v10.0.0-rc.1/bflat-10.0.0-rc.1-linux-glibc-x64.tar.gz -O ~/bflat.tar.gz
+    fi
+    mkdir -p ~/bflat
+    tar -xvf ~/bflat.tar.gz -C ~/bflat
+
+    sudo ln -sf ~/bflat/bflat /usr/local/bin/bflat

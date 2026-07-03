@@ -1,0 +1,10 @@
+$b = [System.IO.File]::ReadAllBytes('d:\os\Kernel.exe')
+$elf = [BitConverter]::ToInt32($b, 0x3C)
+$ib = [BitConverter]::ToUInt64($b, $elf + 0x30)
+$si = [BitConverter]::ToUInt32($b, $elf + 0x50)
+$ep = [BitConverter]::ToUInt32($b, $elf + 0x28)
+Write-Host "ImageBase = 0x$($ib.ToString('X16'))"
+Write-Host "SizeOfImage = 0x$($si.ToString('X8'))"
+Write-Host "EntryRVA = 0x$($ep.ToString('X8'))"
+Write-Host "KernelEnd = 0x$(($ib+$si).ToString('X16'))"
+Write-Host "EntryAbs = 0x$(($ib+$ep).ToString('X16'))"
