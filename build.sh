@@ -13,9 +13,9 @@ echo "[1.5/4] Dang build Kernel (Vi vua) & Apps Ring 3 truoc..."
 
 nasm -f win64 src/Hardware.asm -o Hardware.obj
 nasm -f win64 src/boot_io.asm -o boot_io.obj
-nasm -f bin src/app.asm -o app.bin
+# nasm -f bin src/app.asm -o app.bin
 nasm -f bin src/smp_x86.asm -o smp.bin
-nasm -f win64 src/app_syscall.asm -o app_syscall.obj
+# nasm -f win64 src/app_syscall.asm -o app_syscall.obj
 
 BF="bflat"
 
