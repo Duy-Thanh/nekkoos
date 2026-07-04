@@ -172,7 +172,6 @@ public static unsafe class InterruptHandlers
             // Active=4 = Zombie: Slot bị khóa cho đến khi SwitchTask lần tiếp xử lý.
             // ==========================================================
             Scheduler.Threads[id].Active = 4; // ZOMBIE!
-            Scheduler.DyingThreadPerCore[coreId] = id;
             
             StoreFence(); 
             
@@ -260,7 +259,6 @@ public static unsafe class InterruptHandlers
             VMM.LoadPML4_ASM((void*)VMM.PML4);
             
             Scheduler.Threads[id].Active = 4; // Biến thành ZOMBIE an toàn
-            Scheduler.DyingThreadPerCore[coreId] = id;
             
             StoreFence(); 
             Scheduler.ReleaseSchedLockSafe(irq);
@@ -350,15 +348,14 @@ public static unsafe class InterruptHandlers
             
             // [FIX CHÍ MẠNG] DÙNG CƠ CHẾ ZOMBIE! (Active=4)
             Scheduler.Threads[id].Active = 4; // ZOMBIE!
-            Scheduler.DyingThreadPerCore[coreId] = id;
             
             StoreFence(); 
             
             Scheduler.ReleaseSchedLockSafe(irq);
 
-            // [FIX CHÍ MẠNG] CẤM NGẮT TRƯỚC DESTROY ĐỂ TRÁNH PREEMPTION!
-            IO.DisableInterrupts();
-            VMM.DestroyUserSpace(dyingPml4);
+            // [FIX CHÍ MẠNG] CẤM GỌI DestroyUserSpace() TRONG INTERRUPT CONTEXT!
+            // dyingPml4 là physical address, không thể dereferencing trực tiếp
+            // để tránh free garbage addresses. Zombie mechanism sẽ xử lý cleanup ở SwitchTask.
 
             return Scheduler.SwitchTask(currentRsp); 
         }

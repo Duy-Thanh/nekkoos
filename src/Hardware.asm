@@ -741,10 +741,11 @@ IsrSyscall:
     sub rsp, 32
 
     cld                     
-    call SyscallHandler
+    call SyscallHandler     ; Returns ulong: new RSP (SwitchTask result or currentRsp)
     
     mov rsp, rbp
     pop rbp
+    mov rsp, rax            ; Switch stack to returned RSP (like IsrTimer/IsrYield)
 
     pop r15
     pop r14

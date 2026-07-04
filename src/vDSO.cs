@@ -138,6 +138,14 @@ public static unsafe class vDSO
         Table[FuncIndex++] = 512 + (ulong)(Code - (PhysPage + 512));
         Code[0]=0x89; Code[1]=0xD0; Code[2]=0x66; Code[3]=0x8B; Code[4]=0xD1; Code[5]=0xEF; Code[6]=0xC3; Code += 7;
 
+        // ==========================================================
+        // [FIX RACE CONDITION ATA/SMP] Slot 34 & 35: KHÓA PHẦN CỨNG ATA DÙNG CHUNG!
+        // Cho phép ATA.EXE (Ring 3) và Kernel (Ring 0) loại trừ lẫn nhau khi
+        // đụng vào chung cổng IDE 0x1F0-0x1F7, chặn đứng data race gây GPF ngẫu nhiên.
+        // ==========================================================
+        AddSyscall(60); // Slot 34: SyscallAcquireAtaHw
+        AddSyscall(61); // Slot 35: SyscallReleaseAtaHw
+
         Terminal.SetColor(0x00FF00FF);
         fixed(char* m = "[+] vDSO Gateway forged in RAM! Absolute KASLR Ready.\n\0") Terminal.Print(m);
     }

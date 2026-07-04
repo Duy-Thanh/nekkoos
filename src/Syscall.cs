@@ -38,14 +38,38 @@ public static unsafe class Syscall
     }
 
     [UnmanagedCallersOnly(EntryPoint = "SyscallHandler")]
-    public static void SyscallHandler(RegisterContext* ctx)
+    public static ulong SyscallHandler(ulong currentRsp)
     {
         // [FIX CHÍ MẠNG VŨ TRỤ] CẤM TUYỆT ĐỐI BẬT NGẮT Ở ĐÂY!
         // Nếu bật ngắt, Timer sẽ nã Context Switch giữa lúc đang thao tác Page Table,
         // ReadCR3() sẽ trả về PML4 của thằng khác → GHI BỘ NHỚ VÀO TIẾN TRÌNH SAI → KERNEL PANIC!
-        // Chỉ bật ngắt CỤC BỘ cho từng Syscall cần Yield/Sleep!
+        //
+        // ==========================================================
+        // [FIX CHÍ MẠNG NGẮT LỒNG - NGUỒN GỐC GPF "THOẮT ẨN THOẮT HIỆN"]
+        // TUYỆT ĐỐI CẤM gọi Scheduler.Yield() (dùng "int 0x81") TỪ BÊN TRONG
+        // hàm này! SyscallHandler đang chạy TRONG NGẮT "int 0x80" (Ring3->Ring0),
+        // nên CPU đã đẩy đủ Frame 5-word (RIP/CS/RFLAGS/RSP/SS) lên Stack.
+        // Nếu gọi Yield() ở đây, nó tạo ra một NGẮT MỀM LỒNG bên trong ngắt
+        // hiện tại. Vì lúc này đã ở Ring 0 rồi (không đổi quyền), CPU chỉ đẩy
+        // Frame CỤT 3-word (RIP/CS=0x08/RFLAGS) cho ngắt lồng đó - KHÔNG có
+        // RSP/SS! SwitchTask() lại đi lưu Rsp của Thread NÀY (vốn dĩ là App
+        // Ring 3!) trúng ngay cái Frame cụt CS=0x08 (Ring 0) đó. Khi Scheduler
+        // sau này phục hồi lại Thread này, IRETQ đọc CS=0x08 -> tưởng vẫn
+        // Ring0->Ring0 -> KHÔNG phục hồi RSP/SS thật -> Stack lệch -> IRETQ
+        // nạp CS rác từ Stack sai vị trí -> #GP FAULT ngay tại chính IRETQ!
+        // Đã verify bằng cách disassemble Kernel.exe: RIP crash luôn lệch
+        // đúng offset cố định trước "Kernel Text Address" - trúng phóc lệnh
+        // iretq cuối IsrYield, bất kể KASLR đổi base mỗi lần boot.
+        //
+        // THAY VÀO ĐÓ: IsrSyscall bây giờ dùng "mov rsp, rax" (giống IsrTimer),
+        // nên SyscallHandler có thể gọi Scheduler.SwitchTask(currentRsp) TRỰC TIẾP
+        // và trả về RSP mới. Cơ chế CONTEXT SWITCH NGAY TRONG SYSCALL HANDLER,
+        // KHÔNG cần nested interrupt, KHÔNG spin CPU vô tận!
+        // ==========================================================
 
-        if (ctx == null) return;
+        RegisterContext* ctx = (RegisterContext*)currentRsp;
+
+        if (currentRsp == 0 || currentRsp < 0x1000) return currentRsp;
 
         ulong syscallId = ctx->Rax;
         int id = Scheduler.CurrentThreadId;
@@ -65,24 +89,23 @@ public static unsafe class Syscall
 
         // Validate scheduler/thread table before touching it
         if (Scheduler.Threads == null || id < 0 || id >= Scheduler.ThreadCount) {
-            ctx->Rax = 0; return;
+            ctx->Rax = 0; return currentRsp;
         }
 
         bool isKing = (Scheduler.Threads[id].UID == 0);
 
         if (Scheduler.Threads[id].IsJailed == 1 && Scheduler.Threads[id].IsPhantomDead == 1)
         {
-            if (syscallId == 0) { Scheduler.TerminateCurrentTask(); return; }
-            if (syscallId == 6 || syscallId == 99) { ctx->Rax = (0x0000DEADBEEF0000 | 0x0000FEEBDEAD0000); return; }
-            Scheduler.Yield(); 
+            if (syscallId == 0) { Scheduler.TerminateCurrentTask(); return currentRsp; }
+            if (syscallId == 6 || syscallId == 99) { ctx->Rax = (0x0000DEADBEEF0000 | 0x0000FEEBDEAD0000); return currentRsp; }
             ctx->Rax = 1; 
-            return;
+            return Scheduler.SwitchTask(currentRsp);
         }
 
         if (Scheduler.Threads[id].IsJailed == 1)
         {
-            if (syscallId == 7 || syscallId == 91 || syscallId == 93) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; return; }
-            if (syscallId == 6 && ctx->Rcx > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = (0x0000DEADBEEF0000 & 0x0000FEEBDEAD0000); return; }
+            if (syscallId == 7 || syscallId == 91 || syscallId == 93) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; return currentRsp; }
+            if (syscallId == 6 && ctx->Rcx > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = (0x0000DEADBEEF0000 & 0x0000FEEBDEAD0000); return currentRsp; }
         }
 
         ulong currentTicks = Scheduler.SystemTicks;
@@ -167,10 +190,10 @@ public static unsafe class Syscall
                 Scheduler.Threads[id].Active = 2; 
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                IO.EnableInterrupts(); // [FIX] Bật ngắt CỤC BỘ trước khi Yield!
-                Scheduler.Yield(); 
+                // Gọi SwitchTask trực tiếp — IsrSyscall dùng mov rsp,rax để
+                // nhảy sang thread mới ngay lập tức, không spin CPU vô tận.
                 ctx->Rax = 0; 
-                break;
+                return Scheduler.SwitchTask(currentRsp);
             }
             
             // [SYSCALL 5]: GỬI TIN NHẮN IPC (Send IPC)
@@ -192,8 +215,8 @@ public static unsafe class Syscall
                 Scheduler.Threads[receiverId].VRuntime = Scheduler.Threads[id].VRuntime;
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                IO.EnableInterrupts(); // [FIX] Bật ngắt CỤC BỘ trước khi Yield!
-                Scheduler.Yield(); 
+                // [FIX CHÍ MẠNG NGẮT LỒNG] Bỏ Scheduler.Yield() lồng - xem giải
+                // thích ở đầu hàm SyscallHandler. Timer Interrupt tự lo liệu.
                 ctx->Rax = 1; break;
             }
 
@@ -647,22 +670,20 @@ public static unsafe class Syscall
                 Scheduler.Threads[id].WakeUpTick = currentTicks + ticksToSleep;
                 Scheduler.Threads[id].Active = 2; 
                 Scheduler.ReleaseSchedLockSafe(irq);
-                IO.EnableInterrupts(); // [FIX] Bật ngắt CỤC BỘ trước khi Yield!
-                Scheduler.Yield(); ctx->Rax = 1; break;
+                // Context switch ngay — không spin CPU đợi timer.
+                ctx->Rax = 1;
+                return Scheduler.SwitchTask(currentRsp);
             }
 
             // [SYSCALL 98]: ĐẦU HÀNG TẠM THỜI (Pure Yield)
             case 98: 
             {
                 bool irq = Scheduler.AcquireSchedLockSafe();
-                Scheduler.Threads[id].VRuntime += 1000; 
-                Scheduler.Threads[id].Active = 1; 
+                Scheduler.Threads[id].VRuntime += 1000; // Đẩy VRuntime để không bị chọn lại ngay
                 Scheduler.ReleaseSchedLockSafe(irq);
-
-                IO.EnableInterrupts(); // [FIX] Bật ngắt CỤC BỘ trước khi Yield!
-                Scheduler.Yield(); 
-                ctx->Rax = 1; 
-                break;
+                // Context switch ngay — thread tiếp tục khi được lên lịch lại.
+                ctx->Rax = 1;
+                return Scheduler.SwitchTask(currentRsp);
             }
 
             // [SYSCALL 99]: XIN VÀO KHU TỰ TRỊ (Global Shared Memory)
@@ -748,18 +769,13 @@ public static unsafe class Syscall
                 // Thay vì ngủ cứng hay ngủ vô thời hạn, ta dùng cơ chế ngủ nhịp ngắn 
                 // giúp giữ luồng ở trạng thái Chờ thực sự, ép KernelIdleLoop phải HLT lâu hơn.
                 Scheduler.Threads[id].Active = 2; // CHỜ NGẮT / IPC
-                
-                // Để + 2 hoặc + 3 Ticks là con số GIẢI NHIỆT VÀNG, vừa đủ để diệt bão lặp Kernel 
-                // nhưng đủ nhanh để không bao giờ bị cảm giác đứng hình!
                 Scheduler.Threads[id].WakeUpTick = currentTicks + 2; 
 
                 Scheduler.ReleaseSchedLockSafe(irq);
 
-                IO.EnableInterrupts(); // Bật ngắt cục bộ
-                Scheduler.Yield();     // Nhường sân!
-                
-                ctx->Rax = 1; 
-                break;
+                // Context switch ngay — không spin CPU vô tận chờ IPC.
+                ctx->Rax = 1;
+                return Scheduler.SwitchTask(currentRsp);
             }
 
             // [SYSCALL 101] CẦU ÁNH SÁNG (SECURE SHARED MEMORY PIPELINE)
@@ -811,11 +827,35 @@ public static unsafe class Syscall
                     VMM.LoadPML4_ASM((void*)myPml4);
                 } else {
                     // Unsafe to load other PML4 — fail the syscall rather than risk instability.
-                    ctx->Rax = 0; ctx->Rbx = 0; return;
+                    ctx->Rax = 0; ctx->Rbx = 0; return currentRsp;
                 }
 
                 ctx->Rax = myVAddr; 
                 ctx->Rbx = targetVAddr; 
+                break;
+            }
+
+            // [SYSCALL 60] KHÓA PHẦN CỨNG ATA DÙNG CHUNG (Ring0 <-> Ring3)
+            // ==========================================================
+            // [FIX RACE CONDITION ATA/SMP] Trước khi ATA.EXE (Ring 3) chạm vào
+            // các cổng IDE thô (0x1F0-0x1F7), nó BẮT BUỘC phải xin khóa này.
+            // Khóa dùng CHUNG với ATA.AtaHardwareLock mà Kernel (Ring 0) đã
+            // dùng cho đường fallback raw driver lúc boot (đọc ATA.EXE/FAT16.EXE/
+            // MOUSE.EXE). Nếu không có khóa này, 2 lõi CPU có thể cùng lúc
+            // đụng vào chung bộ thanh ghi IDE -> dữ liệu đọc đĩa bị rác ngẫu nhiên
+            // -> GPF / Page Fault / "file not found" thoắt ẩn thoắt hiện.
+            case 60:
+            {
+                Driver.ATA.AtaHardwareLock.Acquire();
+                ctx->Rax = 1;
+                break;
+            }
+
+            // [SYSCALL 61] MỞ KHÓA PHẦN CỨNG ATA DÙNG CHUNG
+            case 61:
+            {
+                Driver.ATA.AtaHardwareLock.Release();
+                ctx->Rax = 1;
                 break;
             }
 
@@ -839,5 +879,6 @@ public static unsafe class Syscall
                 break;
             }
         }
+        return currentRsp;
     }
 }

@@ -46,8 +46,13 @@ public unsafe class Program
         // Kiểm tra xem cổng 0x1F7 có khả dụng không
         if (!IsPortGranted(0x1F7)) return false;
         
+        // [FIX RACE CONDITION ATA/SMP] Khóa phần cứng trước khi đụng vào cổng IDE,
+        // vì Kernel (Ring 0) có thể vẫn đang đọc ATA.EXE/FAT16.EXE/MOUSE.EXE
+        // qua raw driver trên lõi CPU khác ngay lúc này!
+        SyscallAcquireAtaHw();
         // Đọc status register
         byte status = AppInByte(0x1F7);
+        SyscallReleaseAtaHw();
         
         // Kiểm tra xem ATA controller có phản hồi không
         return (status != 0xFF);
@@ -153,9 +158,14 @@ public unsafe class Program
                         continue;
                     }
 
+                    // [FIX RACE CONDITION ATA/SMP] Khóa toàn bộ giao dịch đọc đĩa TRƯỚC KHI
+                    // đụng vào bất kỳ cổng IDE nào, vì Kernel (Ring 0) có thể đang dùng chung
+                    // cổng này trên lõi CPU khác ngay lúc này.
+                    SyscallAcquireAtaHw();
+
                     AppOutByte(0x1F6, (byte)(0xE0 | ((lba >> 24) & 0x0F)));
-                    
-                    if (!WaitATA()) { SyscallSendIPC(clientId, 111, 0); continue; }
+
+                    if (!WaitATA()) { SyscallReleaseAtaHw(); SyscallSendIPC(clientId, 111, 0); continue; }
 
                     AppOutByte(0x1F2, 1);
                     AppOutByte(0x1F3, (byte)(lba & 0xFF));
@@ -186,9 +196,10 @@ public unsafe class Program
                         for (int i = 0; i < 256; i++) {
                             buffer16[i] = AppInWord(0x1F0);
                         }
+                        SyscallReleaseAtaHw();
                         SyscallSendIPC(clientId, 11, sharedBufferAddr); 
                     }
-                    else SyscallSendIPC(clientId, 111, 0); 
+                    else { SyscallReleaseAtaHw(); SyscallSendIPC(clientId, 111, 0); }
                 }
 
                 // ==========================================================
@@ -205,9 +216,13 @@ public unsafe class Program
                         continue;
                     }
 
+                    // [FIX RACE CONDITION ATA/SMP] Khóa toàn bộ giao dịch ghi đĩa TRƯỚC KHI
+                    // đụng vào bất kỳ cổng IDE nào.
+                    SyscallAcquireAtaHw();
+
                     AppOutByte(0x1F6, (byte)(0xE0 | ((lba >> 24) & 0x0F)));
-                    
-                    if (!WaitATA()) { SyscallSendIPC(clientId, 111, 0); continue; }
+
+                    if (!WaitATA()) { SyscallReleaseAtaHw(); SyscallSendIPC(clientId, 111, 0); continue; }
 
                     AppOutByte(0x1F2, 1);
                     AppOutByte(0x1F3, (byte)(lba & 0xFF));
@@ -236,6 +251,7 @@ public unsafe class Program
                             fixed(char* err = "[!] FATAL: Null ATA raw buffer in Read!\n\0") {
                                 SyscallPrint(err);
                             }
+                            SyscallReleaseAtaHw();
                             SyscallSendIPC(clientId, 111, 0);
                             continue;
                         }
@@ -263,6 +279,7 @@ public unsafe class Program
                         }
                     }
                     
+                    SyscallReleaseAtaHw();
                     if (!isError) SyscallSendIPC(clientId, 13, sharedBufferAddr); 
                     else SyscallSendIPC(clientId, 111, 0); 
                 }
@@ -270,6 +287,9 @@ public unsafe class Program
                 // LỆNH 14: XẢ BỘ NHỚ ĐỆM ĐỘC LẬP (FLUSH)
                 else if (msg.Type == 14) 
                 {
+                    // [FIX RACE CONDITION ATA/SMP] Khóa toàn bộ trước khi đụng cổng IDE.
+                    SyscallAcquireAtaHw();
+
                     AppOutByte(0x1F7, 0xE7); 
                     bool isError = false;
                     
@@ -286,6 +306,7 @@ public unsafe class Program
                         SyscallYieldApp(); 
                     }
                     
+                    SyscallReleaseAtaHw();
                     if (!isError) SyscallSendIPC(clientId, 15, 0); 
                     else SyscallSendIPC(clientId, 111, 0);
                 }

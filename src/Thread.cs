@@ -137,7 +137,22 @@ public static unsafe class Scheduler
         Threads[0].GID = 0;
         Threads[0].ParentId = 0;
         Threads[0].ExecutingOnCore = 0; 
-        Threads[0].Priority = 1; 
+        // ==========================================================
+        // [FIX CHÍ MẠNG RACE #5] THREAD 0 PHẢI LÀ IDLE-PINNED (Priority=99)!
+        // Thread 0 (KERNEL boot thread) chính là IdleThreadIds[0] - tức là
+        // Core 0 sẽ luôn fallback về nó khi rảnh. Nhưng trước đây nó bị gán
+        // Priority=1 (thường)! SwitchTask() có vòng "steal" chọn thread rảnh 
+        // nhất bất kỳ core nào (Active==1 && ExecutingOnCore==-1 && Priority!=99).
+        // Sau khi core 0 lưu Rsp của Thread 0 rồi set ExecutingOnCore=-1 (dòng
+        // "Threads[current].ExecutingOnCore = -1;" ngay dưới), Thread 0 sẽ 
+        // LỌT ĐIỀU KIỆN STEAL vì Priority=1 != 99! Core phụ (AP) hoàn toàn 
+        // có thể "cướp" chạy Thread 0 CÙNG LÚC với core 0 - HAI LÕI DÙNG CHUNG 
+        // MỘT KERNEL STACK ĐỒNG THỜI => tan nát toàn bộ ngữ cảnh (RAX/RSP/CS
+        // rác), gây GPF ngẫu nhiên y hệt triệu chứng "thoắt ẩn thoắt hiện"!
+        // Phải ép Priority=99 giống hệt mọi Idle Task khác để nó KHÔNG BAO GIỜ
+        // bị core khác cướp - chỉ dành riêng cho Core 0 dùng làm Idle Loop.
+        // ==========================================================
+        Threads[0].Priority = 99; 
         
         Threads[0].Name[0] = (byte)'K'; Threads[0].Name[1] = (byte)'E'; Threads[0].Name[2] = (byte)'R'; Threads[0].Name[3] = (byte)'N'; 
         Threads[0].Name[4] = (byte)'E'; Threads[0].Name[5] = (byte)'L'; Threads[0].Name[6] = 0;
@@ -199,9 +214,19 @@ public static unsafe class Scheduler
             return;
         }
 
-        // ulong rspValue = (ulong)kStackTop - 8; // Chuẩn ABI x86_64 cho hàm C#
+        // ==========================================================
+        // [FIX CHÍ MẠNG] SAI ABI ALIGNMENT! Trước đây mask thẳng
+        // rspValue về bội số 16 (rspValue &= ~0xFUL), nhưng KernelIdleLoop
+        // được nhảy vào bằng IRETQ (như 1 lệnh JMP trực tiếp), KHÔNG
+        // phải qua CALL! Hàm C# (bflat) luôn giả định RSP ≡ 8 (mod 16)
+        // ngay tại điểm entry (vì bình thường CALL đẩy thêm 8 byte địa
+        // chỉ trả về). Nếu thiếu offset -8 này, các lệnh dùng SSE aligned
+        // (movaps) bên trong hàm sẽ #GP ngay khi vừa nhảy vào KernelIdleLoop!
+        // Phải bắt chước đúng như CreateTask() đã làm: đẩy thêm 1 word rác
+        // để RSP lệch đúng 8 so với bội số 16, y hệt hành vi của CALL.
+        // ==========================================================
+        *(--kStackTop) = 0; 
         ulong rspValue = (ulong)kStackTop;
-        rspValue &= ~0xFUL; // Trảm sạch đuôi, ép về 16-byte aligned chuẩn chỉ!
         
         *(--kStackTop) = GetSS();
         *(--kStackTop) = rspValue;
@@ -249,8 +274,16 @@ public static unsafe class Scheduler
         }
         
         if (DyingThreadPerCore[coreId] != -1) {
-            Threads[DyingThreadPerCore[coreId]].Active = 0; 
+            int zombieId = DyingThreadPerCore[coreId];
+            ulong zombiePml4 = Threads[zombieId].Pml4;
+            Threads[zombieId].Active = 0;
             DyingThreadPerCore[coreId] = -1;
+
+            if (zombiePml4 != 0 && zombiePml4 != (ulong)VMM.PML4) {
+                UnlockScheduler();
+                VMM.DestroyUserSpace(zombiePml4);
+                LockScheduler();
+            }
         }
 
         int current = CurrentThreadIds[coreId];
@@ -598,16 +631,6 @@ public static unsafe class Scheduler
             Threads[id].Active = 4; // ZOMBIE! Cấm đứa khác đụng vào Stack!
         } else {
             Threads[id].Active = 0; // Đứa khác chết thì chôn ngay lập tức (Xóa MemSet rồi nên an toàn tuyệt đối).
-        }
-
-        // Mark thread as zombie if terminating self so other cores do not
-        // reuse the slot while we destroy its user space. Defer actual
-        // slot reclamation via DyingThreadPerCore handled in SwitchTask.
-        if (isSelf) {
-            Threads[id].Active = 4; // ZOMBIE
-            DyingThreadPerCore[coreId] = id;
-        } else {
-            Threads[id].Active = 0;
         }
 
         ReleaseSchedLockSafe(irq);

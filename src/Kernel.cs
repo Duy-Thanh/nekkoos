@@ -224,6 +224,14 @@ public static unsafe class Program
         [DllImport("*", EntryPoint = "GetIsrYield")] static extern void* GetIsrYield();
 
         GDT.Init();
+        {
+            ulong tAddr = (ulong)GDT.Tss;
+            ulong iopbAddr = (ulong)&(GDT.Tss->Iopb[0]);
+            ulong offset = iopbAddr - tAddr;
+            fixed (char* dMsg = "DEBUG: TSSEntry.Iopb Offset: \0") Terminal.Print(dMsg);
+            Terminal.PrintHex(offset);
+            fixed (char* nl = "\n\0") Terminal.Print(nl);
+        }
         IDTManager.Init();
 
         void* dummyIsr = GetIsrYield();
@@ -417,6 +425,7 @@ public static unsafe class Program
             if (rawLogin != null) PELoader.LoadAndRun(rawLogin, false, false, true, p3, 2);
             else while(true) IO.Cli(); 
         }
+
 
         // fixed (char* p_dwm = "DSRV.EXE\0") {
         //     byte* rawDwm = Driver.FAT16.ReadFile(p_dwm, &dummySize);

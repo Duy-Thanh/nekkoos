@@ -155,6 +155,8 @@ public static unsafe class VMM
                 VmmLock.ReleaseSafe(irq); 
                 return; 
             }
+            ulong* pdptPtr = (ulong*)newPdpt;
+            for (int i = 0; i < 512; i++) pdptPtr[i] = 0;
             pml4Dir[pml4Index] = newPdpt | flags | 0x07; 
         }
         ulong* pdpt = (ulong*)(pml4Dir[pml4Index] & PHYS_ADDR_MASK);
@@ -170,6 +172,8 @@ public static unsafe class VMM
                 VmmLock.ReleaseSafe(irq); 
                 return; 
             }
+            ulong* pdPtr = (ulong*)newPd;
+            for (int i = 0; i < 512; i++) pdPtr[i] = 0;
             pdpt[pdpIndex] = newPd | flags | 0x07;
         }
         ulong* pd = (ulong*)(pdpt[pdpIndex] & PHYS_ADDR_MASK);
@@ -185,6 +189,8 @@ public static unsafe class VMM
                 VmmLock.ReleaseSafe(irq); 
                 return; 
             }
+            ulong* ptPtr = (ulong*)newPt;
+            for (int i = 0; i < 512; i++) ptPtr[i] = 0;
             pd[pdIndex] = newPt | flags | 0x07;
         }
         ulong* pt = (ulong*)(pd[pdIndex] & PHYS_ADDR_MASK);

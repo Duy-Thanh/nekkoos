@@ -69,6 +69,15 @@ public unsafe class API
     public static delegate* unmanaged<ushort, uint, void> AppOutDword;
 
     // ==========================================================
+    // [FIX RACE CONDITION ATA/SMP] KHÓA PHẦN CỨNG ATA DÙNG CHUNG!
+    // ATA.EXE (Ring 3) PHẢI gọi cặp này bao quanh MỌI thao tác IN/OUT thô
+    // trên cổng 0x1F0-0x1F7, để loại trừ lẫn nhau với đường raw driver
+    // của Kernel (Ring 0) đang chạy song song trên lõi CPU khác (SMP).
+    // ==========================================================
+    public static delegate* unmanaged<void> SyscallAcquireAtaHw;
+    public static delegate* unmanaged<void> SyscallReleaseAtaHw;
+
+    // ==========================================================
     // [VŨ KHÍ MỚI] CHÌA KHÓA MỞ CỔNG HOÀNG CUNG CHO DISPLAY SERVER!
     // ==========================================================
     public static delegate* unmanaged<ulong> SyscallRequestFramebuffer;
@@ -134,5 +143,9 @@ public unsafe class API
         AppInWord = (delegate* unmanaged<ushort, ushort>)(actualKaslr + table[31]);
         AppOutWord = (delegate* unmanaged<ushort, ushort, void>)(actualKaslr + table[32]);
         AppOutDword = (delegate* unmanaged<ushort, uint, void>)(actualKaslr + table[33]);
+
+        // [FIX RACE CONDITION ATA/SMP] Slot 34 & 35
+        SyscallAcquireAtaHw = (delegate* unmanaged<void>)(actualKaslr + table[34]);
+        SyscallReleaseAtaHw = (delegate* unmanaged<void>)(actualKaslr + table[35]);
     }
 }

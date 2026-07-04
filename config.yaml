@@ -1,0 +1,5 @@
+model_list:
+  - model_name: claude-qwen
+    litellm_params:
+      model: ollama/qwen3:30b-a3b
+      api_base: https://villa-women-flickr-fee.trycloudflare.com

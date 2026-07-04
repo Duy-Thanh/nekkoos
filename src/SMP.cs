@@ -30,7 +30,7 @@ public static unsafe class SMP
     [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
 
     public static byte* SharedIdtr = null;
-    public static TSS64** CoreTssList;
+    public static TSSEntry** CoreTssList;
 
     [UnmanagedCallersOnly(EntryPoint = "ApEntryPoint")]
     public static void ApEntryPoint()
@@ -74,24 +74,32 @@ public static unsafe class SMP
         gdt[0] = 0; gdt[1] = 0x00209A0000000000; gdt[2] = 0x0000920000000000; 
         gdt[3] = 0x0000F20000000000; gdt[4] = 0x0020FA0000000000; gdt[5] = 0;                  
 
-        TSS64* tss = (TSS64*)PMM.AllocatePage();
-        LibC.MemSet((byte*)tss, 0, 104);
-        // ==========================================================
-        // [TRỪ KHỬ QUÁI THÚ IOPB RÁC ĐA LÕI]
-        // Ép IoMapBase = 0xFFFF (vượt xa cái Limit 0x67 của TSS Descriptor).
-        // CPU nhìn vào sẽ biết ngay Core này ĐÉO CÓ bảng IOPB, 
-        // nó sẽ tin tưởng 100% vào cờ IOPL=3 (rflags) của Root Daemon!
-        // ==========================================================
-        tss->IoMapBase = 0xFFFF; 
-        CoreTssList[myId] = tss; 
+        TSSEntry* tss = (TSSEntry*)PMM.AllocateContiguousPages(3);
+        if (tss == null) {
+            Terminal.SetColor(0x00FF0000);
+            fixed (char* err = "[!] FATAL: Failed to allocate TSS pages in APEntryPoint!\n\0") Terminal.Print(err);
+            return;
+        }
+        LibC.MemSet((byte*)tss, 0, (uint)sizeof(TSSEntry));
+        for (int i = 0; i < 8192; i++) tss->Iopb[i] = 0xFF;
+        tss->EndMarker = 0xFF;
 
         ulong tssAddr = (ulong)tss;
-        ulong baseLow = tssAddr & 0xFFFFFF; 
-        ulong baseMid = (tssAddr >> 24) & 0xFF; 
-        ulong baseHigh = tssAddr >> 32;
+        ulong iopbAddr = (ulong)&(tss->Iopb[0]);
+        tss->IopbOffset = (ushort)(iopbAddr - tssAddr);
 
-        gdt[6] = 0x0000890000000067 | (baseLow << 16) | (baseMid << 56);
-        gdt[7] = baseHigh;
+        CoreTssList[myId] = tss; 
+
+        uint tssLimit = (uint)sizeof(TSSEntry) - 1;
+        ulong limitLow = tssLimit & 0xFFFF;
+        ulong baseLow = tssAddr & 0xFFFF;
+        ulong baseMid = (tssAddr >> 16) & 0xFF;
+        ulong access = 0x89;
+        ulong flags = (tssLimit >> 16) & 0x0F;
+        ulong baseHighVal = (tssAddr >> 24) & 0xFF;
+
+        gdt[6] = limitLow | (baseLow << 16) | (baseMid << 32) | (access << 40) | (flags << 48) | (baseHighVal << 56);
+        gdt[7] = tssAddr >> 32;
 
         ushort* gdtDesc = (ushort*)((byte*)gdt + 2048);
         gdtDesc[0] = (ushort)(8 * 8 - 1);
@@ -106,6 +114,21 @@ public static unsafe class SMP
 
         FullFence();
         CompilerFence();
+
+        // ==========================================================
+        // [FIX CHÍ MẠNG RACE #4] TẠO IDLE THREAD TRƯỚC KHI BẬT NGẮT!
+        // CreateIdleTaskForCore() trước đây KHÔNG BAO GIỜ được gọi cho
+        // các Lõi phụ (AP)! IdleThreadIds[coreId] luôn = -1 vĩnh viễn.
+        // Hệ quả: Nếu Timer IRQ nổ trên lõi này (đã Arm timer + Enable
+        // Interrupts ngay bên dưới) TRƯỚC KHI có Thread nào khác sẵn
+        // sàng chạy trên đúng lõi này, SwitchTask() sẽ chọn
+        // bestId = IdleThreadIds[coreId] = -1, rồi truy cập
+        // Threads[-1] => ĐỌC/GHI NGOÀI MẢNG => rác toàn bộ Rsp/Pml4/
+        // ExecutingOnCore => sập máy random (GPF/Page Fault/treo/lỗi
+        // lạ FAT16) đúng như mô tả "thoắt ẩn thoắt hiện". Phải tạo
+        // Idle Task NGAY TẠI ĐÂY, trước khi Arm Timer & Enable Interrupts!
+        // ==========================================================
+        Scheduler.CreateIdleTaskForCore(myId);
 
         APIC.Write(0x3E0, 0x03);  
         APIC.Write(0x320, 0x20000 | 32);
@@ -182,7 +205,7 @@ public static unsafe class SMP
             }
 
             GetIdtr(SharedIdtr);
-            CoreTssList = (TSS64**)PMM.AllocatePage();
+            CoreTssList = (TSSEntry**)PMM.AllocatePage();
             if (CoreTssList == null) {
                 Terminal.SetColor(0x00FF0000);
                 fixed (char* err = "[!] FATAL: Failed to allocate CoreTssList page!\n\0") Terminal.Print(err);
@@ -208,19 +231,36 @@ public static unsafe class SMP
                 return;
             }
 
-            bool irq = SmpLock.AcquireSafe(); 
+            // ==========================================================
+            // [FIX RACE CONDITION SMP/SCHEDULER] DÙNG ĐÚNG KHÓA SCHEDULER!
+            // SmpLock là khóa RIÊNG của module SMP, KHÔNG bảo vệ được mảng
+            // Threads[] khỏi SwitchTask() (chạy trong Timer/Yield ISR trên
+            // Core 0), vì SwitchTask() chỉ chờ Scheduler.LockScheduler().
+            // Nếu Timer Interrupt nổ giữa lúc đang ghi dở Threads[id] ở đây
+            // (Active=1 đã set nhưng Rsp=0 chưa kịp ghi), SwitchTask() có thể
+            // chọn ngay thread nửa vời này làm bestId -> nhảy vào Rsp=0
+            // -> Page Fault RIP=0 ngẫu nhiên lúc boot!
+            // Phải dùng CHUNG khóa Scheduler thật (tự động Cli() luôn).
+            // ==========================================================
+            bool irq = Scheduler.AcquireSchedLockSafe(); 
             for (uint i = 1; i < APIC.CoreCount; i++) {
                 // Kiểm tra xem i có nằm trong phạm vi hợp lệ không
                 if (i >= 256) {
                     Terminal.SetColor(0x00FF0000);
                     fixed (char* err = "[!] FATAL: Invalid core index in InitAndWakeCores!\n\0") Terminal.Print(err);
-                    SmpLock.ReleaseSafe(irq);
+                    Scheduler.ReleaseSchedLockSafe(irq);
                     return;
                 }
                 
                 int id = Scheduler.GetFreeThreadSlot();
+                if (id < 0 || id >= Scheduler.ThreadCount) {
+                    Terminal.SetColor(0x00FF0000);
+                    fixed (char* err = "[!] FATAL: Failed to allocate thread slot for core!\n\0") Terminal.Print(err);
+                    Scheduler.ReleaseSchedLockSafe(irq);
+                    return;
+                }
                 Scheduler.IdleThreadIds[i] = id; Scheduler.CurrentThreadIds[i] = id;
-                Scheduler.Threads[id].Active = 1; Scheduler.Threads[id].Priority = 99; 
+                Scheduler.Threads[id].Priority = 99; 
                 Scheduler.Threads[id].ExecutingOnCore = (int)i; 
                 Scheduler.Threads[id].Pml4 = (ulong)VMM.PML4;
                 
@@ -236,7 +276,7 @@ public static unsafe class SMP
                 if (kStackTop == null) {
                     Terminal.SetColor(0x00FF0000);
                     fixed (char* err = "[!] FATAL: Failed to allocate kernel stack for core!\n\0") Terminal.Print(err);
-                    SmpLock.ReleaseSafe(irq);
+                    Scheduler.ReleaseSchedLockSafe(irq);
                     return;
                 }
 
@@ -262,8 +302,14 @@ public static unsafe class SMP
                 Scheduler.Threads[id].Rsp = (ulong)kStackTop; 
                 Scheduler.Threads[id].Name[0] = (byte)'I'; Scheduler.Threads[id].Name[1] = (byte)'D'; Scheduler.Threads[id].Name[2] = (byte)('0' + i); Scheduler.Threads[id].Name[3] = 0;
                 LibC.MemCpy(Scheduler.Threads[id].FpuState, Scheduler.Threads[0].FpuState, 512);
+
+                // [FIX RACE CONDITION SMP/SCHEDULER] CHỈ BẬT Active=1 SAU CÙNG,
+                // khi Rsp/Pml4/KernelStackTop đã ghi xong hoàn chỉnh! (Phòng thủ kép,
+                // dù đã có khóa đúng ở trên, để tránh SwitchTask() đọc trúng
+                // struct nửa vời nếu về sau có code nào đọc Threads[] mà quên khóa.)
+                Scheduler.Threads[id].Active = 1; 
             }
-            SmpLock.ReleaseSafe(irq);
+            Scheduler.ReleaseSchedLockSafe(irq);
 
             fixed (char* m2 = "[*] SMP Controller: Trampoline Armed at 0x8000. Sending SIPI Sequence...\n\0") Terminal.Print(m2);
 
