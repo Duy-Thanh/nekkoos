@@ -89,16 +89,22 @@ public unsafe class Program
         if (cUID == 0) return true;
 
         // [FIX BẢO MẬT] File được `mcopy` thẳng lên đĩa lúc build (binary hệ thống:
-        // SHELL.EXE, FAT16.EXE...) không đi qua WRITE handler của driver nên KHÔNG hề
-        // có OwnerUID/OwnerGID thật - trường Permissions của chúng thực chất là byte
-        // ngày/giờ chuẩn của FAT bị tái sử dụng (mtools ghi ngày copy thật vào đó), nên
-        // giá trị đọc được là rác ngẫu nhiên chứ không phản ánh quyền hạn có chủ đích -
-        // không thể dùng để enforce truy cập. Với nhóm file này (OwnerUID==0 &&
-        // OwnerGID==0, tức chưa từng được driver gán chủ sở hữu), coi như file hệ thống
-        // dùng chung: cho Đọc/Thực thi công khai, nhưng KHÔNG cho Ghi (chỉ root mới sửa/
-        // xoá được) - khác bản vá cũ (đặc cách mọi file .EXE bất kể chủ sở hữu, kể cả
-        // file người dùng khác tạo ra với quyền hạn chế).
-        if (fUID == 0 && fGID == 0 && (requestedMode & W_OK) == 0) return true;
+        // SHELL.EXE, FAT16.EXE, TOP.EXE...) không đi qua WRITE handler của driver nên
+        // KHÔNG hề có OwnerUID/OwnerGID/Permissions thật - các trường này thực chất là
+        // byte ngày/giờ chuẩn của FAT bị tái sử dụng (mtools ghi ngày/giờ copy thật vào
+        // đó), nên giá trị đọc được là rác chứ không phản ánh quyền hạn có chủ đích.
+        //
+        // [FIX BUG] Chỉ dựa vào OwnerUID (đè lên FstClusHI - LUÔN LUÔN = 0 trên FAT16,
+        // vì không ổ FAT16 nào cần bit cao của số cluster) để nhận diện "file hệ thống
+        // chưa có chủ", KHÔNG dựa thêm vào OwnerGID (đè lên NTRes + CrtTimeTenth - phần
+        // trăm giây lúc tạo file, giá trị này ngẫu nhiên tuỳ thời điểm mcopy chạy, dễ
+        // khác 0). Bản vá cũ đòi hỏi CẢ HAI đều bằng 0 nên chỉ những file may mắn có
+        // CrtTimeTenth == 0 mới được coi là "chưa có chủ" - các file khác (như top.exe)
+        // bị chặn Đọc/Thực thi hoàn toàn oan, dù bản thân file rõ ràng chưa từng được
+        // driver gán chủ sở hữu qua WRITE handler. Với nhóm file này (OwnerUID==0), coi
+        // như file hệ thống dùng chung: cho Đọc/Thực thi công khai, nhưng KHÔNG cho Ghi
+        // (chỉ root mới sửa/xoá được).
+        if (fUID == 0 && (requestedMode & W_OK) == 0) return true;
 
         if (perms > 511) perms = 493;
 

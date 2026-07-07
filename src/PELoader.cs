@@ -5,6 +5,16 @@ public static unsafe class PELoader
 {
     public static void LoadAndRun(byte* rawFile, bool runInBackground = false, bool isJailed = false, bool forceRoot = false, char* processName = null, byte priority = 1)
     {
+        int _unusedId;
+        LoadAndRun(rawFile, out _unusedId, runInBackground, isJailed, forceRoot, processName, priority);
+    }
+
+    // [FIX CRITICAL #1] Overload trả về thread ID của tiến trình vừa tạo qua tham số out,
+    // để Kernel.cs có thể ghi nhận danh tính THẬT (không thể giả mạo) của các Daemon hệ
+    // thống ngay tại thời điểm spawn ở boot sequence, thay vì dựa vào Thread.Name.
+    public static void LoadAndRun(byte* rawFile, out int newThreadId, bool runInBackground = false, bool isJailed = false, bool forceRoot = false, char* processName = null, byte priority = 1)
+    {
+        newThreadId = -1;
         if (rawFile == null || rawFile[0] != 'M' || rawFile[1] != 'Z') return;
         int e_lfanew = *(int*)(rawFile + 0x3C);
         byte* ntHeader = rawFile + e_lfanew;
@@ -448,7 +458,7 @@ public static unsafe class PELoader
             return;
         }
         
-        Scheduler.CreateUserTask(appMain, (ulong)appPml4, !runInBackground, isJailed, forceRoot, processName, (uint)pages, priority);
+        Scheduler.CreateUserTask(appMain, (ulong)appPml4, out newThreadId, !runInBackground, isJailed, forceRoot, processName, (uint)pages, priority);
 
         fixed (char* msg = "[+] Process Started!\n\0") Terminal.Print(msg);
 

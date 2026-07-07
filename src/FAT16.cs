@@ -24,6 +24,13 @@ public static unsafe class FAT16
     public static bool UseDaemon = false;
     public static uint DaemonId = 0;
 
+    // [FIX CRITICAL #1] ID luồng THẬT của FAT16 Daemon, được Kernel.cs ghi nhận NGAY LÚC
+    // spawn tiến trình ở boot sequence (Scheduler tự sinh ra, không ai giả mạo được) -
+    // khác với DaemonId ở trên vốn chỉ được gán SAU KHI FAT16 Daemon hoàn tất IPC handshake
+    // (Type 39), tức là SAU LÚC daemon đã tự gọi ATA để đọc boot sector rồi. Dùng giá trị
+    // này để chặn giả mạo danh tính "FAT16 Daemon" ở Syscall.cs case 5 (SendIPC tới ATA).
+    public static int TrustedThreadId = -1;
+
     public static FAT_BPB CachedBPB;
     public static uint FatStartLba;
     public static uint RootDirLba;

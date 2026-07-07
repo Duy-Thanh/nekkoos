@@ -408,7 +408,13 @@ public static unsafe class Program
 
         fixed (char* p2 = "FAT16.EXE\0") {
             byte* rawFat = Driver.FAT16.ReadFile(p2, &dummySize);
-            if (rawFat != null) PELoader.LoadAndRun(rawFat, true, false, true, p2, 3); 
+            if (rawFat != null) {
+                // [FIX CRITICAL #1] Ghi nhận thread ID thật của FAT16 Daemon NGAY LÚC spawn -
+                // trước cả khi daemon kịp tự gọi ATA để đọc boot sector, nên không có race.
+                int fatDaemonId;
+                PELoader.LoadAndRun(rawFat, out fatDaemonId, true, false, true, p2, 3);
+                Driver.FAT16.TrustedThreadId = fatDaemonId;
+            }
             else {
                 Terminal.SetColor(0x00FF0000);
                 fixed(char* err = "[!] FATAL KERNEL ERROR: FAT16.EXE is missing or corrupted!\n\0") Terminal.Print(err);

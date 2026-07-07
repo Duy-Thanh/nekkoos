@@ -463,6 +463,18 @@ public static unsafe class Scheduler
 
     public static void CreateUserTask(delegate*<void> entryPoint, ulong appPml4, bool isForeground = true, bool isJailed = false, bool forceRoot = false, char* processName = null, uint imagePages = 0, byte priority = 1)
     {
+        int _unusedId;
+        CreateUserTask(entryPoint, appPml4, out _unusedId, isForeground, isJailed, forceRoot, processName, imagePages, priority);
+    }
+
+    // [FIX CRITICAL #1] Overload trả về thread ID vừa tạo qua tham số out - cho phép Kernel.cs
+    // ghi nhận danh tính THẬT của các Daemon hệ thống (vd: FAT16 Daemon) ngay tại thời điểm
+    // tạo tiến trình (do chính Kernel tự spawn lúc boot, không thể bị giả mạo), thay vì phải
+    // tin vào Thread.Name (chuỗi do người dùng cung cấp qua lệnh "run"/"daemon", CÓ THỂ bị
+    // giả mạo) hay đợi IPC handshake (có race lúc Daemon tự đọc boot sector trước khi handshake).
+    public static void CreateUserTask(delegate*<void> entryPoint, ulong appPml4, out int newThreadId, bool isForeground = true, bool isJailed = false, bool forceRoot = false, char* processName = null, uint imagePages = 0, byte priority = 1)
+    {
+        newThreadId = -1;
         if (entryPoint == null || (ulong)entryPoint < 4096 || !VMM.IsCanonical((ulong)entryPoint)) {
             Terminal.SetColor(0x00FF0000);
             fixed(char* err = "[!] Scheduler Blocked: Garbage PE EntryPoint! IPC/FAT16 Delivery Failed!\n\0") Terminal.Print(err);
@@ -592,9 +604,10 @@ public static unsafe class Scheduler
         Threads[id].ExecutingOnCore = -1; 
 
         if (isForeground) ForegroundTask = id;
-        
+
         Threads[id].Active = 1;
-        ReleaseSchedLockSafe(irq); 
+        newThreadId = id;
+        ReleaseSchedLockSafe(irq);
     }
 
     public static void TerminateTask(int id)

@@ -32,9 +32,59 @@ public static unsafe class Syscall
     public static Spinlock SharedMemLock;
     private static ulong SyscallLogCounter = 0;
 
+    // Mặt nạ địa chỉ vật lý chuẩn x86_64 (bit 12->51), giống hệt VMM.cs's PHYS_ADDR_MASK.
+    private const ulong PHYS_ADDR_MASK = 0x000FFFFFFFFFF000UL;
+
+    // [FIX CRITICAL #2] Trước đây chỉ kiểm tra ptr có nằm trong dải canonical hợp lệ hay
+    // không (0x1000 -> 0x00007FFFFFFFFFFF) - KHÔNG hề xác minh trang đó có thực sự được
+    // MAP (Present) trong PML4 của chính tiến trình gọi syscall hay chưa. Một con trỏ
+    // canonical nhưng CHƯA MAP vẫn lọt qua kiểm tra này, rồi bị Ring0 dereference thẳng ở
+    // các syscall (case 1/8/10/14/51/52/88) -> Page Fault xảy ra Ở RING 0
+    // (InterruptHandlers.cs PageFaultHandler, nhánh Ring0) -> BroadcastApocalypse() +
+    // HardReboot/LegacyReboot/HaltSystemForever - tức là MỘT SYSCALL TỪ RING3 THƯỜNG CŨNG
+    // CÓ THỂ RESET/TREO TOÀN BỘ MÁY, không chỉ giết tiến trình gọi nó. Fix: đi bộ (walk)
+    // PML4 của chính luồng gọi syscall (Scheduler.CurrentThreadId), xác minh cờ Present
+    // (bit 0) VÀ User (bit 2) tồn tại xuyên suốt PML4 -> PDPT -> PD -> PT (hoặc dừng sớm ở
+    // PD nếu là Huge Page 2MB) trước khi coi con trỏ là hợp lệ để Ring0 đụng vào.
+    private static bool IsPageMappedForUser(int threadId, ulong virtAddr)
+    {
+        if (threadId < 0 || threadId >= Scheduler.ThreadCount) return false;
+
+        ulong pml4Phys = Scheduler.Threads[threadId].Pml4;
+        if (pml4Phys == 0 || pml4Phys >= PMM.TotalPages * 4096UL) return false;
+        ulong* pml4 = (ulong*)pml4Phys;
+
+        ulong pml4Index = (virtAddr >> 39) & 0x1FF;
+        ulong pdptIndex = (virtAddr >> 30) & 0x1FF;
+        ulong pdIndex   = (virtAddr >> 21) & 0x1FF;
+        ulong ptIndex   = (virtAddr >> 12) & 0x1FF;
+
+        ulong e4 = pml4[pml4Index];
+        if ((e4 & 0x01) == 0 || (e4 & 0x04) == 0) return false; // Present + User
+
+        ulong* pdpt = (ulong*)(e4 & PHYS_ADDR_MASK);
+        if (pdpt == null || (ulong)pdpt >= PMM.TotalPages * 4096UL) return false;
+        ulong e3 = pdpt[pdptIndex];
+        if ((e3 & 0x01) == 0 || (e3 & 0x04) == 0) return false;
+
+        ulong* pd = (ulong*)(e3 & PHYS_ADDR_MASK);
+        if (pd == null || (ulong)pd >= PMM.TotalPages * 4096UL) return false;
+        ulong e2 = pd[pdIndex];
+        if ((e2 & 0x01) == 0 || (e2 & 0x04) == 0) return false;
+        if ((e2 & 0x80) != 0) return true; // Huge Page 2MB - đã Present + User, dừng ở đây
+
+        ulong* pt = (ulong*)(e2 & PHYS_ADDR_MASK);
+        if (pt == null || (ulong)pt >= PMM.TotalPages * 4096UL) return false;
+        ulong e1 = pt[ptIndex];
+        if ((e1 & 0x01) == 0 || (e1 & 0x04) == 0) return false;
+
+        return true;
+    }
+
     private static bool IsValidUserPtr(ulong ptr)
     {
-        return ptr >= 0x1000 && ptr <= 0x00007FFFFFFFFFFF;
+        if (ptr < 0x1000 || ptr > 0x00007FFFFFFFFFFF) return false;
+        return IsPageMappedForUser(Scheduler.CurrentThreadId, ptr);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "SyscallHandler")]
@@ -272,17 +322,20 @@ public static unsafe class Syscall
                 // cấm mọi caller Ring3 gửi trực tiếp cho ATA Daemon, trừ chính FAT16
                 // Daemon.
                 //
-                // [FIX REGRESSION] KHÔNG dùng Driver.FAT16.DaemonId để nhận diện - biến
-                // đó chỉ được kernel gán SAU KHI FAT16 Daemon hoàn tất handshake (IPC
-                // Type 39), nhưng FAT16 Daemon lại gọi ATA để đọc boot sector NGAY LÚC
-                // KHỞI ĐỘNG, TRƯỚC KHI gửi handshake đó - dẫn tới bị chặn nhầm, treo máy
-                // ngay từ lúc boot. Nhận diện bằng TÊN TIẾN TRÌNH thay thế, vì Name[] được
-                // PELoader gán ngay lúc tạo thread (Thread.cs), có sẵn trước khi AppMain
-                // chạy dòng lệnh đầu tiên - không có race condition.
+                // [FIX CRITICAL #1] KHÔNG còn dùng Thread.Name để nhận diện - đó là chuỗi
+                // do NGƯỜI DÙNG tự đặt qua lệnh "run"/"daemon" (Syscall.cs case 88), nên bất
+                // kỳ ai cũng đặt tên tiến trình bắt đầu bằng "FAT16" để giả mạo, vượt qua
+                // hoàn toàn lớp CheckAccess của FAT16 Daemon để đọc/ghi thẳng RAW sector
+                // (kể cả /ETC/PASSWD). Nhận diện bằng Driver.FAT16.TrustedThreadId - ID
+                // luồng được chính Kernel.cs ghi nhận NGAY LÚC spawn FAT16.EXE ở boot
+                // sequence (Kernel.cs, PELoader.LoadAndRun trả về qua out param), tức là
+                // TRƯỚC KHI FAT16 Daemon kịp tự gọi ATA để đọc boot sector - không còn race
+                // condition như biến Driver.FAT16.DaemonId (biến đó chỉ được gán SAU KHI
+                // FAT16 Daemon hoàn tất IPC handshake Type 39, là sau lúc daemon đã tự đọc
+                // boot sector rồi). Vì ID luồng do Scheduler tự sinh (GetFreeThreadSlot),
+                // không phải dữ liệu người dùng cung cấp, nên không thể bị giả mạo.
                 if (Driver.ATA.DaemonId != 0 && receiverId == Driver.ATA.DaemonId) {
-                    byte* senderName = Scheduler.Threads[id].Name;
-                    bool isFat16Daemon = senderName[0] == (byte)'F' && senderName[1] == (byte)'A'
-                        && senderName[2] == (byte)'T' && senderName[3] == (byte)'1' && senderName[4] == (byte)'6';
+                    bool isFat16Daemon = Driver.FAT16.TrustedThreadId >= 0 && Driver.FAT16.TrustedThreadId == id;
                     if (!isFat16Daemon) { ctx->Rax = 0; break; }
                 }
 
