@@ -166,17 +166,17 @@ public static unsafe class PELoader
             uint relocSize = *(uint*)(ntHeader + 180);
 
             // Kiểm tra xem relocRVA và relocSize có hợp lệ không
-        if (relocRVA > sizeOfImage || relocSize > sizeOfImage || relocRVA + relocSize > sizeOfImage) {
-            Terminal.SetColor(0x00FF0000);
-            fixed(char* err = "[!] FATAL: Invalid PE relocation data!\n\0") Terminal.Print(err);
-            // Cleanup resources
-            for (ulong i = 0; i < pages; i++) {
-                PMM.FreePage((void*)(physBase + (i * 4096)));
+            if (relocRVA > sizeOfImage || relocSize > sizeOfImage || relocRVA + relocSize > sizeOfImage) {
+                Terminal.SetColor(0x00FF0000);
+                fixed(char* err = "[!] FATAL: Invalid PE relocation data!\n\0") Terminal.Print(err);
+                // Cleanup resources
+                for (ulong i = 0; i < pages; i++) {
+                    PMM.FreePage((void*)(physBase + (i * 4096)));
+                }
+                PMM.FreePage(appPml4); 
+                Heap.Free(rawFile);
+                return;
             }
-            PMM.FreePage(appPml4); 
-            Heap.Free(rawFile);
-            return;
-        }
 
             if (relocRVA != 0)
             {
@@ -260,7 +260,8 @@ public static unsafe class PELoader
                 }
             }
         }
-
+        
+        // HERE WE GO!!! vDSO mapping here!
         ulong kaslrBase = (ulong)PRNG.Next(0x5000, 0x7FFF); 
         ulong vdsoVirt = (kaslrBase << 32); 
 

@@ -149,32 +149,60 @@ public static unsafe class Syscall
 
             // [SYSCALL 4]: ĐỌC BÀN PHÍM (GLOBAL INTERCEPT HACK)
             // ==========================================================
-            case 4: 
+            // [FIX TRIỆT ĐỂ - TRANH CHẤP BÀN PHÍM] Trước đây HÀM NÀY cho phép
+            // BẤT KỲ thread nào gọi SyscallGetChar() cướp quyền đọc bất kỳ
+            // scancode nào trong hàng đợi IPC (KeyboardHandler gửi broadcast
+            // Receiver=0, không phân biệt ai "nên" nhận). Hậu quả: khi Shell
+            // chạy "run top.exe" (không blocking - PELoader.LoadAndRun tạo
+            // thread mới rồi trả về ngay), Shell quay lại vòng lặp đọc phím
+            // CỦA CHÍNH NÓ ngay lập tức, chạy song song và tranh giành từng
+            // scancode 'q' với top.exe đang ở foreground. Kết quả: bấm 'q'
+            // nhiều lần mới thoát được top.exe (vì 1 số lần 'q' bị Shell cướp
+            // mất), và những 'q' đó nằm lại trong sharedCmdBuffer của Shell,
+            // sau đó bị submit thành lệnh rác "qqqqq" khi Enter được nhấn.
+            //
+            // Kernel đã có sẵn Scheduler.ForegroundTask (set khi tạo tiến
+            // trình foreground ở Thread.cs:CreateUserTask, trả về ParentId
+            // khi tiến trình đó thoát/sập ở Thread.cs:TerminateTask và các
+            // Handler crash) nhưng KHÔNG hề được dùng để gác cổng bàn phím -
+            // đây chính là gốc rễ của bug. Fix: chỉ cho phép thread gọi cướp
+            // phím nếu nó ĐANG LÀ ForegroundTask. Có fallback an toàn: nếu
+            // ForegroundTask không hợp lệ/đã chết (VD: -1 lúc boot, hoặc bị
+            // zombie hóa mà chưa kịp trả về ParentId), KHÔNG khóa cứng bàn
+            // phím - mở lại cho tất cả để tránh input bị "câm" vĩnh viễn.
+            case 4:
             {
                 bool found = false;
                 char c = '\0';
 
-                // Lục soát toàn bộ mảng IPC (Không khóa)
-                for (int i = 0; i < IPC.MAX_MESSAGES; i++)
+                int fgTask = Scheduler.ForegroundTask;
+                bool fgValid = fgTask >= 0 && fgTask < Scheduler.ThreadCount && Scheduler.Threads[fgTask].Active != 0;
+                bool allowedToConsume = !fgValid || fgTask == id;
+
+                if (allowedToConsume)
                 {
-                    // Nếu là phím bấm (Type = 1) và từ Keyboard (Sender = 33)
-                    if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
+                    // Lục soát toàn bộ mảng IPC (Không khóa)
+                    for (int i = 0; i < IPC.MAX_MESSAGES; i++)
                     {
-                        // [VŨ KHÍ MỚI] Cướp quyền đọc bằng AtomicExchange trên cờ IsLocked!
-                        if (IPC.AtomicExchange(ref IPC.queue[i].IsLocked, 1) == 0)
+                        // Nếu là phím bấm (Type = 1) và từ Keyboard (Sender = 33)
+                        if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
                         {
-                            // Kiểm tra lại lần nữa cho chắc sau khi chiếm được khóa ô
-                            if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
+                            // [VŨ KHÍ MỚI] Cướp quyền đọc bằng AtomicExchange trên cờ IsLocked!
+                            if (IPC.AtomicExchange(ref IPC.queue[i].IsLocked, 1) == 0)
                             {
-                                c = KeyboardDriver.ProcessScanCode((byte)IPC.queue[i].Payload);
-                                IPC.StoreFence();
-                                IPC.queue[i].Type = 0; // Hủy tin nhắn
-                                IPC.StoreFence();
-                                IPC.queue[i].IsLocked = 0; // Nhả khóa
-                                found = true;
-                                break;
+                                // Kiểm tra lại lần nữa cho chắc sau khi chiếm được khóa ô
+                                if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
+                                {
+                                    c = KeyboardDriver.ProcessScanCode((byte)IPC.queue[i].Payload);
+                                    IPC.StoreFence();
+                                    IPC.queue[i].Type = 0; // Hủy tin nhắn
+                                    IPC.StoreFence();
+                                    IPC.queue[i].IsLocked = 0; // Nhả khóa
+                                    found = true;
+                                    break;
+                                }
+                                IPC.queue[i].IsLocked = 0; // Bị hố thì nhả khóa
                             }
-                            IPC.queue[i].IsLocked = 0; // Bị hố thì nhả khóa
                         }
                     }
                 }

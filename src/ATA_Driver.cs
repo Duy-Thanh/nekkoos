@@ -317,6 +317,8 @@ public unsafe class Program
                     CleanupResources();
                     SyscallExit();
                 }
+                // [FIX SPIN] Unknown type → bỏ qua, không spin
+                // else: fall through to SyscallWaitIPC below
             }
             else
             {
@@ -325,10 +327,47 @@ public unsafe class Program
         }
     }
 
-    // Thêm hàm dọn dẹp tài nguyên
+    // [FIX AN TOÀN SHUTDOWN] Lớp bảo vệ cuối cùng ở tầng ATA Daemon: tự flush cache
+    // phần cứng thật (lệnh 0xE7) trước khi thoát, độc lập với Driver.ATA.FlushCache()
+    // ở Ring 0 (Power.cs) - phòng trường hợp daemon bị kill trong lúc Power.cs chưa
+    // kịp chạy tới bước flush của nó (ví dụ do lỗi luồng thực thi khác trong tương lai).
+    // [FIX] Retry có giới hạn khi lệnh flush báo lỗi (bit ERR) - status ERR đôi khi chỉ
+    // là nhiễu tức thời của controller, không nên bỏ cuộc ngay sau 1 lần fail. Nếu vẫn
+    // fail sau khi hết lượt retry, in cảnh báo NGHIÊM TRỌNG (không chỉ 1 dòng im lặng)
+    // để log phản ánh đúng mức độ nguy hiểm - có thể mất dữ liệu chưa ghi xuống platter.
     private static void CleanupResources()
     {
-        return;
+        SyscallAcquireAtaHw();
+
+        const int maxAttempts = 3;
+        bool flushed = false;
+
+        for (int attempt = 1; attempt <= maxAttempts && !flushed; attempt++)
+        {
+            AppOutByte(0x1F7, 0xE7);
+            int timeout = 300000;
+            bool error = false;
+
+            while (timeout > 0)
+            {
+                byte status = AppInByte(0x1F7);
+                if ((status & 0x80) == 0) break;
+                if ((status & 0x01) != 0) { error = true; break; }
+                SyscallYieldApp();
+                timeout--;
+            }
+
+            if (!error && timeout > 0) { flushed = true; }
+            else if (attempt < maxAttempts) {
+                fixed (char* warn = "[!] ATA: Flush-on-exit attempt failed, retrying...\n\0") SyscallPrint(warn);
+            }
+        }
+
+        if (!flushed) {
+            fixed (char* err = "[!!!] ATA FATAL: Cache flush-on-exit failed after all retries! DATA LOSS POSSIBLE!\n\0") SyscallPrint(err);
+        }
+
+        SyscallReleaseAtaHw();
     }
 
     public static void Main() { }

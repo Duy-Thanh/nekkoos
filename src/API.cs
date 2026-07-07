@@ -101,6 +101,7 @@ public unsafe class API
         
         // Setup function pointer to point to correct elements in vDSO table
         // funciton pointer = baseAddress + offset
+        // After InitAPI(), Syscall tables POINT TO real address of Assembly's Stub!
         SyscallPrint = (delegate* unmanaged<char*, void>)(actualKaslr + table[0]);
         SyscallExit = (delegate* unmanaged<void>)(actualKaslr + table[1]);
         SyscallSendIPC = (delegate* unmanaged<uint, uint, ulong, void>)(actualKaslr + table[2]);

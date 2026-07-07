@@ -1,6 +1,7 @@
 global using System;
 global using System.Runtime.InteropServices;
 global using System.Runtime.CompilerServices;
+global using NekkoOS.Int;
 global using NekkoOS.Kernel;
 global using NekkoOS.Kernel.Driver;
 global using NekkoOS.Kernel.Lib;

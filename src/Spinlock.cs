@@ -72,6 +72,14 @@ public unsafe struct Spinlock
         if (intsEnabled) IO.EnableInterrupts(); // Trả lại y nguyên lúc đầu!
     }
 
+    // [FIX AN TOÀN SHUTDOWN] Peek trạng thái khóa, không chiếm khóa - dùng để
+    // kiểm tra "có lõi nào đang giữ khóa PIO không" trước khi bắn INIT IPI cưỡng ép,
+    // tránh cắt ngang giữa chừng 1 sector ATA đang ghi dở dang.
+    public bool IsLocked()
+    {
+        fixed (uint* ptr = &_lockStatus) { return *ptr != 0; }
+    }
+
     // Giữ lại 2 hàm gốc cho các trường hợp đặc biệt
     // ==========================================================
     // BỌC THÉP LUÔN CHO 2 HÀM GỐC!

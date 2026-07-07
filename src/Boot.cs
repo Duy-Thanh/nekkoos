@@ -807,6 +807,21 @@ namespace NekkoOS
                 // Dùng xong RSA thì dọn rác trả lại RAM cho UEFI!
                 systemTable->BootServices->FreePool(rsaBuffer);
 
+                // // 5. Kiểm duyệt chuỗi đệm PKCS#1 v1.5 siêu gắt gao!
+                // if (decryptedSig[0] != 0x00 || decryptedSig[1] != 0x01) isVerified = false;
+                // for (int i = 2; i < 204; i++) { if (decryptedSig[i] != 0xFF) isVerified = false; }
+                // if (decryptedSig[204] != 0x00) isVerified = false;
+
+                // // Kiểm tra mã ASN.1 (Định danh thuật toán SHA-256)                uint* tempMul_buf = Res_buf + 64; // Dịch đi 256 bytes
+                // uint* baseS_buf = tempMul_buf + 128; // Dịch đi 512 bytes
+                
+                // byte* decryptedSig = stackalloc byte[256]; // Thằng output này nhỏ, để Stack cũng đc.
+                
+                // BaremetalRSA.VerifySignature(sigBuffer, publicKeyN, decryptedSig, S_buf, N_buf, Res_buf, tempMul_buf, baseS_buf);
+                
+                // // Dùng xong RSA thì dọn rác trả lại RAM cho UEFI!
+                // systemTable->BootServices->FreePool(rsaBuffer);
+
                 // 5. Kiểm duyệt chuỗi đệm PKCS#1 v1.5 siêu gắt gao!
                 if (decryptedSig[0] != 0x00 || decryptedSig[1] != 0x01) isVerified = false;
                 for (int i = 2; i < 204; i++) { if (decryptedSig[i] != 0xFF) isVerified = false; }
@@ -823,6 +838,51 @@ namespace NekkoOS
                     if (decryptedSig[224 + i] != computedHash[i]) isVerified = false;
                 }
             }
+
+            // if (!isVerified)
+            // {
+            //     // ==========================================================
+            //     // [TỬ HÌNH MỸ THUẬT] PHONG CÁCH ANDROID VERIFIED BOOT
+            //     // Nền đen tuyền, Icon tròn cảnh báo, chữ căn giữa lạnh lùng!
+            //     // ==========================================================
+            //     systemTable->ConOut->EnableCursor(systemTable->ConOut, false);
+            //     systemTable->ConOut->SetAttribute(systemTable->ConOut, 0x0F); 
+            //     systemTable->ConOut->ClearScreen(systemTable->ConOut); 
+
+            //     int cx = (int)(width / 2);
+            //     int cy = (int)(height / 3);
+            //     int r = 40;
+
+            //     if (frameBuffer != null) 
+            //     {
+            //         for (ulong i = 0; i < (frameBufferSize / 4); i++) frameBuffer[i] = 0xFF000000;
+
+            //         for (int y = -r; y <= r; y++) {
+            //             for (int x = -r; x <= r; x++) {
+            //                 if (x * x + y * y <= r * r) {
+            //                     uint color = 0xFFDD0000; 
+            //                     if (x >= -5 && x <= 5 && y >= -20 && y <= 5) color = 0xFF000000;
+            //                     if (x >= -5 && x <= 5 && y >= 15 && y <= 25) color = 0xFF000000;
+            //                     uint offset = (uint)((cy + y) * scanLine + (cx + x));
+            //                     frameBuffer[offset] = color;
+            //                 }
+            //             }
+            //         }
+            //     }
+
+            //     // ==========================================================
+            //     // [FIX CHÍ MẠNG] CĂN TRỤC Y (DỌC) TỰ ĐỘNG BẰNG TOÁN HỌC!
+
+            //     byte* asn1Magic = stackalloc byte[19] { 0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20 };
+            //     for (int i = 0; i < 19; i++) {
+            //         if (decryptedSig[205 + i] != asn1Magic[i]) isVerified = false;
+            //     }
+
+            //     // KIỂM TRA CHỐT HẠ: Hash băm được CÓ KHỚP VỚI Hash trong chữ ký đập ra không?
+            //     for (int i = 0; i < 32; i++) {
+            //         if (decryptedSig[224 + i] != computedHash[i]) isVerified = false;
+            //     }
+            // }
 
             if (!isVerified)
             {

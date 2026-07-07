@@ -1002,6 +1002,11 @@ public unsafe class Program
                 }
                 else if (msg.Type == 0xDEAD) {
                     fixed(char* dieMsg = "\n[*] FAT16: SIGTERM received. Sweeping workspace and signing off. Goodbye!\n\0") SyscallPrint(dieMsg);
+                    // [FIX AN TOÀN SHUTDOWN] Đảm bảo mọi cache còn dang dở được đẩy xuống
+                    // ATA trước khi thoát - phòng thân cho các đường ghi tương lai không
+                    // flush ngay sau mỗi thao tác. An toàn vì Power.cs giờ luôn giữ ATA
+                    // Daemon sống tới sau cùng, nên IPC này chắc chắn có người nhận.
+                    FlushCacheIPC();
                     SyscallExit();
                 }
             }

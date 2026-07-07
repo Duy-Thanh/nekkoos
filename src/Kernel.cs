@@ -120,7 +120,11 @@ public static unsafe class Program
         // PHASE 1: KHỞI TẠO NỀN TẢNG BAREMETAL & BẢO MẬT
         // =====================================================================
         UnlockScheduler_ASM(); 
-        fixed (char* dbg1 = "[DBG] KM: after UnlockScheduler\n\0") Terminal.Print(dbg1);
+
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg1 = "[DBG] KM: after UnlockScheduler\n\0") Serial.WriteString(dbg1);
+        }
+
         Terminal.backbuffer = null; 
 
         Scheduler.Ready = false;
@@ -148,13 +152,23 @@ public static unsafe class Program
         Scheduler.SchedLock = new Spinlock(); 
         // Initialize Syscall shared-memory lock here to avoid static init ordering issues
         Syscall.SharedMemLock = new Spinlock();
-        fixed (char* dbg2 = "[DBG] KM: after SharedMemLock init\n\0") Terminal.Print(dbg2);
+
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg2 = "[DBG] KM: after SharedMemLock init\n\0") Serial.WriteString(dbg2);
+        }
 
         Serial.Init();
-        fixed (char* dbg3 = "[DBG] KM: after Serial.Init\n\0") Terminal.Print(dbg3);
+        
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg3 = "[DBG] KM: after Serial.Init\n\0") Serial.WriteString(dbg3);
+        }
+
         GlobalBootInfo = bootInfo;
         Terminal.Init(bootInfo);
-        fixed (char* dbg4 = "[DBG] KM: after Terminal.Init\n\0") Terminal.Print(dbg4);
+        
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg4 = "[DBG] KM: after Terminal.Init\n\0") Terminal.Print(dbg4);
+        }
 
         Terminal.SetColor(0x0000FF00); 
         fixed (char* msg = "=================================================\n\0") Terminal.Print(msg);
@@ -196,9 +210,16 @@ public static unsafe class Program
         maxPhysicalAddr = (maxPhysicalAddr + 2097151UL) & ~2097151UL;
 
         PMM.Init(bootInfo, largestFreeStart);
-        fixed (char* dbg5 = "[DBG] KM: after PMM.Init\n\0") Terminal.Print(dbg5);
+
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg5 = "[DBG] KM: after PMM.Init\n\0") Serial.WriteString(dbg5);
+        }
+
         VMM.Init();
-        fixed (char* dbg6 = "[DBG] KM: after VMM.Init\n\0") Terminal.Print(dbg6);
+
+        if (NekkoInt.isDebug) {
+            fixed (char* dbg6 = "[DBG] KM: after VMM.Init\n\0") Serial.WriteString(dbg6);
+        }
 
         for (ulong addr = 2097152UL; addr < maxPhysicalAddr; addr += 2097152UL) { 
             VMM.MapHugePage(addr, addr);
@@ -224,7 +245,8 @@ public static unsafe class Program
         [DllImport("*", EntryPoint = "GetIsrYield")] static extern void* GetIsrYield();
 
         GDT.Init();
-        {
+
+        if (NekkoInt.isDebug) {
             ulong tAddr = (ulong)GDT.Tss;
             ulong iopbAddr = (ulong)&(GDT.Tss->Iopb[0]);
             ulong offset = iopbAddr - tAddr;
@@ -232,6 +254,7 @@ public static unsafe class Program
             Terminal.PrintHex(offset);
             fixed (char* nl = "\n\0") Terminal.Print(nl);
         }
+
         IDTManager.Init();
 
         void* dummyIsr = GetIsrYield();
@@ -323,10 +346,11 @@ public static unsafe class Program
         LibC.CheckHardwareError();
 
         // Print runtime Kernel text address and an inferred Map Base for crash mapping (KASLR)
+        if (NekkoInt.isDebug)
         {
             ulong addr = (ulong)(delegate*<void>)&Program.KernelIdleLoop;
             Terminal.SetColor(0x00FFFFFF);
-            fixed (char* pre = "[INFO] Kernel Text Address : \0") { Terminal.Print(pre); }
+            fixed (char* pre = "[INFO] Kernel Text Address : \0") { Serial.WriteString(pre); }
             Serial.WriteHex(addr);
             fixed (char* nl = "\n\0") { Terminal.Print(nl); }
 
@@ -334,9 +358,9 @@ public static unsafe class Program
             // NOTE: update this constant if maps are regenerated with different ordering.
             const ulong KERNEL_IDLE_MAP_OFFSET = 177UL;
             ulong inferredMapBase = addr - KERNEL_IDLE_MAP_OFFSET;
-            fixed (char* pre2 = "[INFO] Kernel Map Base   : \0") { Terminal.Print(pre2); }
+            fixed (char* pre2 = "[INFO] Kernel Map Base   : \0") { Serial.WriteString(pre2); }
             Serial.WriteHex(inferredMapBase);
-            fixed (char* nl2 = "\n\0") { Terminal.Print(nl2); }
+            fixed (char* nl2 = "\n\0") { Serial.WriteString(nl2); }
         }
 
         // =====================================================================
@@ -403,21 +427,38 @@ public static unsafe class Program
         }
 
         // ==========================================================
-        // [FIX CHÍ MẠNG] BỌC THÉP VÒNG LẶP CHỜ Ổ CỨNG (TRỊ CỜ -Ot)
+        // [FIX KVM RACE] Dùng IO.Hlt() thay vì chỉ Scheduler.Yield() thuần túy.
+        // Với KVM, Scheduler.Yield() có thể không đủ để daemons chạy và gửi IPC.
+        // IO.Hlt() đảm bảo CPU thực sự nghỉ đến khi timer interrupt kích hoạt,
+        // cho daemons đủ thời gian gửi handshake. Timeout 30s để không treo mãi.
         // ==========================================================
+        ulong daemonWaitStart = PIT.Ticks;
         while (!Driver.ATA.UseDaemon || !Driver.FAT16.UseDaemon || !Driver.Mouse.UseDaemon)
         {
             CompilerFence();
+            //FullFence();
 
-            // [ĐÃ DỌN DẸP] Thay Message Struct bằng Raw Variables
             uint rType = 0, rSender = 0; ulong rPayload = 0;
             while (IPC.ReceiveForRaw(0, &rType, &rSender, &rPayload)) 
             {
-                if (rType == 9) { Driver.ATA.DaemonId = rSender; Driver.ATA.UseDaemon = true; }
+                if (rType == 9)  { Driver.ATA.DaemonId   = rSender; Driver.ATA.UseDaemon   = true; }
                 else if (rType == 39) { Driver.FAT16.DaemonId = rSender; Driver.FAT16.UseDaemon = true; }
                 else if (rType == 44) { Driver.Mouse.DaemonId = rSender; Driver.Mouse.UseDaemon = true; }
             }
-            Scheduler.Yield(); 
+
+            if (Driver.ATA.UseDaemon && Driver.FAT16.UseDaemon && Driver.Mouse.UseDaemon) break;
+
+            // Timeout 30 giây: nếu daemon nào đó không gửi handshake được thì bỏ qua nó
+            if (PIT.Ticks - daemonWaitStart > 30000) {
+                Terminal.SetColor(0x00FF0000);
+                if (!Driver.ATA.UseDaemon)   { fixed(char* w = "[!] Timeout waiting for ATA handshake! Proceeding anyway.\n\0")   Terminal.Print(w); Driver.ATA.UseDaemon   = true; }
+                if (!Driver.FAT16.UseDaemon) { fixed(char* w = "[!] Timeout waiting for FAT16 handshake! Proceeding anyway.\n\0") Terminal.Print(w); Driver.FAT16.UseDaemon = true; }
+                if (!Driver.Mouse.UseDaemon) { fixed(char* w = "[!] Timeout waiting for Mouse handshake! Proceeding anyway.\n\0") Terminal.Print(w); Driver.Mouse.UseDaemon = true; }
+                Terminal.SetColor(0x00FFFFFF);
+                break;
+            }
+
+            IO.Hlt(); // Thực sự nghỉ đến timer interrupt → scheduler chạy dæmons
         }
 
         fixed (char* p3 = "SYSLOGON.EXE\0") {

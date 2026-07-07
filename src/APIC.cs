@@ -32,6 +32,7 @@ public static unsafe class APIC
 
     public static uint CoreCount = 1; 
     public static ulong IOApicBase = 0;
+    public static bool isDebug = false;
 
     // ==========================================================
     // [BỌC THÉP 1] MMIO WRITE & READ
@@ -99,16 +100,25 @@ public static unsafe class APIC
             return;
         }
         
-        LocalApicBaseVirt = 0xFFFF800000000000; 
-        fixed(char* dbg1 = "[DBG] APIC: LocalApicBaseVirt set\n\0") Terminal.Print(dbg1);
+        LocalApicBaseVirt = 0xFFFF800000000000;
+
+        if (NekkoInt.isDebug) {
+            fixed(char* dbg1 = "[DBG] APIC: LocalApicBaseVirt set\n\0") Serial.WriteString(dbg1);
+        }
 
         if (VMM.PML4 != null) {
             VMM.MapPage(physAddress, LocalApicBaseVirt, 0x13, (ulong*)VMM.PML4);
-            fixed(char* dbg2 = "[DBG] APIC: Initial VMM.MapPage with kernel PML4 done\n\0") Terminal.Print(dbg2);
+
+            if (NekkoInt.isDebug) {
+                fixed(char* dbg2 = "[DBG] APIC: Initial VMM.MapPage with kernel PML4 done\n\0") Serial.WriteString(dbg2);
+            }
         }
 
         bool irqSched = Scheduler.AcquireSchedLockSafe();
-        fixed(char* dbg3 = "[DBG] APIC: Acquired scheduler lock\n\0") Terminal.Print(dbg3);
+
+        if (NekkoInt.isDebug) {
+            fixed(char* dbg3 = "[DBG] APIC: Acquired scheduler lock\n\0") Serial.WriteString(dbg3);
+        }
 
         // Kiểm tra xem ThreadCount có hợp lệ không
         if (Scheduler.ThreadCount < 1 || Scheduler.ThreadCount > 256) {
@@ -118,7 +128,10 @@ public static unsafe class APIC
             return;
         }
 
-        fixed(char* dbg4 = "[DBG] APIC: Starting per-thread mapping loop\n\0") Terminal.Print(dbg4);
+        if (NekkoInt.isDebug) {
+            fixed(char* dbg4 = "[DBG] APIC: Starting per-thread mapping loop\n\0") Serial.WriteString(dbg4);
+        }
+
         for (int i = 0; i < Scheduler.ThreadCount; i++)
         {
             // Kiểm tra xem i có nằm trong phạm vi hợp lệ không
@@ -136,7 +149,10 @@ public static unsafe class APIC
                 // Ensure the stored PML4 value looks like a real physical/table pointer
                 if (VMM.IsCanonical(pml4) && pml4 < PMM.TotalPages * 4096UL)
                 {
-                    fixed(char* dbgmap = "[DBG] APIC: Mapping per-thread PML4\n\0") Terminal.Print(dbgmap);
+                    if (NekkoInt.isDebug) {
+                        fixed(char* dbgmap = "[DBG] APIC: Mapping per-thread PML4\n\0") Serial.WriteString(dbgmap);
+                    }
+
                     VMM.MapPage(physAddress, LocalApicBaseVirt, 0x13, (ulong*)pml4);
                 }
                 else
@@ -148,9 +164,14 @@ public static unsafe class APIC
             }
         }
         Scheduler.ReleaseSchedLockSafe(irqSched);
-        fixed(char* dbg5 = "[DBG] APIC: Released scheduler lock\n\0") Terminal.Print(dbg5);
-
-        fixed(char* dbg6 = "[DBG] APIC: Final VMM.MapPage (current PML4)\n\0") Terminal.Print(dbg6);
+        if (NekkoInt.isDebug) {
+            fixed(char* dbg5 = "[DBG] APIC: Released scheduler lock\n\0") Serial.WriteString(dbg5);
+        }
+        
+        if (NekkoInt.isDebug) {
+            fixed(char* dbg6 = "[DBG] APIC: Final VMM.MapPage (current PML4)\n\0") Serial.WriteString(dbg6);
+        }
+        
         VMM.MapPage(physAddress, LocalApicBaseVirt, 0x13);
 
         Write(APIC_SVR, 0x1FF);

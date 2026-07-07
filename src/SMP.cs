@@ -189,12 +189,19 @@ public static unsafe class SMP
             *pml4Mailbox = (ulong)VMM.PML4;
             *entryMailbox = (ulong)(delegate* unmanaged<void>)&ApEntryPoint;
             // Debug: print mailboxes to help trace AP boot issues
-            fixed (char* dbgPml = "[DBG] SMP: pml4Mailbox= \0") Terminal.Print(dbgPml);
-            Serial.WriteHex((ulong)*pml4Mailbox);
-            fixed (char* dbgNl1 = "\n\0") Terminal.Print(dbgNl1);
-            fixed (char* dbgEntry = "[DBG] SMP: entryMailbox= \0") Terminal.Print(dbgEntry);
-            Serial.WriteHex((ulong)*entryMailbox);
-            fixed (char* dbgNl2 = "\n\0") Terminal.Print(dbgNl2);
+
+            if (NekkoInt.isDebug) {
+                fixed (char* dbgPml = "[DBG] SMP: pml4Mailbox= \0") Serial.WriteString(dbgPml);
+                Serial.WriteHex((ulong)*pml4Mailbox);
+                fixed (char* dbgNl1 = "\n\0") Serial.WriteString(dbgNl1);
+            }
+
+            if (NekkoInt.isDebug) {
+                fixed (char* dbgEntry = "[DBG] SMP: entryMailbox= \0") Serial.WriteString(dbgEntry);
+                Serial.WriteHex((ulong)*entryMailbox);
+                fixed (char* dbgNl2 = "\n\0") Serial.WriteString(dbgNl2);
+            }
+
             Heap.Free(smpPayload);
 
             SharedIdtr = (byte*)PMM.AllocatePage();
@@ -321,9 +328,12 @@ public static unsafe class SMP
                 
                 WriteMmio32((ulong)&CoreReadyAcks[i], 0); 
                 *stackMailbox = apStack;
-                fixed (char* dbgStack = "[DBG] SMP: stackMailbox set= \0") Terminal.Print(dbgStack);
-                Serial.WriteHex((ulong)*stackMailbox);
-                fixed (char* dbgNl3 = "\n\0") Terminal.Print(dbgNl3);
+                
+                if (NekkoInt.isDebug) {
+                    fixed (char* dbgStack = "[DBG] SMP: stackMailbox set= \0") Serial.WriteString(dbgStack);
+                    Serial.WriteHex((ulong)*stackMailbox);
+                    fixed (char* dbgNl3 = "\n\0") Serial.WriteString(dbgNl3);
+                }
 
                 // ==========================================================
                 // [BỌC THÉP BẰNG MFENCE TRƯỚC KHI BẮN IPI]

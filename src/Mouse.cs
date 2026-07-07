@@ -5,25 +5,35 @@ using static NekkoApp.API;
 public static unsafe class MouseDaemon
 {
     // ==========================================================
-    // [FIX CHÍ MẠNG 1] BỌC THÉP VÒNG LẶP CHỜ BẰNG THUỐC NGỦ!
-    // Tuyệt đối không dùng Yield()! Dùng Sleep() để ép Thread 
-    // này đi ngủ, trả lại 100% tài nguyên CPU cho HĐH!
+    // [FIX PS/2 TIMEOUT] PS/2 controller phản hồi trong MICRO-giây.
+    // KHÔNG dùng SyscallSleep trong vòng lặp này — 100000 * Sleep(1)
+    // = ~400 giây worst case, khiến Mouse không kịp gửi handshake!
+    // Busy-wait thuần túy với counter nhỏ là đủ.
     // ==========================================================
-    public static void WaitWrite() { 
+    public static bool WaitWrite() { 
+        int t = 5000;
         while ((AppInByte(0x64) & 2) != 0) { 
-            SyscallSleep(1); // Ngủ 1ms (Tương đương 1 nhịp Timer)
-        } 
+            if (--t <= 0) return false;
+        }
+        return true;
     }
-    public static void WaitRead() { 
+    public static bool WaitRead() { 
+        int t = 5000;
         while ((AppInByte(0x64) & 1) == 0) { 
-            SyscallSleep(1); // Ngủ 1ms chờ phần cứng
-        } 
+            if (--t <= 0) return false;
+        }
+        return true;
     }
     
-    public static void WriteMouse(byte write) {
-        WaitWrite(); AppOutByte(0x64, 0xD4); 
-        WaitWrite(); AppOutByte(0x60, write);
-        WaitRead(); AppInByte(0x60); 
+    // Trả về false nếu mouse không phản hồi (timeout)
+    public static bool WriteMouse(byte write) {
+        if (!WaitWrite()) return false;
+        AppOutByte(0x64, 0xD4); 
+        if (!WaitWrite()) return false;
+        AppOutByte(0x60, write);
+        if (!WaitRead()) return false;
+        AppInByte(0x60);  // ACK byte
+        return true;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "AppMain")]
@@ -41,36 +51,41 @@ public static unsafe class MouseDaemon
         }
 
         // 3. TÁT CHO CON CHUỘT TỈNH DẬY!
-        WaitWrite(); AppOutByte(0x64, 0xA8); 
-        WaitWrite(); AppOutByte(0x64, 0x20); 
-        WaitRead(); byte status = AppInByte(0x60); 
-        status |= 2; 
-        WaitWrite(); AppOutByte(0x64, 0x60); 
-        WaitWrite(); AppOutByte(0x60, status);
+        // [FIX KVM] Mỗi bước đều có timeout. Nếu lỗi → vẫn gửi handshake,
+        // chỉ là mouse không nhận input phần cứng.
+        bool mouseOk = true;
+        if (WaitWrite()) AppOutByte(0x64, 0xA8); else mouseOk = false;
+        if (mouseOk && WaitWrite()) AppOutByte(0x64, 0x20); else mouseOk = false;
+        if (mouseOk && WaitRead()) {
+            byte status = AppInByte(0x60); 
+            status |= 2; 
+            if (WaitWrite()) AppOutByte(0x64, 0x60);
+            if (WaitWrite()) AppOutByte(0x60, status);
+        } else mouseOk = false;
         
-        WriteMouse(0xF6); 
-        WriteMouse(0xF4); 
+        if (mouseOk) {
+            WriteMouse(0xF6); 
+            WriteMouse(0xF4); 
+        }
 
         // 4. GỬI THƯ BÁO KERNEL LÀ TAO ĐÃ SẴN SÀNG (Type 44)
+        // Luôn gửi handshake dù mouse có lỗi hay không — kernel phải unblock!
         SyscallSendIPC(0, 44, 0);
 
         // ==========================================================
-        // [FIX CHÍ MẠNG 2] NGỦ MỖI KHI TÌM DWM!
-        // DWM load sau Mouse, vòng lặp này sẽ chạy cực lâu!
-        // Dùng Sleep(5) để tiết kiệm CPU tối đa.
+        // [FIX DEADLOCK] DSRV.EXE có thể không tồn tại (bị disabled).
+        // Chờ tối đa 2 giây. Nếu không tìm thấy thì bỏ qua.
+        // Mouse vẫn nhận IRQ12, chỉ không forward cho DWM.
         // ==========================================================
         int dwmId = -1;
         fixed (char* targetName = "DSRV.EXE\0") 
         {
-            while (dwmId == -1) {
+            int waitMs = 0;
+            while (dwmId == -1 && waitMs < 1000) {
                 dwmId = SyscallGetPIDByName(targetName);
-                if (dwmId == -1) SyscallSleep(5);
+                if (dwmId == -1) { SyscallSleep(5); waitMs += 5; }
             }
         }
-
-        fixed(char* m = "[MOUSE] Hardware awake! Pumping data to DWM...\n\0") SyscallPrint(m);
-
-        int cycle = 0;
 
         // VÒNG LẶP TIÊU HÓA RAW DATA VÀ NÃ IPC CHO DWM
         while (true)
@@ -94,8 +109,11 @@ public static unsafe class MouseDaemon
                     byte clicks = (byte)(p0 & 0x07);
 
                     ulong finalPayload = ((ulong)clicks << 32) | ((ulong)(ushort)dx << 16) | (ulong)(ushort)dy;
-                    SyscallSendIPC((uint)dwmId, 3, finalPayload); 
+                    // [FIX] Chỉ forward khi dwmId hợp lệ
+                    if (dwmId != -1) SyscallSendIPC((uint)dwmId, 3, finalPayload); 
                 }
+                // [FIX SPIN LOOP] Các message type khác (0xDEAD, stray IPC...):
+                // Không làm gì, tiếp tục nhận — WaitIPC sẽ được gọi khi queue rỗng
             } else {
                 SyscallWaitIPC(); 
             }

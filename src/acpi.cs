@@ -151,6 +151,7 @@ public unsafe class Program
 
     public static ushort SLP_TYPa = 0;
     public static ushort SLP_TYPb = 0;
+    public static bool S5Parsed = false;
 
     // ==========================================================
     // [VŨ KHÍ TỐI THƯỢNG] HÀM MAP RAM VẬT LÝ BẤT BẠI!
@@ -321,6 +322,7 @@ public unsafe class Program
                                 if (S5Addr[0] == 0x0A) S5Addr++; 
                                 SLP_TYPb = (ushort)(S5Addr[0] << 10); 
                                 
+                                S5Parsed = true;
                                 fixed(char* s5msg = "[+] AML Hack: Found DSDT \\_S5_. Dynamic Shutdown Armed!\n\0") SyscallPrint(s5msg);
                             }
                         }
@@ -343,26 +345,31 @@ public unsafe class Program
             Message msg = default;
             if (SyscallReceiveIPC(&msg) == 1)
             {
-                if (msg.Type == 0xDEAD) 
+                if (msg.Type == 0xDEAD)
                 {
                     fixed(char* pOff = "\n[!] ACPI Daemon: SHUTDOWN SEQUENCE INITIATED!\n\0") SyscallPrint(pOff);
-                    
-                    if (SMI_Command_Port != 0 && ACPI_Enable_Cmd != 0) { 
-                        AppOutByte((ushort)SMI_Command_Port, ACPI_Enable_Cmd); 
+
+                    if (SMI_Command_Port != 0 && ACPI_Enable_Cmd != 0) {
+                        AppOutByte((ushort)SMI_Command_Port, ACPI_Enable_Cmd);
                         int timeout = 5000;
                         while ((AppInWord((ushort)PM1a_Control_Port) & 1) == 0 && timeout > 0) { SyscallYieldApp(); timeout--; }
                     }
 
-                    if (PM1a_Control_Port != 0) { 
-                        if (SLP_TYPa == 0) {
-                            fixed(char* warn = "    -> [!] SLP_TYPa is 0! Overriding with QEMU/VBox S5 Standard (0x1400)...\n\0") SyscallPrint(warn);
-                            SLP_TYPa = (5 << 10); 
+                    if (PM1a_Control_Port != 0) {
+                        if (!S5Parsed) {
+                            fixed(char* warn = "    -> [!] DSDT \\_S5_ not found! Overriding with QEMU/VBox S5 Standard (0x1400)...\n\0") SyscallPrint(warn);
+                            SLP_TYPa = (5 << 10);
                         }
 
                         ushort pm1a = AppInWord((ushort)PM1a_Control_Port);
-                        pm1a = (ushort)(pm1a & 0x00FF); 
-                        
-                        AppOutWord((ushort)PM1a_Control_Port, (ushort)(pm1a | SLP_TYPa | 0x2000)); 
+                        pm1a = (ushort)(pm1a & 0x00FF);
+
+                        AppOutWord((ushort)PM1a_Control_Port, (ushort)(pm1a | SLP_TYPa | 0x2000));
+
+                        // [FIX] QEMU xử lý SLP_EN bất đồng bộ - cho VM một khoảng lặng để
+                        // thực sự thoát trước khi kết luận "FAILED" (tránh báo lỗi giả khi
+                        // shutdown thực ra đã thành công nhưng VM chưa kịp thoát).
+                        for (int spin = 0; spin < 200; spin++) { SyscallYieldApp(); }
                     }
 
                     fixed(char* pFail = "[!!!] ACPI DAEMON SHUTDOWN FAILED! HALTING.\n\0") SyscallPrint(pFail);
@@ -374,10 +381,17 @@ public unsafe class Program
                     
                     if ((AcpiFlags & (1 << 10)) != 0 && ResetAddress != 0) 
                     {
-                        if (ResetSpace == 1) 
+                        if (ResetSpace == 1)
                         {
                             fixed(char* r1 = "    -> Routing via System I/O Bus...\n\0") SyscallPrint(r1);
                             SyscallGrantPort((ushort)ResetAddress);
+                            if (ResetAddress == 0xCF9) {
+                                // [FIX] Reset 0xCF9 cần 2 bước "arm" rồi mới "trigger" để chipset
+                                // cycle sạch toàn bộ trạng thái nội bộ (bao gồm PS/2 controller 8042).
+                                // Ghi thẳng 1 lần chỉ reset CPU/lõi, để lại 8042 ở trạng thái cũ → mất bàn phím sau reboot.
+                                AppOutByte(0xCF9, 0x02);
+                                for (int delay = 0; delay < 100000; delay++) {}
+                            }
                             AppOutByte((ushort)ResetAddress, ResetValueData);
                         }
                         else if (ResetSpace == 0) 
