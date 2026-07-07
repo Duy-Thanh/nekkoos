@@ -300,7 +300,7 @@ public unsafe class Shell
                         SweepMailbox(); 
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* dirName = sharedCmdBuffer + 3;
-                        int n = 0; while(dirName[n] != '\0') { sharedNameBuf[n] = dirName[n]; n++; }
+                        int n = 0; while(dirName[n] != '\0' && n < 255) { sharedNameBuf[n] = dirName[n]; n++; }
                         sharedNameBuf[n] = '\0';
 
                         SyscallSendIPC(FAT16_PID, 36, 0);

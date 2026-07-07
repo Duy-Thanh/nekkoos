@@ -14,7 +14,7 @@ public unsafe struct SharedMemoryBlock
 
 public unsafe class Program
 {
-    public static void SyscallYieldApp() 
+    public static void SyscallYieldApp()
     { 
         SyscallYield(); 
     }
@@ -38,6 +38,54 @@ public unsafe class Program
             SyscallReceiveIPC != null &&
             SyscallPrint != null &&
             SyscallExit != null;
+    }
+
+    // [FIX LOW] Dung lượng đĩa thật - dò động bằng lệnh IDENTIFY DEVICE (0xEC) lúc
+    // khởi động, TUYỆT ĐỐI không hardcode số sector theo kích thước hdd.img hiện tại
+    // (build.sh có thể đổi kích thước ảnh đĩa bất kỳ lúc nào, hardcode sẽ sai lệch
+    // ngay khi đó). 0 nghĩa là chưa dò được (dùng mốc an toàn 0xFFFFFF cũ làm dự phòng).
+    private static uint DetectedSectorCount = 0;
+
+    private static void DetectDiskSize()
+    {
+        if (!WaitATA()) return;
+
+        AppOutByte(0x1F6, 0xA0); // Chọn ổ Master, không set bit LBA vì IDENTIFY không cần địa chỉ
+        AppOutByte(0x1F2, 0); AppOutByte(0x1F3, 0); AppOutByte(0x1F4, 0); AppOutByte(0x1F5, 0);
+        AppOutByte(0x1F7, 0xEC); // Lệnh IDENTIFY DEVICE
+
+        byte status = AppInByte(0x1F7);
+        if (status == 0) return; // Không có ổ đĩa nào gắn ở vị trí này
+
+        int timeout = 300000;
+        while (timeout > 0)
+        {
+            status = AppInByte(0x1F7);
+            if ((status & 0x80) == 0) break; // Đợi BSY tắt
+            SyscallYieldApp();
+            timeout--;
+        }
+        if (timeout <= 0 || (status & 0x01) != 0) return; // Timeout hoặc lỗi -> giữ nguyên 0 (chưa dò được)
+
+        while (true)
+        {
+            status = AppInByte(0x1F7);
+            if ((status & 0x01) != 0) return; // Lỗi giữa chừng
+            if ((status & 0x08) != 0) break; // DRQ sẵn sàng
+        }
+
+        ushort* identifyData = stackalloc ushort[256];
+        for (int i = 0; i < 256; i++) identifyData[i] = AppInWord(0x1F0);
+
+        // Word 60-61 (theo chuẩn ATA/ATAPI): Tổng số sector địa chỉ được kiểu LBA28 (32-bit)
+        uint totalSectors = (uint)identifyData[60] | ((uint)identifyData[61] << 16);
+        if (totalSectors > 0) DetectedSectorCount = totalSectors;
+    }
+
+    private static bool IsLbaInRange(uint lba)
+    {
+        if (DetectedSectorCount != 0) return lba < DetectedSectorCount;
+        return lba <= 0xFFFFFF; // Dự phòng khi chưa dò được dung lượng thật
     }
 
     // Thêm hàm kiểm tra ATA controller có được hỗ trợ không
@@ -109,6 +157,13 @@ public unsafe class Program
         for (ushort p = 0x1F0; p <= 0x1F7; p++) SyscallGrantPort(p);
         SyscallGrantPort(0x3F6);
 
+        // [FIX LOW] Dò dung lượng đĩa thật ngay khi có quyền cổng, TRƯỚC khi nhận
+        // request I/O đầu tiên - tránh dùng mốc 24-bit cũ (~8GB) không phản ánh
+        // dung lượng ảnh đĩa thật đang gắn.
+        SyscallAcquireAtaHw();
+        DetectDiskSize();
+        SyscallReleaseAtaHw();
+
         ulong sharedBufferAddr = SyscallGetSharedMem();
         // Kiểm tra xem sharedBufferAddr có hợp lệ không
         if (sharedBufferAddr == 0) {
@@ -150,7 +205,7 @@ public unsafe class Program
                 if (msg.Type == 10) 
                 {
                     // Kiểm tra xem lba có nằm trong phạm vi hợp lệ không
-                    if (lba > 0xFFFFFF) {
+                    if (!IsLbaInRange(lba)) {
                         fixed(char* err = "[!] FATAL: Invalid LBA address in ATA Read!\n\0") {
                             SyscallPrint(err);
                         }
@@ -208,7 +263,7 @@ public unsafe class Program
                 else if (msg.Type == 12) 
                 {
                     // Kiểm tra xem lba có nằm trong phạm vi hợp lệ không
-                    if (lba > 0xFFFFFF) {
+                    if (!IsLbaInRange(lba)) {
                         fixed(char* err = "[!] FATAL: Invalid LBA address in ATA Write!\n\0") {
                             SyscallPrint(err);
                         }

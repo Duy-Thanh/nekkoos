@@ -20,13 +20,13 @@ nasm -f bin src/smp_x86.asm -o smp.bin
 BF="bflat"
 
 # Build Kernel + apps (no-pie, deterministic, map files)
-$BF build src/Kernel.cs src/Syscall.cs src/IDT.cs src/ISR.cs src/RTC.cs src/PCI.cs src/Heap.cs src/Thread.cs src/IPC.cs src/KeyboardDriver.cs src/LibC.cs src/VMM.cs src/Terminal.cs src/PMM.cs src/IO.cs src/PIC.cs src/PIT.cs src/InterruptHandlers.cs src/ATA.cs src/FAT16.cs src/GlobalUsings.cs src/System.Runtime.InteropServices.cs src/System.Runtime.CompilerServices.cs src/PELoader.cs src/StrandScheduler.cs src/GDT.cs src/PRNG.cs src/Power.cs src/APIC.cs src/SMP.cs src/Spinlock.cs src/IOAPIC.cs src/vDSO.cs src/Serial.cs src/MouseDriver.cs src/NekkoInt.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj"
+$BF build src/Kernel.cs src/Syscall.cs src/IDT.cs src/ISR.cs src/RTC.cs src/PCI.cs src/Heap.cs src/Thread.cs src/IPC.cs src/KeyboardDriver.cs src/LibC.cs src/VMM.cs src/Terminal.cs src/PMM.cs src/IO.cs src/PIC.cs src/PIT.cs src/InterruptHandlers.cs src/ATA.cs src/FAT16.cs src/GlobalUsings.cs src/System.Runtime.InteropServices.cs src/System.Runtime.CompilerServices.cs src/PELoader.cs src/StrandScheduler.cs src/GDT.cs src/PRNG.cs src/Power.cs src/APIC.cs src/SMP.cs src/Spinlock.cs src/IOAPIC.cs src/vDSO.cs src/Serial.cs src/MouseDriver.cs src/NekkoInt.cs src/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj"
 
 $BF build src/ATA_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
 $BF build src/FAT16_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain"
 $BF build src/acpi.cs src/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain"
 $BF build src/Shell.cs src/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain"
-$BF build src/Login.cs src/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain"
+$BF build src/Login.cs src/Crypto.cs src/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain"
 $BF build src/top.cs src/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain"
 $BF build src/stresstest.cs src/API.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain"
 

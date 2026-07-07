@@ -22,6 +22,59 @@ public unsafe class Login
     public static void StringToSharedBuffer(char* source, char* dest) { int i = 0; while (source[i] != '\0') { dest[i] = source[i]; i++; } dest[i] = '\0'; }
     public static uint Atoi(char* str) { uint res = 0; for (int i = 0; str[i] != '\0'; ++i) { if (str[i] >= '0' && str[i] <= '9') res = res * 10 + (uint)(str[i] - '0'); else break; } return res; }
 
+    // ==========================================================
+    // [FIX BẢO MẬT] Helper hex cho định dạng PASSWD mới: user:salt:hash:UID:GID
+    // salt/hash lưu dạng chuỗi hex - không còn plaintext password trên đĩa.
+    // ==========================================================
+    private static int HexNibble(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    public static int HexToBytes(char* hex, byte* outBytes, int maxOutBytes) {
+        int i = 0, o = 0;
+        while (hex[i] != '\0' && hex[i + 1] != '\0' && o < maxOutBytes) {
+            int hi = HexNibble(hex[i]); int lo = HexNibble(hex[i + 1]);
+            if (hi < 0 || lo < 0) break;
+            outBytes[o++] = (byte)((hi << 4) | lo);
+            i += 2;
+        }
+        return o;
+    }
+
+    public static void BytesToHex(byte* bytes, int len, char* outHex) {
+        char* digits = stackalloc char[16] { '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f' };
+        for (int i = 0; i < len; i++) {
+            outHex[i * 2] = digits[(bytes[i] >> 4) & 0xF];
+            outHex[i * 2 + 1] = digits[bytes[i] & 0xF];
+        }
+        outHex[len * 2] = '\0';
+    }
+
+    // [FIX BẢO MẬT] So sánh constant-time: luôn duyệt hết độ dài cố định thay vì
+    // thoát ngay khi gặp ký tự sai khác - tránh lộ thông tin qua thời gian thực thi
+    // (timing side-channel), khác với StrCmp thông thường vốn return false sớm.
+    public static bool ConstantTimeEq(char* a, char* b, int maxLen) {
+        int diff = 0;
+        bool endedA = false, endedB = false;
+        for (int i = 0; i < maxLen; i++) {
+            char ca = endedA ? '\0' : a[i];
+            char cb = endedB ? '\0' : b[i];
+            if (a[i] == '\0') endedA = true;
+            if (b[i] == '\0') endedB = true;
+            diff |= (ca ^ cb);
+        }
+        return diff == 0;
+    }
+
+    // [FIX BẢO MẬT - LOW] Xóa sạch buffer chứa dữ liệu nhạy cảm (mật khẩu, salt,
+    // hash) khỏi RAM ngay sau khi dùng xong, tránh bị đọc lại qua memory dump/leak
+    // ở tiến trình khác hoặc lần chạy sau tái sử dụng cùng vùng stack.
+    public static void ZeroMemChar(char* buf, int len) { for (int i = 0; i < len; i++) buf[i] = '\0'; }
+    public static void ZeroMemByte(byte* buf, int len) { for (int i = 0; i < len; i++) buf[i] = 0; }
+
     public static void PrintLineWithNum(char* prefix, uint num) {
         char* buf = stackalloc char[128];
         int idx = 0;
@@ -41,15 +94,27 @@ public unsafe class Login
         SyscallPrint(buf); 
     }
 
-    public static uint ReadFileIPC(char* fileName, byte* fileBuffer) {
+    public static uint ReadFileIPC(char* fileName, byte* fileBuffer, uint bufferCapacity) {
         StringToSharedBuffer(fileName, (char*)SharedMem->FatRequestName);
         SyscallSendIPC(FAT16_PID, 30, 0);
         Message res = default; uint fileSize = 0; byte* dataChunk = (byte*)SharedMem->FatResponseData;
         while (true) {
             if (SyscallReceiveIPC(&res) == 1) {
                 if (res.Sender == FAT16_PID) {
-                    if (res.Type == 31) { fileSize = (uint)res.Payload; if (fileSize == 0) return 0; SyscallSendIPC(FAT16_PID, 311, 0); }
-                    else if (res.Type == 38) { uint offset = (uint)res.Payload; for (int i = 0; i < 512; i++) { if (offset + i < fileSize) fileBuffer[offset + i] = dataChunk[i]; } SyscallSendIPC(FAT16_PID, 39, 0); }
+                    // [FIX BẢO MẬT - CRITICAL] Chặn tràn stack: nếu file trên đĩa lớn hơn
+                    // dung lượng buffer thật (VD: PASSWD phình to khi hệ thống có nhiều
+                    // user), từ chối đọc thay vì ghi đè ra ngoài stack của Login.exe.
+                    if (res.Type == 31) {
+                        fileSize = (uint)res.Payload;
+                        if (fileSize == 0) return 0;
+                        if (fileSize > bufferCapacity) {
+                            fixed (char* err = "\n[!!!] FATAL: File too large for buffer (potential overflow blocked)!\n\0") SyscallPrint(err);
+                            SyscallSendIPC(FAT16_PID, 311, 0);
+                            return 0;
+                        }
+                        SyscallSendIPC(FAT16_PID, 311, 0);
+                    }
+                    else if (res.Type == 38) { uint offset = (uint)res.Payload; for (int i = 0; i < 512; i++) { if (offset + i < fileSize && offset + i < bufferCapacity) fileBuffer[offset + i] = dataChunk[i]; } SyscallSendIPC(FAT16_PID, 39, 0); }
                     else if (res.Type == 42) { return fileSize; }
                 }
                 // ==========================================================
@@ -107,11 +172,20 @@ public unsafe class Login
 
         char* inputUser = stackalloc char[32];
         char* inputPass = stackalloc char[32];
-        byte* passFileBuf = stackalloc byte[4096]; 
+        byte* passFileBuf = stackalloc byte[4096];
         char* lineUser = stackalloc char[32];
-        char* linePass = stackalloc char[32];
+        char* lineSalt = stackalloc char[64];
+        char* lineHash = stackalloc char[80];
         char* lineUID = stackalloc char[16];
         char* lineGID = stackalloc char[16];
+
+        // [FIX BẢO MẬT] Buffer cho việc băm mật khẩu: salt (raw bytes) + password nhập vào,
+        // rồi băm SHA-256 và so sánh dạng hex với hash lưu trong PASSWD - không bao giờ
+        // so sánh trực tiếp plaintext password nữa.
+        byte* saltBytes = stackalloc byte[32];
+        byte* hashInputBuf = stackalloc byte[32 + 32];
+        byte* computedHash = stackalloc byte[32];
+        char* computedHashHex = stackalloc char[80];
         
         fixed(char* cmdRunShell = "run SHELL.EXE\0") 
         fixed(char* dirEtc = "ETC\0")            
@@ -129,7 +203,7 @@ public unsafe class Login
                 ReadInput(inputPass, 31, true); 
 
                 if (!ChangeDirectoryIPC(dirEtc)) { fixed(char* e = "\n[!!!] CRITICAL ERROR: /ETC DIRECTORY NOT FOUND!\n\0") SyscallPrint(e); break; }
-                uint passSize = ReadFileIPC(passFileName, passFileBuf);
+                uint passSize = ReadFileIPC(passFileName, passFileBuf, 4096);
                 ChangeDirectoryIPC(dirRoot);
 
                 if (passSize == 0) { fixed(char* e = "\n[!!!] CRITICAL ERROR: /ETC/PASSWD NOT FOUND OR EMPTY!\n\0") SyscallPrint(e); break; }
@@ -137,49 +211,91 @@ public unsafe class Login
                 bool authSuccess = false; uint matchedUID = 0; uint matchedGID = 0;
                 int i = 0;
                 while (i < passSize) {
-                    int u = 0, p = 0, id = 0, gd = 0; int stage = 0; 
+                    // [FIX BẢO MẬT] Định dạng PASSWD mới: user:salt:hash:UID:GID (5 field,
+                    // salt/hash dạng hex) thay vì user:pass:UID:GID (plaintext) trước đây.
+                    int u = 0, s = 0, h = 0, id = 0, gd = 0; int stage = 0;
                     while (i < passSize && passFileBuf[i] != '\n' && passFileBuf[i] != '\r') {
                         char c = (char)passFileBuf[i];
                         if (c == ':') { stage++; }
                         else {
                             if (stage == 0 && u < 31) lineUser[u++] = c;
-                            else if (stage == 1 && p < 31) linePass[p++] = c;
-                            else if (stage == 2 && id < 15) lineUID[id++] = c;
-                            else if (stage == 3 && gd < 15) lineGID[gd++] = c;
+                            else if (stage == 1 && s < 63) lineSalt[s++] = c;
+                            else if (stage == 2 && h < 79) lineHash[h++] = c;
+                            else if (stage == 3 && id < 15) lineUID[id++] = c;
+                            else if (stage == 4 && gd < 15) lineGID[gd++] = c;
                         }
                         i++;
                     }
-                    lineUser[u] = '\0'; linePass[p] = '\0'; lineUID[id] = '\0'; lineGID[gd] = '\0';
+                    lineUser[u] = '\0'; lineSalt[s] = '\0'; lineHash[h] = '\0'; lineUID[id] = '\0'; lineGID[gd] = '\0';
 
-                    if (StrCmp(inputUser, lineUser) && StrCmp(inputPass, linePass)) {
-                        authSuccess = true; matchedUID = Atoi(lineUID); matchedGID = Atoi(lineGID); break;
+                    // [FIX BẢO MẬT - MEDIUM] Chặn "phantom account": nếu người dùng bỏ trống
+                    // Username (Enter luôn), StrCmp("", "") giữa 2 chuỗi rỗng trả về true, có
+                    // thể trùng khớp nhầm với dòng PASSWD bị hỏng/rỗng field user. Yêu cầu cả
+                    // hai chuỗi đều phải KHÔNG rỗng thì mới coi là ứng viên hợp lệ để so khớp.
+                    if (u > 0 && inputUser[0] != '\0' && StrCmp(inputUser, lineUser)) {
+                        // Băm salt (đọc từ đĩa, dạng hex) + password người dùng nhập vào.
+                        int saltLen = HexToBytes(lineSalt, saltBytes, 32);
+                        int passLen = 0; while (inputPass[passLen] != '\0') passLen++;
+
+                        int hashInputLen = 0;
+                        for (int k = 0; k < saltLen; k++) hashInputBuf[hashInputLen++] = saltBytes[k];
+                        for (int k = 0; k < passLen; k++) hashInputBuf[hashInputLen++] = (byte)inputPass[k];
+
+                        SHA256.Compute(hashInputBuf, (ulong)hashInputLen, computedHash);
+                        BytesToHex(computedHash, 32, computedHashHex);
+
+                        // [FIX BẢO MẬT] So sánh hash bằng constant-time thay vì StrCmp thoát sớm,
+                        // vá luôn lỗ hổng timing attack đã báo cáo trước đó.
+                        if (ConstantTimeEq(computedHashHex, lineHash, 64)) {
+                            authSuccess = true; matchedUID = Atoi(lineUID); matchedGID = Atoi(lineGID); break;
+                        }
                     }
                     while (i < passSize && (passFileBuf[i] == '\n' || passFileBuf[i] == '\r')) i++;
                 }
 
+                // [FIX BẢO MẬT - LOW] Xóa sạch mọi dữ liệu nhạy cảm còn nằm trên stack
+                // (password nhập vào, salt/hash đọc từ đĩa, buffer băm tạm) ngay khi vòng
+                // thử này kết thúc, bất kể thành công hay thất bại.
+                ZeroMemChar(inputPass, 32);
+                ZeroMemChar(lineSalt, 64);
+                ZeroMemChar(lineHash, 80);
+                ZeroMemByte(saltBytes, 32);
+                ZeroMemByte(hashInputBuf, 64);
+                ZeroMemByte(computedHash, 32);
+                ZeroMemChar(computedHashHex, 80);
+
                 if (authSuccess) {
                     fixed(char* ok1 = "\n[+] AUTHENTICATED! Welcome to the Multiverse!\n\0") SyscallPrint(ok1);
-                    
+
                     SyscallSetUID(matchedUID); SyscallSetGID(matchedGID);
-                    
+
                     sharedCmdBuffer = (char*)SharedMem->ShellCommandBuffer;
                     StringToSharedBuffer(cmdRunShell, sharedCmdBuffer);
-                    SyscallRunCmd(sharedCmdBuffer, 0); 
-                    
+                    SyscallRunCmd(sharedCmdBuffer, 0);
+
                     SyscallExit();
-                    while(true) { SyscallWaitIPC(); } 
+                    while(true) { SyscallWaitIPC(); }
                 } else {
                     attempts--;
                     fixed(char* err = "\n[!] ACCESS DENIED! Incorrect Username or Password.\n\0") SyscallPrint(err);
-                    if (attempts > 0) { 
-                        fixed(char* warn = "[!] Invalid credentials. Try again.\n\n\0") SyscallPrint(warn); 
+                    if (attempts > 0) {
+                        fixed(char* warn = "[!] Invalid credentials. Try again.\n\n\0") SyscallPrint(warn);
+                        // [FIX BẢO MẬT - HIGH] Chống brute-force: tăng dần thời gian chờ sau
+                        // mỗi lần sai (1s, rồi 2s...) thay vì cho thử lại ngay lập tức - làm
+                        // chậm đáng kể tốc độ dò mật khẩu tự động mà không ảnh hưởng người
+                        // dùng thật gõ tay.
+                        uint failedCount = (uint)(3 - attempts);
+                        SyscallSleep((ulong)(1000 * failedCount));
                     }
                 }
             }
 
+            // [FIX BẢO MẬT - HIGH] Hết lượt thử: khóa hẳn phiên đăng nhập này (không cho
+            // vòng lặp tiếp tục), buộc phải khởi động lại tiến trình Login để thử tiếp,
+            // kết hợp với delay tăng dần ở trên để hạn chế brute-force qua nhiều phiên.
             fixed(char* fatal = "\n[!!!] SYSTEM LOCKDOWN INITIATED [!!!]\n\0") SyscallPrint(fatal);
             SyscallExit();
-            while(true) { SyscallWaitIPC(); }  
+            while(true) { SyscallWaitIPC(); }
         }
     }
 

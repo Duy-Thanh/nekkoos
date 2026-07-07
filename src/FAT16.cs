@@ -289,7 +289,7 @@ public static unsafe class FAT16
         return found; 
     }
 
-    public static byte* ReadFile(char* filename, uint* outSize)
+    public static byte* ReadFile(char* filename, uint* outSize, int callerThreadOverride = -1)
     {
         // Kiểm tra xem filename có null không
         if (filename == null) {
@@ -298,8 +298,14 @@ public static unsafe class FAT16
             return null;
         }
 
-        AcquireVfs(); 
-        int callerThread = Scheduler.CurrentThreadId;
+        AcquireVfs();
+        // [FIX BẢO MẬT] Nếu caller đã chốt sẵn ID luồng gọi TRƯỚC khi bật ngắt cục bộ
+        // (IO.EnableInterrupts()), dùng đúng giá trị đó thay vì đọc lại
+        // Scheduler.CurrentThreadId ở đây - vì giữa lúc bật ngắt và lúc gọi hàm này,
+        // timer IRQ có thể đã ngắt quãng và đổi luồng đang chạy trên core này sang
+        // luồng KHÁC (VD: daemon nền), khiến IPC gửi đi với danh tính (và UID) sai,
+        // làm CheckAccess từ chối nhầm chính luồng gọi thật (kể cả root).
+        int callerThread = callerThreadOverride >= 0 ? callerThreadOverride : Scheduler.CurrentThreadId;
         
         if (UseDaemon && callerThread != 0) {
             KernelSharedMemBlock* shared = GetSharedMem();

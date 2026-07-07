@@ -133,19 +133,35 @@ public static unsafe class Syscall
             }
 
             // [SYSCALL 2]: VẼ PIXEL (Draw Pixel)
-            case 2: 
+            case 2:
             {
+                // [FIX BẢO MẬT - LOW] Chỉ tiến trình đang ở Foreground mới được vẽ lên màn
+                // hình dùng chung - trước đây bất kỳ process nền nào cũng vẽ đè lên UI của
+                // tiến trình đang active, cùng gốc rễ với bug tranh chấp bàn phím đã vá ở Syscall 4.
+                int fgTaskDraw = Scheduler.ForegroundTask;
+                bool fgValidDraw = fgTaskDraw >= 0 && fgTaskDraw < Scheduler.ThreadCount && Scheduler.Threads[fgTaskDraw].Active != 0;
+                if (fgValidDraw && fgTaskDraw != id) { ctx->Rax = 0; break; }
+
                 uint x = (uint)ctx->Rcx; uint y = (uint)ctx->Rdx; uint color = (uint)ctx->R8;
-                
+
                 // [FIX CHÍ MẠNG] CHẶN ĐỨNG GHI ĐÈ KERNEL MEMORY!
                 if (x >= Terminal.width || y >= Terminal.height) { ctx->Rax = 0; break; }
-                
+
                 Terminal.fb[y * Terminal.scanLine + x] = color;
                 break;
             }
 
             // [SYSCALL 3]: XÓA MÀN HÌNH (Clear Screen)
-            case 3: { uint bgColor = (uint)ctx->Rcx; Terminal.Clear(bgColor); break; }
+            case 3:
+            {
+                // [FIX BẢO MẬT - LOW] Cùng gate Foreground như Syscall 2 - chặn tiến trình
+                // nền tự ý xóa sạch màn hình của tiến trình đang active.
+                int fgTaskClear = Scheduler.ForegroundTask;
+                bool fgValidClear = fgTaskClear >= 0 && fgTaskClear < Scheduler.ThreadCount && Scheduler.Threads[fgTaskClear].Active != 0;
+                if (fgValidClear && fgTaskClear != id) { ctx->Rax = 0; break; }
+
+                uint bgColor = (uint)ctx->Rcx; Terminal.Clear(bgColor); break;
+            }
 
             // [SYSCALL 4]: ĐỌC BÀN PHÍM (GLOBAL INTERCEPT HACK)
             // ==========================================================
@@ -225,16 +241,53 @@ public static unsafe class Syscall
             }
             
             // [SYSCALL 5]: GỬI TIN NHẮN IPC (Send IPC)
-            case 5: 
-            { 
+            case 5:
+            {
                 uint receiverId = (uint)ctx->Rcx;
+                uint msgType = (uint)ctx->Rdx;
                 if (receiverId >= Scheduler.ThreadCount || Scheduler.Threads[receiverId].Active == 0) { ctx->Rax = 0; break; }
                 if (Scheduler.Threads[id].IsJailed == 1 && (receiverId == 0 || receiverId == 1)) {
                     Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; break;
                 }
 
+                // [FIX BẢO MẬT - CRITICAL] Type "quyền lực sinh tử" (SIGTERM daemon,
+                // shutdown, reboot) chỉ root (UID==0) mới được gửi. Nếu không, bất kỳ
+                // user thường nào cũng bắn thẳng 0xDEAD/0xBEEF cho ACPI/ATA/FAT16 Daemon
+                // để tắt máy/reboot/kill daemon, bỏ qua hoàn toàn kiểm tra isKing ở case 88.
+                bool isPrivilegedType = (msgType == 0xDEAD || msgType == 0xBEEF);
+                if (isPrivilegedType && Scheduler.Threads[id].UID != 0) {
+                    ctx->Rax = 0; break;
+                }
+
+                // [FIX BẢO MẬT - CRITICAL] ATA Daemon thao tác theo SECTOR vật lý,
+                // không có khái niệm "chủ sở hữu file" nên không thể tự CheckAccess -
+                // nó tin tưởng tuyệt đối msg.Sender. Trước đây BẤT KỲ tiến trình Ring3
+                // nào cũng có thể dò ra ATA.DaemonId qua syscall "Get Process Info" rồi
+                // gửi thẳng Type 10/12 (READ/WRITE RAW) để đọc/ghi bất kỳ sector nào,
+                // bypass hoàn toàn lớp CheckAccess của FAT16 Driver (kể cả /ETC/PASSWD).
+                // Toàn bộ luồng hợp pháp (Shell/Login/explorer/dsrv) chỉ nói chuyện với
+                // FAT16 Daemon qua IPC, KHÔNG BAO GIỜ gửi thẳng cho ATA Daemon - luồng
+                // Ring0 (ATA.cs) tới ATA Daemon lại gọi IPC.Send() trực tiếp (hàm nội bộ,
+                // không qua syscall 5) nên không bị ảnh hưởng bởi chặn này. Vậy chỉ cần
+                // cấm mọi caller Ring3 gửi trực tiếp cho ATA Daemon, trừ chính FAT16
+                // Daemon.
+                //
+                // [FIX REGRESSION] KHÔNG dùng Driver.FAT16.DaemonId để nhận diện - biến
+                // đó chỉ được kernel gán SAU KHI FAT16 Daemon hoàn tất handshake (IPC
+                // Type 39), nhưng FAT16 Daemon lại gọi ATA để đọc boot sector NGAY LÚC
+                // KHỞI ĐỘNG, TRƯỚC KHI gửi handshake đó - dẫn tới bị chặn nhầm, treo máy
+                // ngay từ lúc boot. Nhận diện bằng TÊN TIẾN TRÌNH thay thế, vì Name[] được
+                // PELoader gán ngay lúc tạo thread (Thread.cs), có sẵn trước khi AppMain
+                // chạy dòng lệnh đầu tiên - không có race condition.
+                if (Driver.ATA.DaemonId != 0 && receiverId == Driver.ATA.DaemonId) {
+                    byte* senderName = Scheduler.Threads[id].Name;
+                    bool isFat16Daemon = senderName[0] == (byte)'F' && senderName[1] == (byte)'A'
+                        && senderName[2] == (byte)'T' && senderName[3] == (byte)'1' && senderName[4] == (byte)'6';
+                    if (!isFat16Daemon) { ctx->Rax = 0; break; }
+                }
+
                 // Gọi Send của cấu trúc Lock-Free mới
-                IPC.Send((uint)ctx->Rdx, (uint)id, receiverId, ctx->R8); 
+                IPC.Send(msgType, (uint)id, receiverId, ctx->R8);
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
                 if (Scheduler.Threads[receiverId].Active == 2) {
@@ -337,7 +390,10 @@ public static unsafe class Syscall
                 pInfo->Active = Scheduler.Threads[targetId].Active;
                 pInfo->IsJailed = Scheduler.Threads[targetId].IsJailed;
                 pInfo->IsPhantomDead = Scheduler.Threads[targetId].IsPhantomDead;
-                pInfo->HeapMemory = Scheduler.Threads[targetId].AppHeapBase; 
+                // [FIX BẢO MẬT - MEDIUM] Chỉ tiết lộ địa chỉ heap thật (KASLR-style) cho
+                // root hoặc chính chủ tiến trình đó - trước đây rò rỉ cho bất kỳ ai, hỗ trợ
+                // tấn công dò địa chỉ vào các daemon chạy quyền root.
+                pInfo->HeapMemory = (isKing || targetId == (uint)id) ? Scheduler.Threads[targetId].AppHeapBase : 0;
                 pInfo->CpuTicks = Scheduler.Threads[targetId].CpuTicks;
                 pInfo->PhysPages = Scheduler.Threads[targetId].PhysPages;
                 pInfo->VirtPages = Scheduler.Threads[targetId].VirtPages; 
@@ -464,8 +520,17 @@ public static unsafe class Syscall
             }
 
             // [SYSCALL 52] ĐỔI HƯỚNG TERMINAL (VIRTUAL FRAMEBUFFER)
-            case 52: 
+            case 52:
             {
+                // [FIX BẢO MẬT - HIGH] Chỉ root mới được đổi hướng Terminal toàn cục -
+                // Terminal.fb/width/height/scanLine là state DÙNG CHUNG toàn hệ thống,
+                // trước đây bất kỳ process nào (kể cả jailed) cũng chiếm được nó.
+                if (!isKing) {
+                    Scheduler.Threads[id].IsPhantomDead = 1;
+                    ctx->Rax = 0;
+                    break;
+                }
+
                 ulong newFb = ctx->Rcx;
                 uint w = (uint)ctx->Rdx;
                 uint h = (uint)ctx->R8;
@@ -567,8 +632,12 @@ public static unsafe class Syscall
                         char* appName = isDaemon ? cmdStr + 7 : cmdStr + 4;
                         if (*appName == '\0') { ctx->Rax = 0; break; }
 
+                        // [FIX BẢO MẬT] Chốt sẵn ID luồng gọi TRƯỚC khi bật ngắt cục bộ, tránh
+                        // timer IRQ đổi luồng đang chạy trên core này giữa chừng khiến FAT16.ReadFile
+                        // gửi IPC với danh tính (UID) sai sang FAT16 Daemon.
+                        int callerThreadForRead = id;
                         uint fileSize = 0; IO.EnableInterrupts(); // [FIX] Bật ngắt CỤC BỘ cho I/O!
-                        byte* rawData = FAT16.ReadFile(appName, &fileSize);
+                        byte* rawData = FAT16.ReadFile(appName, &fileSize, callerThreadForRead);
                         
                         if (rawData != null) {
                             if (rawData[0] != 'M' || rawData[1] != 'Z') {
@@ -578,7 +647,9 @@ public static unsafe class Syscall
                             }
                             
                             Terminal.SetColor(0x00FFFF00);
-                            bool isJailed = (Scheduler.Threads[id].UID != 0 && Scheduler.Threads[id].GID != 0);
+                            // [FIX BẢO MẬT] Đổi && thành || - user có UID != 0 nhưng GID == 0
+                            // (cấu hình hợp lệ trong PASSWD) trước đây thoát Zero Trust Jail hoàn toàn.
+                            bool isJailed = (Scheduler.Threads[id].UID != 0 || Scheduler.Threads[id].GID != 0);
                             if (isJailed) { Terminal.SetColor(0x00FF00FF); fixed (char* msg = "[!] ZERO TRUST: Untrusted App detected! Jailing in Phantom Sandbox...\n\0") Terminal.Print(msg); }
                             
                             PELoader.LoadAndRun(rawData, isDaemon, isJailed, false, appName, 1);
@@ -596,9 +667,10 @@ public static unsafe class Syscall
                         uint currentUid = Scheduler.Threads[id].UID;
                         Terminal.SetColor(0x00FFFF00); fixed (char* msg = "\n[*] Saving session... Logging out...\n\0") Terminal.Print(msg);
 
+                        int callerThreadForLogout = id;
                         uint fileSize = 0; IO.EnableInterrupts(); byte* rawData = null; // [FIX] Bật ngắt CỤC BỘ!
                         fixed (char* logonFile = "syslogon.exe\0") {
-                            rawData = FAT16.ReadFile(logonFile, &fileSize);
+                            rawData = FAT16.ReadFile(logonFile, &fileSize, callerThreadForLogout);
                             if (rawData != null && rawData[0] == 'M' && rawData[1] == 'Z') {
                                 PELoader.LoadAndRun(rawData, false, false, true, logonFile);
                             } else {

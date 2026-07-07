@@ -54,9 +54,9 @@ public unsafe class Program
 
     public static void SyscallYieldApp() { SyscallYield(); }
 
-    public const int R_OK = 4; 
-    public const int W_OK = 2; 
-    public const int X_OK = 1; 
+    public const int R_OK = 4;
+    public const int W_OK = 2;
+    public const int X_OK = 1;
 
     public static SharedMemoryBlock* SharedMem = null;
     public static FAT_BPB CachedBPB;
@@ -66,6 +66,18 @@ public unsafe class Program
     public static uint RootDirSectors;
     public static ushort CurrentDirCluster = 0;
 
+    // [FIX BẢO MẬT] Kho mật khẩu (/ETC/PASSWD) chứa salt+hash - dù cũng là file mcopy
+    // "không chủ" (OwnerUID=OwnerGID=0) như các binary hệ thống khác, nó KHÔNG được
+    // hưởng quyền Đọc công khai giống SHELL.EXE/FAT16.EXE... - chỉ root mới đọc được,
+    // giống quy ước /etc/shadow trên Unix (khác /etc/passwd thường world-readable vì
+    // không chứa hash). Tên PASSWD ở đây đã cố định do build.sh luôn mcopy đúng 1 vị
+    // trí, không phải nhận input động từ người dùng nên so khớp tên là an toàn.
+    private static bool IsSecretName(byte* formattedName) {
+        byte* target = stackalloc byte[11] { (byte)'P',(byte)'A',(byte)'S',(byte)'S',(byte)'W',(byte)'D',(byte)' ',(byte)' ',(byte)' ',(byte)' ',(byte)' ' };
+        for (int i = 0; i < 11; i++) if (formattedName[i] != target[i]) return false;
+        return true;
+    }
+
     public static bool CheckAccess(uint cUID, uint cGID, ushort fUID, ushort fGID, ushort perms, int requestedMode)
     {
         // Kiểm tra xem các tham số có hợp lệ không
@@ -74,7 +86,20 @@ public unsafe class Program
             return false;
         }
 
-        if (cUID == 0) return true; 
+        if (cUID == 0) return true;
+
+        // [FIX BẢO MẬT] File được `mcopy` thẳng lên đĩa lúc build (binary hệ thống:
+        // SHELL.EXE, FAT16.EXE...) không đi qua WRITE handler của driver nên KHÔNG hề
+        // có OwnerUID/OwnerGID thật - trường Permissions của chúng thực chất là byte
+        // ngày/giờ chuẩn của FAT bị tái sử dụng (mtools ghi ngày copy thật vào đó), nên
+        // giá trị đọc được là rác ngẫu nhiên chứ không phản ánh quyền hạn có chủ đích -
+        // không thể dùng để enforce truy cập. Với nhóm file này (OwnerUID==0 &&
+        // OwnerGID==0, tức chưa từng được driver gán chủ sở hữu), coi như file hệ thống
+        // dùng chung: cho Đọc/Thực thi công khai, nhưng KHÔNG cho Ghi (chỉ root mới sửa/
+        // xoá được) - khác bản vá cũ (đặc cách mọi file .EXE bất kể chủ sở hữu, kể cả
+        // file người dùng khác tạo ra với quyền hạn chế).
+        if (fUID == 0 && fGID == 0 && (requestedMode & W_OK) == 0) return true;
+
         if (perms > 511) perms = 493;
 
         int targetBits = 0;
@@ -143,14 +168,34 @@ public unsafe class Program
         }
         
         for (int i = 0; i < 512; i++) SharedMem->AtaRawBuffer[i] = buffer[i];
-        SyscallSendIPC(ATA_PID, 12, lba); 
+        SyscallSendIPC(ATA_PID, 12, lba);
         Message res = default;
+        int retryCount = 0;
         while (true) {
-            if (SyscallReceiveIPC(&res) == 1) { 
-                if (res.Sender == ATA_PID && res.Type == 13) break; 
-                else if (res.Sender != ATA_PID) {
+            if (SyscallReceiveIPC(&res) == 1) {
+                if (res.Sender == ATA_PID) {
+                    if (res.Type == 13) break;
+                    else if (res.Type == 111) {
+                        // [FIX BẢO MẬT - MEDIUM] Trước đây ACK lỗi (Type 111) từ ATA Daemon
+                        // không khớp điều kiện nào ở đây (không phải Type 13 thành công, cũng
+                        // không phải "sender khác ATA" để xếp hàng chờ) nên bị ÂM THẦM RƠI MẤT,
+                        // khiến vòng lặp chờ ACK vô hạn, treo cả FAT16 Daemon (và mọi client
+                        // đang chờ nó) khi ATA gặp lỗi ghi thật. Giờ xử lý đối xứng với
+                        // ReadSectorIPC: thử gửi lại có giới hạn, bỏ cuộc nếu ATA thực sự hỏng
+                        // thay vì treo cứng vô thời hạn.
+                        retryCount++;
+                        if (retryCount >= 5) {
+                            fixed(char* err = "[!] FAT16: ATA is dead. Aborting WriteSector.\n\0") SyscallPrint(err);
+                            break;
+                        }
+                        for (int i = 0; i < 512; i++) SharedMem->AtaRawBuffer[i] = buffer[i];
+                        SyscallSendIPC(ATA_PID, 12, lba);
+                    }
+                }
+                else {
                     int nextHead = (PendingHead + 1) % PENDING_MAX;
                     if (nextHead != PendingTail) { PendingQueue[PendingHead] = res; PendingHead = nextHead; }
+                    else { fixed(char* warn = "[WARN] FAT Server PendingQueue OVERFLOW!\n\0") SyscallPrint(warn); }
                 }
             }
             else SyscallWaitIPC();
@@ -159,14 +204,28 @@ public unsafe class Program
 
     public static void FlushCacheIPC()
     {
-        SyscallSendIPC(ATA_PID, 14, 0); 
+        SyscallSendIPC(ATA_PID, 14, 0);
         Message res = default;
+        int retryCount = 0;
         while (true) {
-            if (SyscallReceiveIPC(&res) == 1) { 
-                if (res.Sender == ATA_PID && res.Type == 15) break; 
-                else if (res.Sender != ATA_PID) {
+            if (SyscallReceiveIPC(&res) == 1) {
+                if (res.Sender == ATA_PID) {
+                    if (res.Type == 15) break;
+                    else if (res.Type == 111) {
+                        // [FIX BẢO MẬT - MEDIUM] Cùng lỗi mất ACK như WriteSectorIPC - Type 111
+                        // (lỗi flush) trước đây không khớp nhánh nào, treo vô hạn.
+                        retryCount++;
+                        if (retryCount >= 5) {
+                            fixed(char* err = "[!] FAT16: ATA is dead. Aborting FlushCache.\n\0") SyscallPrint(err);
+                            break;
+                        }
+                        SyscallSendIPC(ATA_PID, 14, 0);
+                    }
+                }
+                else {
                     int nextHead = (PendingHead + 1) % PENDING_MAX;
                     if (nextHead != PendingTail) { PendingQueue[PendingHead] = res; PendingHead = nextHead; }
+                    else { fixed(char* warn = "[WARN] FAT Server PendingQueue OVERFLOW!\n\0") SyscallPrint(warn); }
                 }
             }
             else SyscallWaitIPC();
@@ -644,11 +703,19 @@ public unsafe class Program
                     ushort ownerUID = 0; ushort ownerGID = 0; ushort perms = 0;
                     
                     FindEntry(privateName, &cluster, &fileSize, &attr, &ownerUID, &ownerGID, &perms, sectorBuf, fatBuf, formattedName);
-                    bool isExecutable = (formattedName[8] == 'E' && formattedName[9] == 'X' && formattedName[10] == 'E');
 
-                    if (cluster != 0 && !isExecutable && !CheckAccess(callerUID, callerGID, ownerUID, ownerGID, perms, R_OK)) {
+                    // [FIX BẢO MẬT - HIGH] Trước đây file có phần mở rộng .EXE được bỏ qua
+                    // hoàn toàn kiểm tra quyền đọc (R_OK), bất kể chủ sở hữu/permission bits -
+                    // cho phép user thường đọc nội dung bất kỳ file .EXE nào kể cả của root với
+                    // quyền hạn chế (VD: 700). Giờ mọi loại file đều phải qua CheckAccess như nhau.
+                    bool canReadFile = CheckAccess(callerUID, callerGID, ownerUID, ownerGID, perms, R_OK);
+                    // [FIX BẢO MẬT] Riêng /ETC/PASSWD (chứa salt+hash) không được hưởng quyền
+                    // "world-readable" mặc định của file hệ thống không chủ (xem CheckAccess) -
+                    // chỉ root được đọc, bất kể callerUID/GID hay Permissions là gì.
+                    if (IsSecretName(formattedName) && callerUID != 0) canReadFile = false;
+                    if (cluster != 0 && !canReadFile) {
                         fixed (char* e = "[!] Access Denied: You do not have Read (r) permission for this file!\n\0") SyscallPrint(e);
-                        SyscallSendIPC(client, 31, 0); SyscallYieldApp(); continue; 
+                        SyscallSendIPC(client, 31, 0); SyscallYieldApp(); continue;
                     }
 
                     if (cluster == 0 && fileSize == 0) { SyscallSendIPC(client, 31, 0); SyscallYieldApp(); continue; }
@@ -678,8 +745,22 @@ public unsafe class Program
                 else if (msg.Type == 32) // WRITE
                 {
                     uint fileSize = (uint)msg.Payload;
-                    if (CachedBPB.SectorsPerCluster == 0) CachedBPB.SectorsPerCluster = 1; 
-                    if (fileSize == 0) fileSize = 1; 
+                    if (CachedBPB.SectorsPerCluster == 0) CachedBPB.SectorsPerCluster = 1;
+                    if (fileSize == 0) fileSize = 1;
+
+                    // [FIX BẢO MẬT - LOW] Trước đây fileSize (client tự khai báo) không bị
+                    // giới hạn, khiến "numClusters = (fileSize + clusterSize - 1) / clusterSize"
+                    // có thể TRÀN SỐ uint khi fileSize gần UINT_MAX, làm numClusters tính sai
+                    // (quá nhỏ) - cấp phát thiếu cluster so với dữ liệu client định gửi. Chặn
+                    // ngay từ đầu bằng dung lượng đĩa THẬT lấy động từ BPB đã parse lúc mount
+                    // (TotalSectors16/32, KHÔNG hardcode) - không file nào có thể lớn hơn cả ổ đĩa.
+                    ulong bytesPerSectorU = (ulong)(CachedBPB.BytesPerSector == 0 ? 512 : CachedBPB.BytesPerSector);
+                    ulong totalSectorsU = CachedBPB.TotalSectors32 != 0 ? CachedBPB.TotalSectors32 : CachedBPB.TotalSectors16;
+                    ulong maxFileBytes = totalSectorsU * bytesPerSectorU;
+                    if (maxFileBytes != 0 && fileSize > maxFileBytes) {
+                        fixed(char* err = "[!] Access Denied: Declared file size exceeds disk capacity!\n\0") SyscallPrint(err);
+                        SyscallSendIPC(client, 35, 0); SyscallYieldApp(); continue;
+                    }
 
                     char* sharedName = (char*)SharedMem->FatRequestName;
                     int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
@@ -967,8 +1048,12 @@ public unsafe class Program
                 }
                 else if (msg.Type == 46) // RM
                 {
-                    char* sharedName = (char*)SharedMem->FatRequestName; int n = 0; 
-                    while(sharedName[n] != '\0') { privateName[n] = sharedName[n]; n++; } privateName[n] = '\0';
+                    char* sharedName = (char*)SharedMem->FatRequestName; int n = 0;
+                    // [FIX BẢO MẬT - CRITICAL] Chặn tràn bộ nhớ: các handler khác đều giới hạn
+                    // n < 255 khi copy tên file từ shared memory (client-controlled, tối đa 4096
+                    // byte) vào privateName (chỉ 256 phần tử) - riêng RM trước đây thiếu điều
+                    // kiện này, cho phép ghi tràn ra ngoài buffer và phá hỏng vùng nhớ kế cận.
+                    while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; } privateName[n] = '\0';
                     FormatFATName(privateName, formattedName);
 
                     bool deleted = false; bool isDirError = false; bool accessDenied = false;

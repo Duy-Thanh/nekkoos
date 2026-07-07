@@ -13,8 +13,27 @@ public static unsafe class Terminal
 
     private static uint cursorX = 0;
     private static uint cursorY = 0;
-    private static uint fgColor = 0x00FFFFFF; 
-    private static uint bgColor = 0x00000000; 
+    // [FIX MÀU CHỮ] bootColor chỉ dùng làm fallback cho các dòng log CỰC SỚM lúc
+    // Scheduler chưa sẵn sàng (trước khi có CurrentThreadId hợp lệ) - còn lại mỗi
+    // tiến trình tự giữ màu chữ RIÊNG trong Scheduler.Threads[id].TextColor, tránh
+    // đụng độ khi nhiều luồng/core in màn hình song song.
+    private static uint bootColor = 0x00FFFFFF;
+    private static uint bgColor = 0x00000000;
+
+    private static uint fgColor {
+        get {
+            if (!Scheduler.Ready || Scheduler.CurrentThreadIds == null) return bootColor;
+            int cur = Scheduler.CurrentThreadId;
+            if (cur < 0 || cur >= Scheduler.ThreadCount) return bootColor;
+            return Scheduler.Threads[cur].TextColor;
+        }
+        set {
+            if (!Scheduler.Ready || Scheduler.CurrentThreadIds == null) { bootColor = value; return; }
+            int cur = Scheduler.CurrentThreadId;
+            if (cur < 0 || cur >= Scheduler.ThreadCount) { bootColor = value; return; }
+            Scheduler.Threads[cur].TextColor = value;
+        }
+    }
 
     private const int SCALE = 2;
     public const int CHAR_WIDTH = 8 * SCALE;

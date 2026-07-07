@@ -78,10 +78,59 @@ public static unsafe class ATA
         while (timeout > 0)
         {
             byte status = IO.In8(0x1F7);
-            if ((status & 0x80) == 0) return true; 
+            if ((status & 0x80) == 0) return true;
             timeout--;
         }
-        return false; 
+        return false;
+    }
+
+    // [FIX LOW] Dung lượng đĩa thật - dò động bằng IDENTIFY DEVICE (0xEC), giống hệt
+    // ATA_Driver.cs (Ring 3), TUYỆT ĐỐI không hardcode theo kích thước hdd.img hiện tại.
+    // Đường Ring0 này chỉ chạy khi UseDaemon == false (trước khi ATA Daemon online).
+    private static uint DetectedSectorCount = 0;
+
+    private static void DetectDiskSize()
+    {
+        if (!WaitAtaHardware()) return;
+
+        IO.Out8(0x1F6, 0xA0);
+        IO.Out8(0x1F2, 0); IO.Out8(0x1F3, 0); IO.Out8(0x1F4, 0); IO.Out8(0x1F5, 0);
+        IO.Out8(0x1F7, 0xEC); // IDENTIFY DEVICE
+
+        byte status = IO.In8(0x1F7);
+        if (status == 0) return;
+
+        int timeout = 1000000;
+        while (timeout > 0)
+        {
+            status = IO.In8(0x1F7);
+            if ((status & 0x80) == 0) break;
+            timeout--;
+        }
+        if (timeout <= 0 || (status & 0x01) != 0) return;
+
+        while (true)
+        {
+            status = IO.In8(0x1F7);
+            if ((status & 0x01) != 0) return;
+            if ((status & 0x08) != 0) break;
+        }
+
+        ushort* identifyData = stackalloc ushort[256];
+        for (int i = 0; i < 256; i++) identifyData[i] = IO.In16(0x1F0);
+
+        uint totalSectors = (uint)identifyData[60] | ((uint)identifyData[61] << 16);
+        if (totalSectors > 0) DetectedSectorCount = totalSectors;
+    }
+
+    private static bool IsLbaInRange(uint lba)
+    {
+        bool hwIrq = AtaHardwareLock.AcquireSafe();
+        if (DetectedSectorCount == 0) DetectDiskSize();
+        AtaHardwareLock.ReleaseSafe(hwIrq);
+
+        if (DetectedSectorCount != 0) return lba < DetectedSectorCount;
+        return lba <= 0xFFFFFF;
     }
 
     public static void ReadSector(uint lba, byte* buffer)
@@ -94,7 +143,7 @@ public static unsafe class ATA
             return;
         }
 
-        if (lba > 0xFFFFFF) {
+        if (!IsLbaInRange(lba)) {
             Terminal.SetColor(0x00FF0000);
             fixed(char* err = "[!] FATAL: Invalid LBA address in ATA ReadSector!\n\0") Terminal.Print(err);
             Terminal.SetColor(0x00FFFFFF);
@@ -205,7 +254,7 @@ public static unsafe class ATA
             return;
         }
 
-        if (lba > 0xFFFFFF) {
+        if (!IsLbaInRange(lba)) {
             Terminal.SetColor(0x00FF0000);
             fixed(char* err = "[!] FATAL: Invalid LBA address in ATA WriteSector!\n\0") Terminal.Print(err);
             Terminal.SetColor(0x00FFFFFF);

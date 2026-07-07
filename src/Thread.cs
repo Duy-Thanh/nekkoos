@@ -36,8 +36,11 @@ public unsafe struct Thread
     public uint VirtPages;      
     public ulong WakeUpTick;    
     public ulong VRuntime; // Virtual Runtime
-    public byte Priority;       
-    public fixed byte Padding3[15]; 
+    public byte Priority;
+    public uint TextColor; // [FIX MÀU CHỮ] Màu chữ hiện tại của RIÊNG tiến trình này -
+                            // trước đây dùng 1 biến global chung (Terminal.fgColor), khiến
+                            // các luồng/core chạy song song ghi đè màu của nhau vô tội vạ.
+    public fixed byte Padding3[11];
     public fixed byte FpuState[512];
 }
 
@@ -133,8 +136,9 @@ public static unsafe class Scheduler
         Threads[0].Active = 1;
         Threads[0].KernelStackTop = GDT.Tss->Rsp0;
         Threads[0].Pml4 = (ulong)VMM.PML4;
-        Threads[0].UID = 0; 
+        Threads[0].UID = 0;
         Threads[0].GID = 0;
+        Threads[0].TextColor = 0x00FFFFFF;
         Threads[0].ParentId = 0;
         Threads[0].ExecutingOnCore = 0; 
         // ==========================================================
@@ -568,6 +572,7 @@ public static unsafe class Scheduler
         
         if (forceRoot) { Threads[id].UID = 0; Threads[id].GID = 0; }
         else { Threads[id].GID = Threads[currentParent].GID; Threads[id].UID = Threads[currentParent].UID; }
+        Threads[id].TextColor = 0x00FFFFFF; // [FIX MÀU CHỮ] Mặc định trắng, riêng cho từng tiến trình
 
         LibC.MemCpy(Threads[id].FpuState, Threads[0].FpuState, 512);
 
