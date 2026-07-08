@@ -102,6 +102,70 @@ public unsafe class Shell
         return res;
     }
 
+    // [STACK ISOLATION] Tach ra ham rieng de tranh stack overflow trong Main.
+    // bflat AOT allocate TẤT CẢ stackalloc cua 1 ham upfront - neu de inline trong
+    // Main thi 8192+8192+256+256 bytes duoc cap phat DONG THOI du chi dung 1 nhanh.
+    // Tach thanh ham rieng -> moi ham co stack frame doc lap, khong chong le nhau.
+
+    // Doc noi dung tu ban phim vao buf, tra ve so byte. Buf phai >= 8192.
+    public static int CaptureWriteContent(byte* buf) {
+        const int ContentCap = 8192;
+        int contentLen = 0;
+        char* lineBuf = stackalloc char[256];
+        char* charBuf = stackalloc char[2]; charBuf[1] = '\0';
+
+        while (true) {
+            int lineLen = 0;
+            while (true) {
+                char c = (char)SyscallGetChar();
+                if (c == '\0') { SyscallWaitIPC(); continue; }
+                if (c == '\n') { fixed(char* nl = "\n\0") ShellPrint(nl); break; }
+                else if (c == '\b' && lineLen > 0) { lineLen--; fixed(char* bs = "\b \b\0") ShellPrint(bs); }
+                else if (c >= 32 && c <= 126 && lineLen < 255) {
+                    lineBuf[lineLen++] = c;
+                    charBuf[0] = c; ShellPrint(charBuf);
+                }
+            }
+            if (lineLen == 1 && lineBuf[0] == '.') break;
+            for (int i = 0; i < lineLen && contentLen < ContentCap - 1; i++) buf[contentLen++] = (byte)lineBuf[i];
+            if (contentLen < ContentCap - 1) buf[contentLen++] = (byte)'\n';
+        }
+        return contentLen;
+    }
+
+    // Xu ly lenh "write <path>" - doc noi dung roi gui IPC toi FAT16 daemon.
+    public static void DoWriteCmd(char* fileName, SharedMemoryBlock* SharedMem) {
+        char* sharedNameBuf = (char*)SharedMem->FatRequestName;
+        int n = 0; while(fileName[n] != '\0' && n < 255) { sharedNameBuf[n] = fileName[n]; n++; }
+        sharedNameBuf[n] = '\0';
+
+        fixed(char* wmsg = "[*] Enter content. End with a single '.' on its own line:\n\0") ShellPrint(wmsg);
+
+        const int ContentCap = 8192;
+        byte* content = stackalloc byte[ContentCap];
+        int contentLen = CaptureWriteContent(content);
+
+        uint payloadSize = (uint)contentLen;
+        SyscallSendIPC(FAT16_PID, 32, payloadSize);
+
+        Message res = default; byte* dataChunk = (byte*)SharedMem->FatResponseData;
+        while(true) {
+            if (SyscallReceiveIPC(&res) == 1 && res.Sender == FAT16_PID) {
+                if (res.Type == 33) {
+                    uint offset = (uint)res.Payload;
+                    for(int i = 0; i < 512; i++) dataChunk[i] = (offset + i < payloadSize) ? content[offset + i] : (byte)0;
+                    SyscallSendIPC(FAT16_PID, 34, 0);
+                }
+                else if (res.Type == 35) {
+                    if (res.Payload == 1) { fixed(char* ok = "[+] File written successfully!\n\0") ShellPrint(ok); }
+                    else { fixed(char* err = "[!] Failed! Disk Full, Access Denied or File is a Directory!\n\0") ShellPrint(err); }
+                    break;
+                }
+            }
+            else SyscallWaitIPC();
+        }
+    }
+
     public static void AppendDecimalToBuffer(uint num, char* buf, ref int idx) {
         char* rev = stackalloc char[16]; int c = 0;
         if (num == 0) { buf[idx++] = '0'; return; }
@@ -332,59 +396,7 @@ public unsafe class Shell
                     else if (StrStartsWith(sharedCmdBuffer, cmdWrite))
                     {
                         SweepMailbox();
-                        char* sharedNameBuf = (char*)SharedMem->FatRequestName;
-                        char* fileName = sharedCmdBuffer + 6;
-                        int n = 0; while(fileName[n] != '\0' && n < 255) { sharedNameBuf[n] = fileName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
-
-                        // [FIX] Doc noi dung THAT tu ban phim thay vi don gia doc dem 'X'.
-                        // Go tung dong, ket thuc bang mot dong chi co dau "." don doc.
-                        fixed(char* wmsg = "[*] Enter content. End with a single '.' on its own line:\n\0") ShellPrint(wmsg);
-
-                        const int ContentCap = 8192;
-                        byte* content = stackalloc byte[ContentCap];
-                        int contentLen = 0;
-                        char* lineBuf = stackalloc char[256];
-
-                        while (true) {
-                            int lineLen = 0;
-                            while (true) {
-                                char c = (char)SyscallGetChar();
-                                if (c == '\0') { SyscallWaitIPC(); continue; }
-                                if (c == '\n') { fixed(char* nl = "\n\0") ShellPrint(nl); break; }
-                                else if (c == '\b' && lineLen > 0) { lineLen--; fixed(char* bs = "\b \b\0") ShellPrint(bs); }
-                                else if (c >= 32 && c <= 126 && lineLen < 255) {
-                                    lineBuf[lineLen++] = c;
-                                    charBuf[0] = c; charBuf[1] = '\0';
-                                    ShellPrint(charBuf);
-                                }
-                            }
-                            if (lineLen == 1 && lineBuf[0] == '.') break;
-
-                            for (int i = 0; i < lineLen && contentLen < ContentCap - 1; i++) content[contentLen++] = (byte)lineBuf[i];
-                            if (contentLen < ContentCap - 1) content[contentLen++] = (byte)'\n';
-                        }
-
-                        uint payloadSize = (uint)contentLen;
-                        SyscallSendIPC(FAT16_PID, 32, payloadSize);
-
-                        Message res = default; byte* dataChunk = (byte*)SharedMem->FatResponseData;
-                        while(true) {
-                            if (SyscallReceiveIPC(&res) == 1 && res.Sender == FAT16_PID) {
-                                if (res.Type == 33) {
-                                    uint offset = (uint)res.Payload;
-                                    for(int i = 0; i < 512; i++) dataChunk[i] = (offset + i < payloadSize) ? content[offset + i] : (byte)0;
-                                    SyscallSendIPC(FAT16_PID, 34, 0);
-                                }
-                                else if (res.Type == 35) {
-                                    if (res.Payload == 1) { fixed(char* ok = "[+] File written successfully!\n\0") ShellPrint(ok); }
-                                    else { fixed(char* err = "[!] Failed! Disk Full, Access Denied or File is a Directory!\n\0") ShellPrint(err); }
-                                    break;
-                                }
-                            }
-                            // [FIX] Ngóng thư thì phải NGỦ!
-                            else SyscallWaitIPC();
-                        }
+                        DoWriteCmd(sharedCmdBuffer + 6, SharedMem);
                     }
                     else if (StrCmp(sharedCmdBuffer, cmdCdBare))
                     {
@@ -581,68 +593,7 @@ public unsafe class Shell
                         if (appName[0] == '\0') {
                             fixed(char* err = "[!] Usage: sudo <app>\n\0") ShellPrint(err);
                         } else {
-                            // [SUDO WRITE] Neu app can chay la "write <path>", phai
-                            // TU DOC noi dung tu ban phim NGAY TAI DAY (Ring3, TAI SU
-                            // DUNG dung logic capture cua lenh "write" thuong ben duoi)
-                            // TRUOC khi hoi mat khau/goi syscall - vi Kernel (Ring0)
-                            // khong the "go phim ho" ma chi RELAY con tro noi dung da
-                            // co san sang cho daemon qua callerThreadForSudo.
-                            byte* sudoContent = null;
-                            int sudoContentLen = 0;
-                            bool isSudoWrite = StrStartsWith(appName, cmdWrite);
-                            byte* sudoContentBuf = stackalloc byte[8192];
-
-                            if (isSudoWrite) {
-                                char* wpath = appName + 6;
-                                if (wpath[0] == '\0') {
-                                    fixed(char* err = "[!] Usage: sudo write <path>\n\0") ShellPrint(err);
-                                    goto SudoWriteAbort;
-                                }
-
-                                fixed(char* wmsg = "[*] Enter content. End with a single '.' on its own line:\n\0") ShellPrint(wmsg);
-
-                                const int ContentCap = 8192;
-                                int contentLen = 0;
-                                char* lineBuf = stackalloc char[256];
-
-                                while (true) {
-                                    int lineLen = 0;
-                                    while (true) {
-                                        char c = (char)SyscallGetChar();
-                                        if (c == '\0') { SyscallWaitIPC(); continue; }
-                                        if (c == '\n') { fixed(char* nl = "\n\0") ShellPrint(nl); break; }
-                                        else if (c == '\b' && lineLen > 0) { lineLen--; fixed(char* bs = "\b \b\0") ShellPrint(bs); }
-                                        else if (c >= 32 && c <= 126 && lineLen < 255) {
-                                            lineBuf[lineLen++] = c;
-                                            charBuf[0] = c; charBuf[1] = '\0';
-                                            ShellPrint(charBuf);
-                                        }
-                                    }
-                                    if (lineLen == 1 && lineBuf[0] == '.') break;
-
-                                    for (int i = 0; i < lineLen && contentLen < ContentCap - 1; i++) sudoContentBuf[contentLen++] = (byte)lineBuf[i];
-                                    if (contentLen < ContentCap - 1) sudoContentBuf[contentLen++] = (byte)'\n';
-                                }
-
-                                sudoContent = sudoContentBuf;
-                                sudoContentLen = contentLen;
-                            }
-
-                            fixed(char* prompt = "[sudo] Password: \0") ShellPrint(prompt);
-                            char* passBuf = stackalloc char[64];
-                            ReadInput(passBuf, 63, true);
-
-                            ulong sudoResult = SyscallSudoRun(appName, passBuf, sudoContent, (ulong)sudoContentLen);
-
-                            for (int i = 0; i < 64; i++) passBuf[i] = '\0';
-                            if (isSudoWrite) for (int i = 0; i < sudoContentLen; i++) sudoContentBuf[i] = 0;
-
-                            if (sudoResult == 1) { /* Thanh cong, app da chay / write thanh cong */ }
-                            else if (sudoResult == 2) { fixed(char* err = "[!] User is not in the sudoers file. This incident will be reported.\n\0") ShellPrint(err); }
-                            else if (sudoResult == 3) { fixed(char* err = "[!] Target application not found or corrupted.\n\0") ShellPrint(err); }
-                            else { fixed(char* err = "[!] Sorry, try again.\n\0") ShellPrint(err); }
-
-                            SudoWriteAbort: ;
+                            DoSudoCmd(appName);
                         }
                     }
                     else { SyscallRunCmd(sharedCmdBuffer, (ulong)GuiPixels); }
@@ -652,5 +603,42 @@ public unsafe class Shell
             }
         }
     }
+    // [STACK ISOLATION] Toan bo logic sudo (bao gom capture content cho "write")
+    // nam trong ham rieng de stack frame doc lap voi Main, tranh stackalloc chong le.
+    public static void DoSudoCmd(char* appName) {
+        fixed(char* cmdWrite = "write \0") {
+        bool isSudoWrite = StrStartsWith(appName, cmdWrite);
+        byte* sudoContent = null;
+        int sudoContentLen = 0;
+        // Dung heap? Khong - dung stackalloc trong ham NAY (frame rieng, an toan).
+        byte* sudoContentBuf = stackalloc byte[8192];
+
+        if (isSudoWrite) {
+            char* wpath = appName + 6;
+            if (wpath[0] == '\0') {
+                fixed(char* err = "[!] Usage: sudo write <path>\n\0") ShellPrint(err);
+                return;
+            }
+            fixed(char* wmsg = "[*] Enter content. End with a single '.' on its own line:\n\0") ShellPrint(wmsg);
+            sudoContentLen = CaptureWriteContent(sudoContentBuf);
+            sudoContent = sudoContentBuf;
+        }
+
+        fixed(char* prompt = "[sudo] Password: \0") ShellPrint(prompt);
+        char* passBuf = stackalloc char[64];
+        ReadInput(passBuf, 63, true);
+
+        ulong sudoResult = SyscallSudoRun(appName, passBuf, sudoContent, (ulong)sudoContentLen);
+
+        for (int i = 0; i < 64; i++) passBuf[i] = '\0';
+        if (isSudoWrite) for (int i = 0; i < sudoContentLen; i++) sudoContentBuf[i] = 0;
+
+        if (sudoResult == 1) { /* Thanh cong */ }
+        else if (sudoResult == 2) { fixed(char* err = "[!] User is not in the sudoers file. This incident will be reported.\n\0") ShellPrint(err); }
+        else if (sudoResult == 3) { fixed(char* err = "[!] Target application not found or corrupted.\n\0") ShellPrint(err); }
+        else { fixed(char* err = "[!] Sorry, try again.\n\0") ShellPrint(err); }
+        } // end fixed cmdWrite
+    }
+
     public static void Main() { }
 }

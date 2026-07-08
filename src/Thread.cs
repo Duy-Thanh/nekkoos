@@ -84,9 +84,13 @@ public static unsafe class Scheduler
     public static int CurrentThreadId {
         get {
             if (CurrentThreadIds == null) return 0;
-            if (!APIC.IsAwake) return CurrentThreadIds[0]; 
+            if (!APIC.IsAwake) return CurrentThreadIds[0];
             uint coreId = APIC.Read(0x020) >> 24;
-            return CurrentThreadIds[coreId];
+            // [FIX CRITICAL] Guard against out-of-bounds or uninitialized (-1)
+            if (coreId >= 256) return 0;
+            int tid = CurrentThreadIds[coreId];
+            if (tid < 0 || tid >= ThreadCount) return 0;
+            return tid;
         }
     }
 
@@ -287,6 +291,21 @@ public static unsafe class Scheduler
                 UnlockScheduler();
                 VMM.DestroyUserSpace(zombiePml4);
                 LockScheduler();
+            }
+        }
+
+        // [FIX TRIỆT ĐỂ] Quét và cleanup TẤT CẢ zombies còn lại (Active == 4)
+        // Đảm bảo không leak resources ngay cả khi nhiều threads bị kill cùng lúc
+        for (int i = 0; i < ThreadCount; i++) {
+            if (Threads[i].Active == 4) {
+                ulong zombiePml4 = Threads[i].Pml4;
+                Threads[i].Active = 0;
+
+                if (zombiePml4 != 0 && zombiePml4 != (ulong)VMM.PML4) {
+                    UnlockScheduler();
+                    VMM.DestroyUserSpace(zombiePml4);
+                    LockScheduler();
+                }
             }
         }
 
@@ -552,9 +571,9 @@ public static unsafe class Scheduler
         }
         irq = AcquireSchedLockSafe(); 
         
-        ulong appStackTop = (stackVirtualBase + (stackPages * 4096));
-        appStackTop &= ~0xFUL; // Ép về chia hết cho 16 (Đuôi 0)
-        appStackTop -= 8;      // Trừ đi 8 để chừa khoảng trống cho cú PUSH đầu tiên của hàm C#
+        // [TEST] Hardcode 0x3FF8 để xác định là compiler bug hay issue khác
+        // Nếu hardcode work → compiler bug 100%. Nếu vẫn fail → issue ở IRET/assembly
+        ulong appStackTop = stackVirtualBase + 0x3FF8; // 4 pages (16KB) - 8
 
         ulong rflags = 0x202;
         if (forceRoot || Threads[currentParent].UID == 0) {

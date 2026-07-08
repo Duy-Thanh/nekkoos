@@ -85,10 +85,14 @@ public static unsafe class VMM
         ulong pdptIndex = (virtAddr >> 30) & 0x1FF;
         ulong pdIndex   = (virtAddr >> 21) & 0x1FF;
 
-        if ((PML4[pml4Index] & 0x01) == 0) 
+        if ((PML4[pml4Index] & 0x01) == 0)
         {
             ulong* newPDPT = AllocateTable();
-            PML4[pml4Index] = (ulong)newPDPT | 0x07; 
+            if (newPDPT == null) {
+                VmmLock.ReleaseSafe(irq);
+                return;
+            }
+            PML4[pml4Index] = (ulong)newPDPT | 0x07;
         }
         ulong* pdpt = (ulong*)(PML4[pml4Index] & PHYS_ADDR_MASK);
         if (pdpt == null || (ulong)pdpt >= PMM.TotalPages * 4096UL) {

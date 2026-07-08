@@ -75,6 +75,18 @@ public static unsafe class PELoader
         // ==========================================================
 
         ulong pages = (sizeOfImage + 4095) / 4096;
+
+        // [BẢO VỆ KÉP] Chặn PE file quá lớn (> 512MB) - defense in depth!
+        // Ngăn chặn cả overflow attack và malicious oversized PE.
+        const ulong MAX_PE_PAGES = 131072; // 512MB = 131072 pages
+        if (pages > MAX_PE_PAGES) {
+            Terminal.SetColor(0x00FF0000);
+            fixed(char* err = "[!] PELoader BLOCKED: PE SizeOfImage exceeds 512MB security limit!\n\0") Terminal.Print(err);
+            PMM.FreePage(appPml4);
+            Heap.Free(rawFile);
+            return;
+        }
+
         ulong physBase = (ulong)PMM.AllocateContiguousPages(pages);
         
         if (physBase == 0) {
@@ -90,11 +102,28 @@ public static unsafe class PELoader
         if (appBasePhys == null) {
             Terminal.SetColor(0x00FF0000);
             fixed(char* err = "[!] FATAL: appBasePhys is null after allocation!\n\0") Terminal.Print(err);
-            PMM.FreePage(appPml4); 
+            PMM.FreePage(appPml4);
             Heap.Free(rawFile);
             return;
         }
-        LibC.MemSet(appBasePhys, 0, (uint)(pages * 4096));
+
+        // [FIX CHÍ MẠNG] Tẩy rửa RAM an toàn tránh integer overflow!
+        // PMM.AllocateContiguousPages đã zero rồi, nhưng vẫn cần đảm bảo.
+        // Nếu pages * 4096 > uint.MaxValue thì cast sẽ tràn về 0!
+        const uint UIntMax = 0xFFFFFFFF;
+        if (pages <= UIntMax / 4096) {
+            LibC.MemSet(appBasePhys, 0, (uint)(pages * 4096));
+        } else {
+            // Trường hợp pages quá lớn - chunk memset
+            ulong remaining = pages;
+            byte* current = appBasePhys;
+            while (remaining > 0) {
+                uint chunkPages = remaining > (UIntMax / 4096) ? (UIntMax / 4096) : (uint)remaining;
+                LibC.MemSet(current, 0, chunkPages * 4096);
+                current += chunkPages * 4096;
+                remaining -= chunkPages;
+            }
+        }
         LibC.MemCpy(appBasePhys, rawFile, sizeOfHeaders);
 
         ushort numSections = *(ushort*)(ntHeader + 6);

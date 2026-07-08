@@ -645,6 +645,20 @@ public unsafe class Program
                 cur = GetFatEntry(cur, fatBuf);
             }
         }
+        // [FIX] Neu target la thu muc, phai cap nhat them entry "." ben trong no
+        // de DoMkdir/CheckAccess (doc dotEntry[0].OwnerUID) phan anh dung owner moi.
+        // curAttr da co tu FindEntry o tren; curCluster la first cluster cua thu muc do.
+        if (found && (curAttr & 0x10) != 0 && curCluster >= 2) {
+            uint dotLba = FirstDataSector + ((uint)(curCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            ReadSectorIPC(dotLba, sectorBuf);
+            FAT_DirectoryEntry* dotEntries = (FAT_DirectoryEntry*)sectorBuf;
+            // entry 0 = ".", entry 1 = ".."
+            if (dotEntries[0].Name[0] == '.') {
+                dotEntries[0].OwnerUID = (ushort)newUID;
+                dotEntries[0].OwnerGID = (ushort)newGID;
+                WriteSectorIPC(dotLba, sectorBuf);
+            }
+        }
         if (found) { FlushCacheIPC(); SyscallSendIPC(client, 61, 1); } else SyscallSendIPC(client, 61, 0);
     }
 

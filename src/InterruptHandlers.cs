@@ -259,12 +259,17 @@ public static unsafe class InterruptHandlers
             VMM.LoadPML4_ASM((void*)VMM.PML4);
             
             Scheduler.Threads[id].Active = 4; // Biến thành ZOMBIE an toàn
-            
-            StoreFence(); 
+
+            // [FIX] Đăng ký zombie để SwitchTask gọi DestroyUserSpace đúng chỗ
+            // (ngoài interrupt context). Guard tránh overwrite nếu slot đã có zombie.
+            if (Scheduler.DyingThreadPerCore[coreId] == -1)
+                Scheduler.DyingThreadPerCore[coreId] = id;
+
+            StoreFence();
             Scheduler.ReleaseSchedLockSafe(irq);
 
             // Không gọi DestroyUserSpace ở đây để tránh nghẽn mạch Stack ngắt
-            return Scheduler.SwitchTask(currentRsp); 
+            return Scheduler.SwitchTask(currentRsp);
         }
 
         // 4. Nếu thực sự sập ở Ring 0 Kernel, ép dữ liệu vào ctx thô rồi dump an toàn
@@ -330,15 +335,62 @@ public static unsafe class InterruptHandlers
             Terminal.SetColor(0x00FFFFFF);
             Terminal.ScreenLock.ReleaseSafe(scrIrq);
 
-            int id = Scheduler.CurrentThreadId;
-            uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
+            // [FIX TRIỆT ĐỂ] Tìm thread bằng kernel stack thay vì tin CurrentThreadId!
+            // currentRsp nằm trên kernel stack của thread bị lỗi. Quét tất cả threads
+            // để tìm thread nào có kernel stack chứa currentRsp.
+            const ulong KERNEL_STACK_SIZE = 4 * 4096; // 4 pages = 16KB
+            int id = -1;
+
+            for (int i = 0; i < Scheduler.ThreadCount; i++) {
+                if (Scheduler.Threads[i].Active == 0) continue;
+                ulong kTop = Scheduler.Threads[i].KernelStackTop;
+                if (kTop == 0) continue;
+                ulong kBottom = kTop - KERNEL_STACK_SIZE;
+                if (currentRsp >= kBottom && currentRsp <= kTop) {
+                    id = i;
+                    break;
+                }
+            }
+
+            // Nếu vẫn không tìm thấy, fallback về CurrentThreadId (có validate)
+            if (id == -1) {
+                id = Scheduler.CurrentThreadId;
+                if (id < 0 || id >= Scheduler.ThreadCount) {
+                    // Không thể xác định thread - kill tất cả Ring 3 threads trên core này
+                    uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
+                    if (coreId >= 256) coreId = 0;
+
+                    int firstZombie = -1;
+                    bool irqFallback = Scheduler.AcquireSchedLockSafe();
+                    for (int i = 0; i < Scheduler.ThreadCount; i++) {
+                        if (Scheduler.Threads[i].ExecutingOnCore == (int)coreId &&
+                            (Scheduler.Threads[i].Active == 1 || Scheduler.Threads[i].Active == 2)) {
+                            Scheduler.Threads[i].Active = 4; // Zombie
+                            if (firstZombie == -1) firstZombie = i;
+                        }
+                    }
+
+                    // Đăng ký zombie đầu tiên để SwitchTask cleanup (các zombie còn lại sẽ leak)
+                    if (firstZombie != -1 && Scheduler.DyingThreadPerCore[coreId] == -1) {
+                        Scheduler.DyingThreadPerCore[coreId] = firstZombie;
+                    }
+
+                    StoreFence();
+                    Scheduler.ReleaseSchedLockSafe(irqFallback);
+                    return Scheduler.SwitchTask(currentRsp);
+                }
+            }
+
+            uint coreId2 = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
+            if (coreId2 >= 256) coreId2 = 0;
 
             bool irq = Scheduler.AcquireSchedLockSafe();
-            
+
             if (Scheduler.ForegroundTask == id) {
+                Scheduler.Threads[id].UID = 9999;
                 Scheduler.ForegroundTask = Scheduler.Threads[id].ParentId;
             }
-            
+
             Scheduler.Threads[id].UID = 9999; 
             IPC.ClearMailbox((uint)id);
             
@@ -348,9 +400,14 @@ public static unsafe class InterruptHandlers
             
             // [FIX CHÍ MẠNG] DÙNG CƠ CHẾ ZOMBIE! (Active=4)
             Scheduler.Threads[id].Active = 4; // ZOMBIE!
-            
-            StoreFence(); 
-            
+
+            // [FIX] Đăng ký zombie để SwitchTask gọi DestroyUserSpace đúng chỗ
+            // (ngoài interrupt context). Guard tránh overwrite nếu slot đã có zombie.
+            if (Scheduler.DyingThreadPerCore[coreId2] == -1)
+                Scheduler.DyingThreadPerCore[coreId2] = id;
+
+            StoreFence();
+
             Scheduler.ReleaseSchedLockSafe(irq);
 
             // [FIX CHÍ MẠNG] CẤM GỌI DestroyUserSpace() TRONG INTERRUPT CONTEXT!

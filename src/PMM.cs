@@ -325,7 +325,7 @@ public static unsafe class PMM
 
         if (result != null) {
             // Tẩy rửa RAM bằng (uint)count để tránh tràn!
-            if (count <= UIntMax) {
+            if (count <= UIntMax / 4096) {
                 LibC.MemSet((byte*)result, 0, (uint)(count * 4096)); 
             } else {
                 // Xử lý trường hợp count > UIntMax bằng memset nhiều lần
