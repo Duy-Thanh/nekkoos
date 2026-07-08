@@ -78,6 +78,16 @@ public unsafe class API
     public static delegate* unmanaged<void> SyscallReleaseAtaHw;
 
     // ==========================================================
+    // [SUDO] Xac thuc lai mat khau roi nap app voi forceRoot:true trong
+    // Kernel - xem src/Syscall.cs case 94. RCX=appName, RDX=password.
+    // [SUDO WRITE] R8=contentPtr (con tro Ring3 toi noi dung da go tu ban phim,
+    // null neu khong phai "write"), R9=contentLen (so byte). vDSO stub cua
+    // syscall 94 (AddSyscall, xem vDSO.cs) la passthrough thuan tuy, khong dung
+    // toi RCX/RDX/R8/R9 nen KHONG can sua vDSO khi them 2 tham so nay.
+    // ==========================================================
+    public static delegate* unmanaged<char*, char*, byte*, ulong, ulong> SyscallSudoRun;
+
+    // ==========================================================
     // [VŨ KHÍ MỚI] CHÌA KHÓA MỞ CỔNG HOÀNG CUNG CHO DISPLAY SERVER!
     // ==========================================================
     public static delegate* unmanaged<ulong> SyscallRequestFramebuffer;
@@ -148,5 +158,7 @@ public unsafe class API
         // [FIX RACE CONDITION ATA/SMP] Slot 34 & 35
         SyscallAcquireAtaHw = (delegate* unmanaged<void>)(actualKaslr + table[34]);
         SyscallReleaseAtaHw = (delegate* unmanaged<void>)(actualKaslr + table[35]);
+
+        SyscallSudoRun = (delegate* unmanaged<char*, char*, byte*, ulong, ulong>)(actualKaslr + table[36]);
     }
 }

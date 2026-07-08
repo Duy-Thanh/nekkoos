@@ -87,6 +87,21 @@ public static unsafe class Syscall
         return IsPageMappedForUser(Scheduler.CurrentThreadId, ptr);
     }
 
+    // [SUDO BUILTIN] Tach "arg1 arg2..." thanh 2 phan (vd "755 /file" -> "755","/file"),
+    // dung y het logic Shell.cs's SplitTwoArgs (khong the tai su dung truc tiep vi
+    // Syscall.cs build rieng vao Kernel.exe, khong link chung voi Shell.cs).
+    private static bool SplitTwoArgsSudo(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap) {
+        int i = 0; int f = 0;
+        while (rest[i] != '\0' && rest[i] != ' ' && f < firstCap - 1) outFirst[f++] = rest[i++];
+        outFirst[f] = '\0';
+        if (f == 0) return false;
+        while (rest[i] == ' ') i++;
+        if (rest[i] == '\0') return false;
+        int s = 0; while (rest[i] != '\0' && s < secondCap - 1) outSecond[s++] = rest[i++];
+        outSecond[s] = '\0';
+        return true;
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "SyscallHandler")]
     public static ulong SyscallHandler(ulong currentRsp)
     {
@@ -722,7 +737,12 @@ public static unsafe class Syscall
 
                         int callerThreadForLogout = id;
                         uint fileSize = 0; IO.EnableInterrupts(); byte* rawData = null; // [FIX] Bật ngắt CỤC BỘ!
-                        fixed (char* logonFile = "syslogon.exe\0") {
+                        fixed (char* logonFile = "syslogon.exe\0") fixed (char* dirRoot = "\\\0") {
+                            // [FIX HOME DIR] FAT16.ReadFile dùng chung CurrentDirCluster (global,
+                            // per-daemon, không phải per-client) với lệnh cd - nếu user đang đứng
+                            // trong home dir (không phải "/") lúc gõ "logout", ReadFile sẽ tìm
+                            // syslogon.exe nhầm chỗ và báo "Cannot find". Phải cd về root trước.
+                            FAT16.Cd(dirRoot);
                             rawData = FAT16.ReadFile(logonFile, &fileSize, callerThreadForLogout);
                             if (rawData != null && rawData[0] == 'M' && rawData[1] == 'Z') {
                                 PELoader.LoadAndRun(rawData, false, false, true, logonFile);
@@ -808,6 +828,291 @@ public static unsafe class Syscall
                         }
                     }
                     ctx->Rax = 0; 
+                }
+                break;
+            }
+
+            // [SYSCALL 94]: SUDO (Elevate-one-command)
+            // Xác thực lại mật khẩu của CHÍNH thread gọi (dò bằng UID thật của
+            // Scheduler.Threads[id], không tin username tự khai) qua /ETC/PASSWD,
+            // kiểm tra /ETC/SUDOERS, rồi nếu đúng: nạp app với forceRoot:true.
+            // Thread gọi (Shell.exe) KHÔNG hề bị đổi UID/GID - chỉ tiến trình MỚI
+            // sinh ra mang UID/GID root, đúng phạm vi "một lệnh" đã chốt trong kế hoạch.
+            // ctx->Rax trả về: 0=sai mật khẩu/không có tài khoản, 1=thành công,
+            // 2=không nằm trong sudoers, 3=không tìm thấy app cần chạy.
+            case 94:
+            {
+                if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx) || ctx->Rdx == 0 || !IsValidUserPtr(ctx->Rdx)) { ctx->Rax = 0; break; }
+                char* appName = (char*)ctx->Rcx;
+                char* inputPass = (char*)ctx->Rdx;
+
+                // [SUDO WRITE] R8 = con tro Ring3 toi noi dung "write" da duoc Shell.cs
+                // tu doc tu ban phim SAN (0/null neu app khong phai "write <path>"),
+                // R9 = do dai byte. Validate y het appName/inputPass truoc khi doc thang
+                // tu Ring0 - KHONG dung shared memory de tranh dung do voi AtaRawBuffer/
+                // FatResponseData dang duoc cac thao tac disk khac dung song song.
+                byte* sudoWriteContent = (ctx->R8 != 0 && IsValidUserPtr(ctx->R8)) ? (byte*)ctx->R8 : null;
+                uint sudoWriteContentLen = (uint)ctx->R9;
+
+                int callerThreadForSudo = id;
+                uint callerUidForSudo = Scheduler.Threads[id].UID;
+                IO.EnableInterrupts();
+
+                char* lineUser = stackalloc char[32];
+                char* lineSalt = stackalloc char[64];
+                char* lineHash = stackalloc char[80];
+                char* lineUID = stackalloc char[16];
+                byte* saltBytes = stackalloc byte[32];
+                byte* hashInputBuf = stackalloc byte[32 + 32];
+                byte* computedHash = stackalloc byte[32];
+                char* computedHashHex = stackalloc char[80];
+                char* matchedUser = stackalloc char[32];
+
+                bool foundAccount = false;
+                fixed (char* dirEtc = "ETC\0") fixed (char* dirRoot = "\\\0") fixed (char* passFileName = "PASSWD\0") {
+                    // [FIX] Cd bang callerThreadOverride=0 - phai dung DUNG state "thu muc
+                    // hien tai" (CurrentDirCluster rieng cua Kernel, raw) ma ReadFile ben duoi
+                    // (cung override=0) se doc, khong phai state cua daemon Ring3.
+                    FAT16.Cd(dirRoot, 0); FAT16.Cd(dirEtc, 0);
+                    uint passSize = 0;
+                    // [FIX BAO MAT] Doc PASSWD bang callerThreadOverride=0 (tham quyen von
+                    // co cua Kernel), KHONG dung UID thuc cua nguoi goi (callerThreadForSudo)
+                    // - vi day la buoc XAC THUC de CHUNG MINH quyen root, ban than no khong
+                    // the bi chan boi permission cua chinh nguoi dung CHUA duoc xac thuc
+                    // (giong het viec SysLogon.exe luon chay forceRoot:true de tu doc PASSWD
+                    // luc dang nhap). Neu dung UID that o day, PASSWD/SUDOERS bi chmod that
+                    // chat (vd 600) se khoa luon ca chuc nang sudo cua chinh no.
+                    byte* passBuf = FAT16.ReadFile(passFileName, &passSize, 0);
+                    FAT16.Cd(dirRoot, 0);
+
+                    if (passBuf != null && passSize > 0) {
+                        int i = 0;
+                        while (i < (int)passSize) {
+                            int u = 0, s = 0, h = 0, ud = 0; int stage = 0;
+                            while (i < (int)passSize && passBuf[i] != '\n' && passBuf[i] != '\r') {
+                                char c = (char)passBuf[i];
+                                if (c == ':') { stage++; }
+                                else {
+                                    if (stage == 0 && u < 31) lineUser[u++] = c;
+                                    else if (stage == 1 && s < 63) lineSalt[s++] = c;
+                                    else if (stage == 2 && h < 79) lineHash[h++] = c;
+                                    else if (stage == 3 && ud < 15) lineUID[ud++] = c;
+                                }
+                                i++;
+                            }
+                            lineUser[u] = '\0'; lineSalt[s] = '\0'; lineHash[h] = '\0'; lineUID[ud] = '\0';
+
+                            uint lineUidVal = 0;
+                            for (int k = 0; lineUID[k] != '\0'; k++) { if (lineUID[k] >= '0' && lineUID[k] <= '9') lineUidVal = lineUidVal * 10 + (uint)(lineUID[k] - '0'); else break; }
+
+                            if (u > 0 && lineUidVal == callerUidForSudo) {
+                                int mm = 0; while (lineUser[mm] != '\0' && mm < 31) { matchedUser[mm] = lineUser[mm]; mm++; } matchedUser[mm] = '\0';
+
+                                int saltLen = KernHexUtil.HexToBytes(lineSalt, saltBytes, 32);
+                                int passLen = 0; while (inputPass[passLen] != '\0') passLen++;
+                                int hashInputLen = 0;
+                                for (int k = 0; k < saltLen; k++) hashInputBuf[hashInputLen++] = saltBytes[k];
+                                for (int k = 0; k < passLen; k++) hashInputBuf[hashInputLen++] = (byte)inputPass[k];
+
+                                SHA256.Compute(hashInputBuf, (ulong)hashInputLen, computedHash);
+                                KernHexUtil.BytesToHex(computedHash, 32, computedHashHex);
+
+                                foundAccount = true;
+                                bool passOk = KernHexUtil.ConstantTimeEq(computedHashHex, lineHash, 64);
+
+                                KernHexUtil.ZeroMemChar(lineSalt, 64); KernHexUtil.ZeroMemChar(lineHash, 80);
+                                KernHexUtil.ZeroMemByte(saltBytes, 32); KernHexUtil.ZeroMemByte(hashInputBuf, 64);
+                                KernHexUtil.ZeroMemByte(computedHash, 32); KernHexUtil.ZeroMemChar(computedHashHex, 80);
+
+                                if (!passOk) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 0; break; }
+
+                                // Kiểm tra /ETC/SUDOERS: username đọc được từ chính PASSWD (không
+                                // phải do Ring3 tự khai) có nằm trong danh sách cho phép không.
+                                bool inSudoers = false;
+                                fixed (char* sudoersFile = "SUDOERS\0") {
+                                    FAT16.Cd(dirEtc, 0);
+                                    uint sudoSize = 0;
+                                    // [FIX BAO MAT] Tuong tu PASSWD o tren - doc SUDOERS bang
+                                    // tham quyen von co cua Kernel (callerThreadOverride=0), khong
+                                    // dung UID that cua nguoi goi.
+                                    byte* sudoBuf = FAT16.ReadFile(sudoersFile, &sudoSize, 0);
+                                    FAT16.Cd(dirRoot, 0);
+                                    if (sudoBuf != null && sudoSize > 0) {
+                                        int j = 0;
+                                        while (j < (int)sudoSize) {
+                                            char* lineSudo = stackalloc char[32]; int ls = 0;
+                                            while (j < (int)sudoSize && sudoBuf[j] != '\n' && sudoBuf[j] != '\r' && ls < 31) { lineSudo[ls++] = (char)sudoBuf[j]; j++; }
+                                            lineSudo[ls] = '\0';
+                                            while (j < (int)sudoSize && sudoBuf[j] != '\n' && sudoBuf[j] != '\r') j++;
+                                            while (j < (int)sudoSize && (sudoBuf[j] == '\n' || sudoBuf[j] == '\r')) j++;
+                                            if (ls > 0 && LibC.StrCmp(lineSudo, matchedUser)) { inSudoers = true; break; }
+                                        }
+                                        NekkoOS.Kernel.Heap.Free(sudoBuf);
+                                    }
+                                }
+
+                                if (!inSudoers) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 2; break; }
+
+                                // ==========================================================
+                                // [SUDO BUILTIN - Ve root tam thoi qua IPC] KHONG tu lam logic
+                                // filesystem trong Ring0 (se pha vo tinh chat Microkernel) - thay
+                                // vao do, Kernel chi NANG UID/GID THAT cua chinh luong goi (id) len
+                                // 0 trong dung khoanh khac 1 IPC roundtrip toi FAT16.exe (Ring3
+                                // daemon), roi PHUC HOI NGAY sau khi nhan phan hoi. Toan bo logic
+                                // FindEntry/CheckAccess/permission van nam nguyen o Ring3 nhu thiet
+                                // ke goc - day chi la "ve" dac quyen co thoi han cuc ngan, khong
+                                // phai Kernel gianh lam viec cua daemon.
+                                // ==========================================================
+                                fixed (char* vCat = "cat \0") fixed (char* vRm = "rm \0")
+                                fixed (char* vMkdir = "mkdir \0") fixed (char* vRmdir = "rmdir \0")
+                                fixed (char* vChmod = "chmod \0") fixed (char* vChown = "chown \0")
+                                fixed (char* vLs = "ls\0") fixed (char* vLl = "ll\0") fixed (char* vCd = "cd \0")
+                                fixed (char* vWrite = "write \0")
+                                {
+                                    bool isBuiltin = LibC.StrStartsWith(appName, vCat) || LibC.StrStartsWith(appName, vRm) ||
+                                                      LibC.StrStartsWith(appName, vMkdir) || LibC.StrStartsWith(appName, vRmdir) ||
+                                                      LibC.StrStartsWith(appName, vChmod) || LibC.StrStartsWith(appName, vChown) ||
+                                                      LibC.StrCmp(appName, vLs) || LibC.StrCmp(appName, vLl) ||
+                                                      LibC.StrStartsWith(appName, vCd) || LibC.StrStartsWith(appName, vWrite);
+                                    if (isBuiltin) {
+                                        uint sudoOrigUid = Scheduler.Threads[id].UID;
+                                        uint sudoOrigGid = Scheduler.Threads[id].GID;
+                                        Scheduler.Threads[id].UID = 0; Scheduler.Threads[id].GID = 0;
+
+                                        if (LibC.StrCmp(appName, vLs) || LibC.StrCmp(appName, vLl)) {
+                                            char* listBuf = stackalloc char[2048];
+                                            if (FAT16.ListDir(listBuf, 2048, callerThreadForSudo)) {
+                                                Terminal.SetColor(0x00FFFFFF);
+                                                Terminal.Print(listBuf);
+                                            } else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] sudo ls: Failed to list directory.\n\0") Terminal.Print(e); }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vCd)) {
+                                            char* p = appName + 3;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo cd <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                // [LUU Y KIEN TRUC] Khac voi Unix that (sudo cd vo nghia vi child
+                                                // process chet la mat cwd) - o NekkoOS, cwd duoc DAEMON Ring3
+                                                // theo doi THEO THREAD ID cua chinh Shell.exe (khong phai bien
+                                                // shell-local), nen "sudo cd" o day CO Y NGHIA THAT: vao tam thoi
+                                                // mot thu muc ma UID that khong du quyen enter, va thu muc do VAN
+                                                // con hieu luc cho shell sau khi sudo tra ve (vi dung chung 1
+                                                // thread id voi lenh cd thuong). Cac lenh sau van bi CheckAccess
+                                                // kiem tra bang UID THAT cua user (khong con la root) nhu binh thuong.
+                                                // Cd tu in loi qua Terminal.Print neu that bai (giong duong daemon
+                                                // binh thuong) - thanh cong thi im lang, dung y het "cd" thuong.
+                                                FAT16.Cd(p, callerThreadForSudo);
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vWrite)) {
+                                            char* p = appName + 6;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo write <path>\n\0") Terminal.Print(e); }
+                                            else if (sudoWriteContent == null) {
+                                                // Khong bao gio xay ra trong luong binh thuong (Shell.cs luon
+                                                // capture noi dung truoc khi goi syscall khi appName bat dau
+                                                // bang "write ") - phong thu neu con tro bi truyen sai/thieu.
+                                                Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] sudo write: No content buffer provided.\n\0") Terminal.Print(e);
+                                            }
+                                            else {
+                                                int wr = FAT16.WriteFileRelay(p, sudoWriteContent, sudoWriteContentLen, callerThreadForSudo);
+                                                if (wr == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] File written successfully!\n\0") Terminal.Print(ok); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Failed! Disk Full, Access Denied or File is a Directory!\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vCat)) {
+                                            char* p = appName + 4;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo cat <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                uint catSize = 0;
+                                                byte* catBuf = FAT16.ReadFile(p, &catSize, callerThreadForSudo);
+                                                if (catBuf != null) {
+                                                    if (catSize > 16384) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] File too large (>16KB). Refusing to print to prevent Terminal freeze.\n\0") Terminal.Print(e); }
+                                                    else {
+                                                        Terminal.SetColor(0x00FFFFFF);
+                                                        for (uint k = 0; k < catSize; k++) {
+                                                            char c = (char)catBuf[k];
+                                                            if (c == '\r') continue;
+                                                            if ((c >= 32 && c <= 126) || c == '\n' || c == '\t') Terminal.DrawChar(c);
+                                                            else Terminal.DrawChar('.');
+                                                        }
+                                                        fixed (char* nl2 = "\n\0") Terminal.Print(nl2);
+                                                    }
+                                                    NekkoOS.Kernel.Heap.Free(catBuf);
+                                                } else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] sudo cat: File not found or Access Denied.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vMkdir)) {
+                                            char* p = appName + 6;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo mkdir <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                int r = FAT16.MakeDir(p, callerThreadForSudo);
+                                                if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] Directory Created Successfully!\n\0") Terminal.Print(ok); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Failed! Directory already exists or Disk Full.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vRm)) {
+                                            char* p = appName + 3;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo rm <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                int r = FAT16.RemoveFile(p, callerThreadForSudo);
+                                                if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] File Removed and Clusters Recycled!\n\0") Terminal.Print(ok); }
+                                                else if (r == 2) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Cannot use RM on a Directory!\n\0") Terminal.Print(e); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] File Not Found.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vRmdir)) {
+                                            char* p = appName + 6;
+                                            if (*p == '\0') { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo rmdir <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                int r = FAT16.RemoveDir(p, callerThreadForSudo);
+                                                if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] Directory and ALL its contents obliterated recursively!\n\0") Terminal.Print(ok); }
+                                                else if (r == 2) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Target is a File. Use 'sudo rm' instead.\n\0") Terminal.Print(e); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Directory Not Found.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vChmod)) {
+                                            char* rest = appName + 6;
+                                            char* modeStr = stackalloc char[16]; char* path = stackalloc char[256];
+                                            if (!SplitTwoArgsSudo(rest, modeStr, 16, path, 256)) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo chmod <mode> <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                uint mode = 0; for (int mi = 0; modeStr[mi] != '\0'; mi++) { if (modeStr[mi] < '0' || modeStr[mi] > '7') break; mode = mode * 8 + (uint)(modeStr[mi] - '0'); }
+                                                int r = FAT16.Chmod(path, mode, callerThreadForSudo);
+                                                if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] Permissions Changed Successfully!\n\0") Terminal.Print(ok); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Failed! Not Found.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+                                        else if (LibC.StrStartsWith(appName, vChown)) {
+                                            char* rest = appName + 6;
+                                            char* ownerStr = stackalloc char[32]; char* path = stackalloc char[256];
+                                            if (!SplitTwoArgsSudo(rest, ownerStr, 32, path, 256)) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo chown <uid>:<gid> <path>\n\0") Terminal.Print(e); }
+                                            else {
+                                                int r = FAT16.Chown(path, ownerStr, callerThreadForSudo);
+                                                if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] Ownership Changed Successfully!\n\0") Terminal.Print(ok); }
+                                                else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Failed! Not Found.\n\0") Terminal.Print(e); }
+                                            }
+                                        }
+
+                                        Scheduler.Threads[id].UID = sudoOrigUid; Scheduler.Threads[id].GID = sudoOrigGid;
+                                        Terminal.SetColor(0x00FFFFFF);
+                                        NekkoOS.Kernel.Heap.Free(passBuf);
+                                        ctx->Rax = 1; break;
+                                    }
+                                }
+
+                                uint appFileSize = 0;
+                                byte* rawData = FAT16.ReadFile(appName, &appFileSize, callerThreadForSudo);
+                                if (rawData == null || rawData[0] != 'M' || rawData[1] != 'Z') {
+                                    if (rawData != null) NekkoOS.Kernel.Heap.Free(rawData);
+                                    NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 3; break;
+                                }
+
+                                PELoader.LoadAndRun(rawData, false, false, true, appName, 1);
+                                NekkoOS.Kernel.Heap.Free(passBuf);
+                                ctx->Rax = 1; break;
+                            }
+                            while (i < (int)passSize && (passBuf[i] == '\n' || passBuf[i] == '\r')) i++;
+                        }
+                        if (!foundAccount) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 0; }
+                    } else { ctx->Rax = 0; }
                 }
                 break;
             }

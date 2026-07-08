@@ -478,6 +478,176 @@ public unsafe class Program
         }
     }
 
+    private static void DoMkdir(char* privateName, uint effectiveOwnerUID, uint effectiveOwnerGID, uint callerUID, uint callerGID, uint client, byte* sectorBuf, byte* fatBuf, byte* formattedName, uint responseType) {
+        FormatFATName(privateName, formattedName);
+
+        bool canCreateHere = false;
+        if (CurrentDirCluster == 0) {
+            if (callerUID == 0) canCreateHere = true;
+        } else {
+            uint curDirLba = FirstDataSector + ((uint)(CurrentDirCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            ReadSectorIPC(curDirLba, sectorBuf);
+            FAT_DirectoryEntry* dotEntry = (FAT_DirectoryEntry*)sectorBuf;
+            if (CheckAccess(callerUID, callerGID, dotEntry[0].OwnerUID, dotEntry[0].OwnerGID, dotEntry[0].Permissions, W_OK)) canCreateHere = true;
+        }
+
+        ushort tmpCluster = 0; uint tmpSize = 0; byte tmpAttr = 0; ushort tmpOwner = 0; ushort tmpOwnerGID = 0; ushort tmpPerms = 0;
+        if (FindEntry(privateName, &tmpCluster, &tmpSize, &tmpAttr, &tmpOwner, &tmpOwnerGID, &tmpPerms, sectorBuf, fatBuf, formattedName)) {
+            SyscallSendIPC(client, responseType, 0); SyscallYieldApp(); return;
+        } else {
+            if (!canCreateHere) {
+                fixed(char* err = "[!] Access Denied: You do not own or have Write (w) permission on this Directory!\n\0") SyscallPrint(err);
+                SyscallSendIPC(client, responseType, 0); SyscallYieldApp(); return;
+            }
+        }
+
+        ushort newCluster = 0;
+        for (ushort c = 2; c < 0xFFEF; c++) {
+            if (GetFatEntry(c, fatBuf) == 0x0000) { newCluster = c; SetFatEntry(c, 0xFFFF, fatBuf); break; }
+        }
+
+        if (newCluster == 0) { SyscallSendIPC(client, responseType, 0); SyscallYieldApp(); return; }
+
+        uint newClusterLba = FirstDataSector + ((uint)(newCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+        for(int b = 0; b < 512; b++) sectorBuf[b] = 0;
+        for(int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(newClusterLba + (uint)s, sectorBuf); }
+
+        ReadSectorIPC(newClusterLba, sectorBuf);
+        FAT_DirectoryEntry* dotEntries = (FAT_DirectoryEntry*)sectorBuf;
+
+        for(int i=0; i<11; i++) dotEntries[0].Name[i] = (byte)' ';
+        dotEntries[0].Name[0] = (byte)'.'; dotEntries[0].Attributes = 0x10;
+        dotEntries[0].OwnerUID = (ushort)effectiveOwnerUID; dotEntries[0].OwnerGID = (ushort)effectiveOwnerGID;
+        dotEntries[0].Permissions = 493; dotEntries[0].FirstClusterLow = newCluster;
+
+        for(int i=0; i<11; i++) dotEntries[1].Name[i] = (byte)' ';
+        dotEntries[1].Name[0] = (byte)'.'; dotEntries[1].Name[1] = (byte)'.';
+        dotEntries[1].Attributes = 0x10; dotEntries[1].OwnerUID = (ushort)effectiveOwnerUID;
+        dotEntries[1].OwnerGID = (ushort)effectiveOwnerGID; dotEntries[1].Permissions = 493;
+        dotEntries[1].FirstClusterLow = CurrentDirCluster;
+        WriteSectorIPC(newClusterLba, sectorBuf);
+
+        bool created = false;
+
+        if (CurrentDirCluster == 0) {
+            for(uint s=0; s<RootDirSectors; s++) ProcessMkdirSector(RootDirLba + s, formattedName, newCluster, effectiveOwnerUID, effectiveOwnerGID, sectorBuf, ref created);
+        } else {
+            ushort curClus = CurrentDirCluster;
+            while(curClus >= 0x0002 && curClus <= 0xFFEF) {
+                uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
+                for(int s=0; s<CachedBPB.SectorsPerCluster; s++) ProcessMkdirSector(clusterLba + (uint)s, formattedName, newCluster, effectiveOwnerUID, effectiveOwnerGID, sectorBuf, ref created);
+                curClus = GetFatEntry(curClus, fatBuf);
+            }
+        }
+
+        if (!created) {
+            if (CurrentDirCluster == 0) {
+                SetFatEntry(newCluster, 0x0000, fatBuf); FlushCacheIPC(); SyscallSendIPC(client, responseType, 0);
+            } else {
+                ushort lastCluster = CurrentDirCluster;
+                while (true) {
+                    ushort next = GetFatEntry(lastCluster, fatBuf);
+                    if (next >= 0x0002 && next <= 0xFFEF) lastCluster = next; else break;
+                }
+                ushort expandCluster = 0;
+                for (ushort c = 2; c < 0xFFEF; c++) {
+                    if (GetFatEntry(c, fatBuf) == 0x0000) {
+                        expandCluster = c; SetFatEntry(lastCluster, expandCluster, fatBuf); SetFatEntry(expandCluster, 0xFFFF, fatBuf); break;
+                    }
+                }
+                if (expandCluster == 0) {
+                    SetFatEntry(newCluster, 0x0000, fatBuf); FlushCacheIPC(); SyscallSendIPC(client, responseType, 0);
+                } else {
+                    uint expandLba = FirstDataSector + ((uint)(expandCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                    for (int b = 0; b < 512; b++) sectorBuf[b] = 0;
+                    for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(expandLba + (uint)s, sectorBuf); }
+                    FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)sectorBuf;
+                    for(int j=0; j<11; j++) entries[0].Name[j] = formattedName[j];
+                    entries[0].Attributes = 0x10; entries[0].OwnerGID = (ushort)effectiveOwnerGID;
+                    entries[0].CreationTime = 0; entries[0].CreationDate = 0; entries[0].Permissions = 493;
+                    entries[0].OwnerUID = (ushort)effectiveOwnerUID; entries[0].WriteTime = 0; entries[0].WriteDate = 0;
+                    entries[0].FirstClusterLow = newCluster; entries[0].FileSize = 0;
+                    WriteSectorIPC(expandLba, sectorBuf); FlushCacheIPC(); SyscallSendIPC(client, responseType, 1);
+                }
+            }
+        } else { FlushCacheIPC(); SyscallSendIPC(client, responseType, 1); }
+    }
+
+    // ==========================================================
+    // [CHMOD/CHOWN] Quet 1 sector, neu khop ten thi sua Permissions va/hoac
+    // OwnerUID/OwnerGID tai cho (khong xoa/di chuyen entry) - dung chung cho ca
+    // hai lenh vi cung logic tim+sua-tai-cho, chi khac field nao duoc ap dung.
+    // ==========================================================
+    private static void ProcessChattrSector(uint lba, byte* formattedName, byte* sectorBuf, ref bool found, bool applyOwner, uint newUID, uint newGID, bool applyPerms, ushort newPerms) {
+        if (found) return;
+        ReadSectorIPC(lba, sectorBuf);
+        FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)sectorBuf;
+        for (int i = 0; i < 16; i++) {
+            if (entries[i].Name[0] == 0x00) return;
+            if (entries[i].Name[0] == 0xE5) continue;
+            bool match = true; for(int j=0; j<11; j++) if(entries[i].Name[j] != formattedName[j]) { match = false; break; }
+            if (match) {
+                if (applyOwner) { entries[i].OwnerUID = (ushort)newUID; entries[i].OwnerGID = (ushort)newGID; }
+                if (applyPerms) { entries[i].Permissions = newPerms; }
+                WriteSectorIPC(lba, sectorBuf); found = true; return;
+            }
+        }
+    }
+
+    // [CHMOD] Chi chu so huu (OwnerUID == callerUID) hoac root duoc phep doi
+    // Permissions - dung UNIX semantics thong thuong (chmod cua chinh minh).
+    private static void DoChmod(char* privateName, uint callerUID, uint callerGID, uint client, byte* sectorBuf, byte* fatBuf, byte* formattedName, ushort newPerms) {
+        FormatFATName(privateName, formattedName);
+        ushort curCluster = 0; uint curSize = 0; byte curAttr = 0; ushort curUID = 0, curGID = 0, curPerms = 0;
+        if (!FindEntry(privateName, &curCluster, &curSize, &curAttr, &curUID, &curGID, &curPerms, sectorBuf, fatBuf, formattedName)) {
+            SyscallSendIPC(client, 59, 0); SyscallYieldApp(); return;
+        }
+        if (callerUID != 0 && callerUID != curUID) {
+            fixed(char* err = "[!] Access Denied: Only the owner or root can chmod this entry!\n\0") SyscallPrint(err);
+            SyscallSendIPC(client, 59, 0); SyscallYieldApp(); return;
+        }
+
+        bool found = false;
+        if (CurrentDirCluster == 0) {
+            for (uint s = 0; s < RootDirSectors; s++) ProcessChattrSector(RootDirLba + s, formattedName, sectorBuf, ref found, false, 0, 0, true, newPerms);
+        } else {
+            ushort cur = CurrentDirCluster;
+            while (cur >= 0x0002 && cur <= 0xFFEF) {
+                uint clusterLba = FirstDataSector + ((uint)(cur - 2) * (uint)CachedBPB.SectorsPerCluster);
+                for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) ProcessChattrSector(clusterLba + (uint)s, formattedName, sectorBuf, ref found, false, 0, 0, true, newPerms);
+                cur = GetFatEntry(cur, fatBuf);
+            }
+        }
+        if (found) { FlushCacheIPC(); SyscallSendIPC(client, 59, 1); } else SyscallSendIPC(client, 59, 0);
+    }
+
+    // [CHOWN] Chi root duoc phep doi OwnerUID/OwnerGID - giong UNIX (chown that
+    // su chi root moi lam duoc, owner thuong khong the "cho" file cua minh).
+    private static void DoChown(char* privateName, uint callerUID, uint callerGID, uint client, byte* sectorBuf, byte* fatBuf, byte* formattedName, uint newUID, uint newGID) {
+        FormatFATName(privateName, formattedName);
+        ushort curCluster = 0; uint curSize = 0; byte curAttr = 0; ushort curUID = 0, curGID = 0, curPerms = 0;
+        if (!FindEntry(privateName, &curCluster, &curSize, &curAttr, &curUID, &curGID, &curPerms, sectorBuf, fatBuf, formattedName)) {
+            SyscallSendIPC(client, 61, 0); SyscallYieldApp(); return;
+        }
+        if (callerUID != 0) {
+            fixed(char* err = "[!] Access Denied: Only root can chown!\n\0") SyscallPrint(err);
+            SyscallSendIPC(client, 61, 0); SyscallYieldApp(); return;
+        }
+
+        bool found = false;
+        if (CurrentDirCluster == 0) {
+            for (uint s = 0; s < RootDirSectors; s++) ProcessChattrSector(RootDirLba + s, formattedName, sectorBuf, ref found, true, newUID, newGID, false, 0);
+        } else {
+            ushort cur = CurrentDirCluster;
+            while (cur >= 0x0002 && cur <= 0xFFEF) {
+                uint clusterLba = FirstDataSector + ((uint)(cur - 2) * (uint)CachedBPB.SectorsPerCluster);
+                for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) ProcessChattrSector(clusterLba + (uint)s, formattedName, sectorBuf, ref found, true, newUID, newGID, false, 0);
+                cur = GetFatEntry(cur, fatBuf);
+            }
+        }
+        if (found) { FlushCacheIPC(); SyscallSendIPC(client, 61, 1); } else SyscallSendIPC(client, 61, 0);
+    }
+
     private static void ProcessRmSector(uint lba, byte* formattedName, uint callerUID, uint callerGID, byte* fatBuf, byte* sectorBuf, ref bool deleted, ref bool isDirError, ref bool accessDenied) {
         if (deleted || isDirError || accessDenied) return;
         ReadSectorIPC(lba, sectorBuf); 
@@ -959,98 +1129,49 @@ public unsafe class Program
                     char* sharedName = (char*)SharedMem->FatRequestName;
                     int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
                     privateName[n] = '\0';
-                    FormatFATName(privateName, formattedName);
-
-                    bool canCreateHere = false;
-                    if (CurrentDirCluster == 0) {
-                        if (callerUID == 0) canCreateHere = true; 
-                    } else {
-                        uint curDirLba = FirstDataSector + ((uint)(CurrentDirCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
-                        ReadSectorIPC(curDirLba, sectorBuf);
-                        FAT_DirectoryEntry* dotEntry = (FAT_DirectoryEntry*)sectorBuf;
-                        if (CheckAccess(callerUID, callerGID, dotEntry[0].OwnerUID, dotEntry[0].OwnerGID, dotEntry[0].Permissions, W_OK)) canCreateHere = true;
+                    DoMkdir(privateName, callerUID, callerGID, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, 45);
+                }
+                else if (msg.Type == 56) // MKDIR_AS - chi root duoc phep chi dinh owner khac cho thu muc moi
+                {
+                    if (callerUID != 0) {
+                        fixed(char* err = "[!] Access Denied: MKDIR_AS requires root privileges!\n\0") SyscallPrint(err);
+                        SyscallSendIPC(client, 57, 0); SyscallYieldApp(); continue;
                     }
 
-                    ushort tmpCluster = 0; uint tmpSize = 0; byte tmpAttr = 0; ushort tmpOwner = 0; ushort tmpOwnerGID = 0; ushort tmpPerms = 0;
-                    if (FindEntry(privateName, &tmpCluster, &tmpSize, &tmpAttr, &tmpOwner, &tmpOwnerGID, &tmpPerms, sectorBuf, fatBuf, formattedName)) {
-                        SyscallSendIPC(client, 45, 0); SyscallYieldApp(); continue;
-                    } else {
-                        if (!canCreateHere) {
-                            fixed(char* err = "[!] Access Denied: You do not own or have Write (w) permission on this Directory!\n\0") SyscallPrint(err);
-                            SyscallSendIPC(client, 45, 0); SyscallYieldApp(); continue;
-                        }
-                    }
+                    char* sharedName = (char*)SharedMem->FatRequestName;
+                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
+                    privateName[n] = '\0';
 
-                    ushort newCluster = 0;
-                    for (ushort c = 2; c < 0xFFEF; c++) {
-                        if (GetFatEntry(c, fatBuf) == 0x0000) { newCluster = c; SetFatEntry(c, 0xFFFF, fatBuf); break; }
-                    }
+                    int p = n + 1; uint targetUID = 0, targetGID = 0;
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetUID = targetUID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    if (sharedName[p] == ':') p++;
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetGID = targetGID * 10 + (uint)(sharedName[p] - '0'); p++; }
 
-                    if (newCluster == 0) { SyscallSendIPC(client, 45, 0); SyscallYieldApp(); continue; }
+                    DoMkdir(privateName, targetUID, targetGID, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, 57);
+                }
+                else if (msg.Type == 58) // CHMOD - path\0mode(decimal)\0
+                {
+                    char* sharedName = (char*)SharedMem->FatRequestName;
+                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
+                    privateName[n] = '\0';
 
-                    uint newClusterLba = FirstDataSector + ((uint)(newCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
-                    for(int b = 0; b < 512; b++) sectorBuf[b] = 0; 
-                    for(int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(newClusterLba + (uint)s, sectorBuf); }
+                    int p = n + 1; uint mode = 0;
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { mode = mode * 10 + (uint)(sharedName[p] - '0'); p++; }
 
-                    ReadSectorIPC(newClusterLba, sectorBuf);
-                    FAT_DirectoryEntry* dotEntries = (FAT_DirectoryEntry*)sectorBuf;
-                    
-                    for(int i=0; i<11; i++) dotEntries[0].Name[i] = (byte)' ';
-                    dotEntries[0].Name[0] = (byte)'.'; dotEntries[0].Attributes = 0x10; 
-                    dotEntries[0].OwnerUID = (ushort)callerUID; dotEntries[0].OwnerGID = (ushort)callerGID;  
-                    dotEntries[0].Permissions = 493; dotEntries[0].FirstClusterLow = newCluster;
-                    
-                    for(int i=0; i<11; i++) dotEntries[1].Name[i] = (byte)' ';
-                    dotEntries[1].Name[0] = (byte)'.'; dotEntries[1].Name[1] = (byte)'.';
-                    dotEntries[1].Attributes = 0x10; dotEntries[1].OwnerUID = (ushort)callerUID; 
-                    dotEntries[1].OwnerGID = (ushort)callerGID; dotEntries[1].Permissions = 493; 
-                    dotEntries[1].FirstClusterLow = CurrentDirCluster;
-                    WriteSectorIPC(newClusterLba, sectorBuf);
+                    DoChmod(privateName, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, (ushort)mode);
+                }
+                else if (msg.Type == 60) // CHOWN - path\0uid:gid\0
+                {
+                    char* sharedName = (char*)SharedMem->FatRequestName;
+                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
+                    privateName[n] = '\0';
 
-                    bool created = false;
-                    
-                    if (CurrentDirCluster == 0) {
-                        for(uint s=0; s<RootDirSectors; s++) ProcessMkdirSector(RootDirLba + s, formattedName, newCluster, callerUID, callerGID, sectorBuf, ref created);
-                    } else {
-                        ushort curClus = CurrentDirCluster;
-                        while(curClus >= 0x0002 && curClus <= 0xFFEF) {
-                            uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
-                            for(int s=0; s<CachedBPB.SectorsPerCluster; s++) ProcessMkdirSector(clusterLba + (uint)s, formattedName, newCluster, callerUID, callerGID, sectorBuf, ref created);
-                            curClus = GetFatEntry(curClus, fatBuf);
-                        }
-                    }
+                    int p = n + 1; uint targetUID = 0, targetGID = 0;
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetUID = targetUID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    if (sharedName[p] == ':') p++;
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetGID = targetGID * 10 + (uint)(sharedName[p] - '0'); p++; }
 
-                    if (!created) {
-                        if (CurrentDirCluster == 0) {
-                            SetFatEntry(newCluster, 0x0000, fatBuf); FlushCacheIPC(); SyscallSendIPC(client, 45, 0); 
-                        } else {
-                            ushort lastCluster = CurrentDirCluster;
-                            while (true) {
-                                ushort next = GetFatEntry(lastCluster, fatBuf);
-                                if (next >= 0x0002 && next <= 0xFFEF) lastCluster = next; else break;
-                            }
-                            ushort expandCluster = 0;
-                            for (ushort c = 2; c < 0xFFEF; c++) {
-                                if (GetFatEntry(c, fatBuf) == 0x0000) { 
-                                    expandCluster = c; SetFatEntry(lastCluster, expandCluster, fatBuf); SetFatEntry(expandCluster, 0xFFFF, fatBuf); break;
-                                }
-                            }
-                            if (expandCluster == 0) {
-                                SetFatEntry(newCluster, 0x0000, fatBuf); FlushCacheIPC(); SyscallSendIPC(client, 45, 0); 
-                            } else {
-                                uint expandLba = FirstDataSector + ((uint)(expandCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
-                                for (int b = 0; b < 512; b++) sectorBuf[b] = 0;
-                                for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(expandLba + (uint)s, sectorBuf); }
-                                FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)sectorBuf;
-                                for(int j=0; j<11; j++) entries[0].Name[j] = formattedName[j];
-                                entries[0].Attributes = 0x10; entries[0].OwnerGID = (ushort)callerGID;
-                                entries[0].CreationTime = 0; entries[0].CreationDate = 0; entries[0].Permissions = 493; 
-                                entries[0].OwnerUID = (ushort)callerUID; entries[0].WriteTime = 0; entries[0].WriteDate = 0;
-                                entries[0].FirstClusterLow = newCluster; entries[0].FileSize = 0; 
-                                WriteSectorIPC(expandLba, sectorBuf); FlushCacheIPC(); SyscallSendIPC(client, 45, 1);
-                            }
-                        }
-                    } else { FlushCacheIPC(); SyscallSendIPC(client, 45, 1); }
+                    DoChown(privateName, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, targetUID, targetGID);
                 }
                 else if (msg.Type == 46) // RM
                 {

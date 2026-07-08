@@ -621,6 +621,51 @@ public static unsafe class FAT16
         Heap.Free(buf);
     }
 
+    // [SUDO - Ve root tam thoi qua IPC] Wrapper cho "write <path>": Shell.cs da
+    // tu doc noi dung THAT tu ban phim (Ring3, giong het "write" thuong) TRUOC
+    // khi goi sudo - ham nay chi RELAY noi dung do (da nam san trong buffer cua
+    // chinh Ring3 caller, Kernel doc thang qua con tro da validate) toi daemon
+    // qua dung 1 IPC round-trip voi UID/GID thread da duoc nang len 0 tam thoi.
+    // KHONG dung shared->AtaRawBuffer/FatResponseData de "stage" content truoc
+    // vi 2 buffer do dang bi chinh WriteFile/ATA.ReadSector/WriteSector dung lam
+    // vung dem chuyen tiep IPC ngay trong luc thao tac nay chay - se bi ghi de.
+    public static int WriteFileRelay(char* filename, byte* data, uint size, int callerThreadOverride)
+    {
+        if (filename == null || data == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int nameIdx = 0; while (filename[nameIdx] != '\0' && nameIdx < 255) { sharedNameBuf[nameIdx] = filename[nameIdx]; nameIdx++; }
+        sharedNameBuf[nameIdx] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(32, (uint)callerThread, DaemonId, size);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        byte* dataChunk = (byte*)shared->FatResponseData;
+
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload)) {
+                if (rType == 33) {
+                    uint offset = (uint)rPayload;
+                    if (offset >= size) { ReleaseVfs(); return 0; }
+                    bool sm_irq2 = Syscall.SharedMemLock.AcquireSafe();
+                    for (int i = 0; i < 512; i++) dataChunk[i] = (offset + i < size) ? data[offset + i] : (byte)0;
+                    Syscall.SharedMemLock.ReleaseSafe(sm_irq2);
+                    IPC.Send(34, (uint)callerThread, DaemonId, 0);
+                    WakeDaemon();
+                }
+                else if (rType == 35) { ReleaseVfs(); return (int)rPayload; }
+            }
+            Scheduler.Yield();
+        }
+    }
+
     public static void WriteFile(char* filename, byte* data, uint size)
     {
         // Kiểm tra xem filename và data có null không
@@ -802,7 +847,179 @@ public static unsafe class FAT16
         ReleaseVfs(); 
     }
 
-    public static void Cd(char* dirname)
+    // ==========================================================
+    // [SUDO BUILTIN - Ve root tam thoi qua IPC] Cac wrapper duoi day CHI
+    // dung de FAT16.exe (Ring3 daemon) thuc hien - khong co duong raw
+    // fallback nao (khong co logic mkdir/rm/rmdir/chmod/chown truc tiep
+    // tren dia trong Kernel), dung nhu FindEntry/CheckAccess/permission
+    // van nam nguyen o Ring3, dung tinh than Microkernel. Kernel (case 94
+    // trong Syscall.cs) chi nang UID/GID THAT cua chinh luong goi len 0
+    // trong dung 1 khoanh khac ngan (1 IPC roundtrip) roi phuc hoi ngay,
+    // KHONG tu lam logic filesystem thay Ring3 daemon.
+    // ==========================================================
+    // [SUDO - Ve root tam thoi qua IPC] Wrapper cho "ls"/"ll": khong nhan path
+    // (giong Shell.cs, luon liet ke thu muc HIEN TAI cua daemon), gui type 40,
+    // cho type 41 tra ve - noi dung listing nam trong shared->FatResponseData
+    // (KHAC voi cac wrapper khac dung FatRequestName), copy ra buffer cho ham
+    // goi de tranh giu con tro thang vao shared memory sau khi ReleaseVfs().
+    public static bool ListDir(char* outBuf, int outCap, int callerThreadOverride)
+    {
+        if (outBuf == null || outCap <= 0) return false;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return false; }
+
+        IPC.Send(40, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 41) {
+                char* listing = (char*)shared->FatResponseData;
+                bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+                int i = 0; while (listing[i] != '\0' && i < outCap - 1) { outBuf[i] = listing[i]; i++; }
+                outBuf[i] = '\0';
+                Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+                ReleaseVfs();
+                return true;
+            }
+            Scheduler.Yield();
+        }
+    }
+
+    public static int MakeDir(char* dirname, int callerThreadOverride)
+    {
+        if (dirname == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int i = 0; while (dirname[i] != '\0' && i < 255) { sharedNameBuf[i] = dirname[i]; i++; }
+        sharedNameBuf[i] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(44, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 45) { ReleaseVfs(); return (int)rPayload; }
+            Scheduler.Yield();
+        }
+    }
+
+    public static int RemoveFile(char* filename, int callerThreadOverride)
+    {
+        if (filename == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int i = 0; while (filename[i] != '\0' && i < 255) { sharedNameBuf[i] = filename[i]; i++; }
+        sharedNameBuf[i] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(46, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 47) { ReleaseVfs(); return (int)rPayload; }
+            Scheduler.Yield();
+        }
+    }
+
+    public static int RemoveDir(char* dirname, int callerThreadOverride)
+    {
+        if (dirname == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int i = 0; while (dirname[i] != '\0' && i < 255) { sharedNameBuf[i] = dirname[i]; i++; }
+        sharedNameBuf[i] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(48, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 49) { ReleaseVfs(); return (int)rPayload; }
+            Scheduler.Yield();
+        }
+    }
+
+    public static int Chmod(char* path, uint mode, int callerThreadOverride)
+    {
+        if (path == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int idx = 0; while (path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
+        sharedNameBuf[idx] = '\0'; idx++;
+        // Ma hoa mode (so thap phan) noi tiep sau ten file, cach nhau boi '\0' -
+        // dung y het quy uoc FAT16_Driver.cs case 58 mong doi (giong Shell.cs chmod).
+        if (mode == 0) { sharedNameBuf[idx++] = '0'; }
+        else {
+            char* digits = stackalloc char[16]; int dc = 0; uint tmp = mode;
+            while (tmp > 0 && dc < 16) { digits[dc++] = (char)('0' + (tmp % 10)); tmp /= 10; }
+            for (int k = dc - 1; k >= 0; k--) sharedNameBuf[idx++] = digits[k];
+        }
+        sharedNameBuf[idx] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(58, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 59) { ReleaseVfs(); return (int)rPayload; }
+            Scheduler.Yield();
+        }
+    }
+
+    public static int Chown(char* path, char* ownerStr, int callerThreadOverride)
+    {
+        if (path == null || ownerStr == null) return 0;
+        AcquireVfs();
+        int callerThread = callerThreadOverride;
+        KernelSharedMemBlock* shared = GetSharedMem();
+        if (shared == null) { ReleaseVfs(); return 0; }
+
+        char* sharedNameBuf = (char*)shared->FatRequestName;
+        bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
+        int idx = 0; while (path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
+        sharedNameBuf[idx] = '\0'; idx++;
+        int oi = 0; while (ownerStr[oi] != '\0' && idx < 4095) { sharedNameBuf[idx] = ownerStr[oi]; idx++; oi++; }
+        sharedNameBuf[idx] = '\0';
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(60, (uint)callerThread, DaemonId, 0);
+        WakeDaemon();
+
+        uint rType = 0, rSender = 0; ulong rPayload = 0;
+        while (true) {
+            if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 61) { ReleaseVfs(); return (int)rPayload; }
+            Scheduler.Yield();
+        }
+    }
+
+    public static void Cd(char* dirname, int callerThreadOverride = -1)
     {
         // Kiểm tra xem dirname có null không
         if (dirname == null) {
@@ -811,9 +1028,13 @@ public static unsafe class FAT16
             return;
         }
 
-        AcquireVfs(); 
+        AcquireVfs();
 
-        int callerThread = Scheduler.CurrentThreadId;
+        // [FIX] Giống ReadFile: callerThreadOverride=0 bo qua daemon, thao tac thang
+        // len bien CurrentDirCluster RIENG cua Kernel (raw path) - dung cho cac lenh
+        // Kernel tu doc file he thong (VD: xac thuc sudo doc PASSWD/SUDOERS trong ETC),
+        // KHONG dung chung state "thu muc hien tai" voi daemon Ring3 (2 state doc lap).
+        int callerThread = callerThreadOverride >= 0 ? callerThreadOverride : Scheduler.CurrentThreadId;
 
         if (UseDaemon && callerThread != 0) {
             KernelSharedMemBlock* shared = GetSharedMem();

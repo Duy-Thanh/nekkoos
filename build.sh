@@ -114,8 +114,10 @@ mkfs.fat -F 16 hdd.img
 mmd -i hdd.img ::/EFI
 mmd -i hdd.img ::/EFI/BOOT
 mmd -i hdd.img ::/ETC
+mmd -i hdd.img ::/HOME
 
 mcopy -i hdd.img passwd ::/ETC/PASSWD
+mcopy -i hdd.img sudoers ::/ETC/SUDOERS
 mcopy -i hdd.img efi/boot/bootx64.efi ::/EFI/BOOT/
 mcopy -i hdd.img Kernel.exe ::/
 mcopy -i hdd.img Kernel.exe.mui ::/

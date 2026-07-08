@@ -146,6 +146,10 @@ public static unsafe class vDSO
         AddSyscall(60); // Slot 34: SyscallAcquireAtaHw
         AddSyscall(61); // Slot 35: SyscallReleaseAtaHw
 
+        // [SUDO] Slot 36: SyscallSudoRun (case 94) - RCX/RDX truyền thẳng qua,
+        // không cần stub đặc biệt (giống AddSyscall(88)).
+        AddSyscall(94); // Slot 36: SyscallSudoRun
+
         Terminal.SetColor(0x00FF00FF);
         fixed(char* m = "[+] vDSO Gateway forged in RAM! Absolute KASLR Ready.\n\0") Terminal.Print(m);
     }

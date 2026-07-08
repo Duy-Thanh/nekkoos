@@ -128,12 +128,12 @@ public unsafe class Login
 
     public static bool ChangeDirectoryIPC(char* dirName) {
         StringToSharedBuffer(dirName, (char*)SharedMem->FatRequestName);
-        SyscallSendIPC(FAT16_PID, 36, 0); 
+        SyscallSendIPC(FAT16_PID, 36, 0);
         Message res = default;
         while (true) {
             if (SyscallReceiveIPC(&res) == 1) {
                 if (res.Sender == FAT16_PID) {
-                    if (res.Type == 37) return res.Payload == 1; 
+                    if (res.Type == 37) return res.Payload == 1;
                 }
                 // ==========================================================
                 // [FIX CHÍ MẠNG] BỎ QUA THƯ RÁC ĐỂ KHÔNG BỊ NGỦ QUÊN!
@@ -142,6 +142,53 @@ public unsafe class Login
             }
             SyscallWaitIPC();
         }
+    }
+
+    // [HOME DIR] MKDIR_AS - chi goi khi con la root (truoc SyscallSetUID), tao thu
+    // muc moi trong CurrentDirCluster hien tai va gan owner la targetUID/targetGID
+    // (khong phai UID cua caller) - dung de tao home dir cho user khac ma khong can
+    // noi long permission cua /HOME hay dua vao byte rac tren dia.
+    public static bool MkdirAsIPC(char* dirName, uint targetUID, uint targetGID) {
+        char* buf = (char*)SharedMem->FatRequestName;
+        int n = 0; while (dirName[n] != '\0') { buf[n] = dirName[n]; n++; }
+        buf[n] = '\0'; n++;
+
+        char* numBuf = stackalloc char[16];
+        int ni = 0; uint u = targetUID;
+        if (u == 0) { numBuf[ni++] = '0'; } else { char* rev = stackalloc char[16]; int c = 0; while (u > 0) { rev[c++] = (char)('0' + (u % 10)); u /= 10; } while (c > 0) numBuf[ni++] = rev[--c]; }
+        numBuf[ni] = '\0';
+        int m = 0; while (numBuf[m] != '\0') { buf[n] = numBuf[m]; n++; m++; }
+        buf[n] = ':'; n++;
+
+        ni = 0; u = targetGID;
+        if (u == 0) { numBuf[ni++] = '0'; } else { char* rev = stackalloc char[16]; int c = 0; while (u > 0) { rev[c++] = (char)('0' + (u % 10)); u /= 10; } while (c > 0) numBuf[ni++] = rev[--c]; }
+        numBuf[ni] = '\0';
+        m = 0; while (numBuf[m] != '\0') { buf[n] = numBuf[m]; n++; m++; }
+        buf[n] = '\0';
+
+        SyscallSendIPC(FAT16_PID, 56, 0);
+        Message res = default;
+        while (true) {
+            if (SyscallReceiveIPC(&res) == 1) {
+                if (res.Sender == FAT16_PID) {
+                    if (res.Type == 57) return res.Payload == 1;
+                }
+                continue;
+            }
+            SyscallWaitIPC();
+        }
+    }
+
+    // [HOME DIR] Tach thanh phan cuoi cua HOMEDIR ("/HOME/nekko" -> "nekko"), dung
+    // de biet ten thu muc con can cd/mkdir ben trong /HOME.
+    public static void ExtractLastComponent(char* path, char* outBuf, int outCap) {
+        int len = 0; while (path[len] != '\0') len++;
+        int lastSep = -1;
+        for (int i = 0; i < len; i++) { if (path[i] == '/' || path[i] == '\\') lastSep = i; }
+        int start = lastSep + 1;
+        int o = 0;
+        for (int i = start; i < len && o < outCap - 1; i++) outBuf[o++] = path[i];
+        outBuf[o] = '\0';
     }
 
     [UnmanagedCallersOnly(EntryPoint = "AppMain")]
@@ -178,6 +225,7 @@ public unsafe class Login
         char* lineHash = stackalloc char[80];
         char* lineUID = stackalloc char[16];
         char* lineGID = stackalloc char[16];
+        char* lineHome = stackalloc char[64];
 
         // [FIX BẢO MẬT] Buffer cho việc băm mật khẩu: salt (raw bytes) + password nhập vào,
         // rồi băm SHA-256 và so sánh dạng hex với hash lưu trong PASSWD - không bao giờ
@@ -213,7 +261,7 @@ public unsafe class Login
                 while (i < passSize) {
                     // [FIX BẢO MẬT] Định dạng PASSWD mới: user:salt:hash:UID:GID (5 field,
                     // salt/hash dạng hex) thay vì user:pass:UID:GID (plaintext) trước đây.
-                    int u = 0, s = 0, h = 0, id = 0, gd = 0; int stage = 0;
+                    int u = 0, s = 0, h = 0, id = 0, gd = 0, hm = 0; int stage = 0;
                     while (i < passSize && passFileBuf[i] != '\n' && passFileBuf[i] != '\r') {
                         char c = (char)passFileBuf[i];
                         if (c == ':') { stage++; }
@@ -223,10 +271,11 @@ public unsafe class Login
                             else if (stage == 2 && h < 79) lineHash[h++] = c;
                             else if (stage == 3 && id < 15) lineUID[id++] = c;
                             else if (stage == 4 && gd < 15) lineGID[gd++] = c;
+                            else if (stage == 5 && hm < 63) lineHome[hm++] = c;
                         }
                         i++;
                     }
-                    lineUser[u] = '\0'; lineSalt[s] = '\0'; lineHash[h] = '\0'; lineUID[id] = '\0'; lineGID[gd] = '\0';
+                    lineUser[u] = '\0'; lineSalt[s] = '\0'; lineHash[h] = '\0'; lineUID[id] = '\0'; lineGID[gd] = '\0'; lineHome[hm] = '\0';
 
                     // [FIX BẢO MẬT - MEDIUM] Chặn "phantom account": nếu người dùng bỏ trống
                     // Username (Enter luôn), StrCmp("", "") giữa 2 chuỗi rỗng trả về true, có
@@ -267,11 +316,50 @@ public unsafe class Login
                 if (authSuccess) {
                     fixed(char* ok1 = "\n[+] AUTHENTICATED! Welcome to the Multiverse!\n\0") SyscallPrint(ok1);
 
+                    // [HOME DIR] Con dang la root (chua SyscallSetUID) - dam bao /HOME ton tai
+                    // va thu muc rieng cua user (theo HOMEDIR trong PASSWD) da duoc tao, so huu
+                    // dung boi chinh user do (khong phai root) qua MKDIR_AS.
+                    char* homeSub = stackalloc char[64];
+                    ExtractLastComponent(lineHome, homeSub, 64);
+                    if (homeSub[0] != '\0') {
+                        fixed (char* dirHome = "HOME\0") {
+                            ChangeDirectoryIPC(dirRoot);
+                            if (!ChangeDirectoryIPC(dirHome)) {
+                                MkdirAsIPC(dirHome, 0, 0);
+                                ChangeDirectoryIPC(dirHome);
+                            }
+                            if (!ChangeDirectoryIPC(homeSub)) {
+                                MkdirAsIPC(homeSub, matchedUID, matchedGID);
+                            }
+                        }
+                    }
+                    ChangeDirectoryIPC(dirRoot);
+
                     SyscallSetUID(matchedUID); SyscallSetGID(matchedGID);
+
+                    // [HOME DIR] SHELL.EXE nam o "/" - phai o cwd = root luc goi RunCmd, neu
+                    // khong FAT16 Daemon se tim SHELL.EXE trong cwd sai (vd /HOME/<user>) va
+                    // bao "File not found". CurrentDirCluster la bien global dung chung cho
+                    // toan bo daemon (khong phai per-client), nen cd vao home dir PHAI thuc
+                    // hien SAU khi RunCmd da nap xong SHELL.EXE, de shell vua khoi dong "thua
+                    // ke" dung cwd la home dir cua user.
+                    ChangeDirectoryIPC(dirRoot);
 
                     sharedCmdBuffer = (char*)SharedMem->ShellCommandBuffer;
                     StringToSharedBuffer(cmdRunShell, sharedCmdBuffer);
                     SyscallRunCmd(sharedCmdBuffer, 0);
+
+                    // [HOME DIR] Da ha quyen - cd that vao home dir voi danh nghia chinh user
+                    // do de xac nhan quyen thuc te; fallback ve "/" neu that bai (khong chan
+                    // dang nhap).
+                    if (homeSub[0] != '\0') {
+                        fixed (char* dirHome = "HOME\0") {
+                            if (!ChangeDirectoryIPC(dirHome) || !ChangeDirectoryIPC(homeSub)) {
+                                ChangeDirectoryIPC(dirRoot);
+                                fixed (char* warn = "[!] Warning: Could not enter home directory, staying at /.\n\0") SyscallPrint(warn);
+                            }
+                        }
+                    }
 
                     SyscallExit();
                     while(true) { SyscallWaitIPC(); }

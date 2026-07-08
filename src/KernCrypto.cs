@@ -94,3 +94,54 @@ public static unsafe class SHA256
         }
     }
 }
+
+// ==========================================================
+// [SUDO] Hex/ConstantTimeEq cho kernel - bản sao logic y hệt
+// src/Login.cs (HexToBytes/BytesToHex/ConstantTimeEq) vì Kernel.exe
+// build riêng, không link chung với SysLogon.exe (userland).
+// ==========================================================
+public static unsafe class KernHexUtil
+{
+    private static int HexNibble(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    public static int HexToBytes(char* hex, byte* outBytes, int maxOutBytes) {
+        int i = 0, o = 0;
+        while (hex[i] != '\0' && hex[i + 1] != '\0' && o < maxOutBytes) {
+            int hi = HexNibble(hex[i]); int lo = HexNibble(hex[i + 1]);
+            if (hi < 0 || lo < 0) break;
+            outBytes[o++] = (byte)((hi << 4) | lo);
+            i += 2;
+        }
+        return o;
+    }
+
+    public static void BytesToHex(byte* bytes, int len, char* outHex) {
+        char* digits = stackalloc char[16] { '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f' };
+        for (int i = 0; i < len; i++) {
+            outHex[i * 2] = digits[(bytes[i] >> 4) & 0xF];
+            outHex[i * 2 + 1] = digits[bytes[i] & 0xF];
+        }
+        outHex[len * 2] = '\0';
+    }
+
+    public static bool ConstantTimeEq(char* a, char* b, int maxLen) {
+        int diff = 0;
+        bool endedA = false, endedB = false;
+        for (int i = 0; i < maxLen; i++) {
+            char ca = endedA ? '\0' : a[i];
+            char cb = endedB ? '\0' : b[i];
+            if (a[i] == '\0') endedA = true;
+            if (b[i] == '\0') endedB = true;
+            diff |= (ca ^ cb);
+        }
+        return diff == 0;
+    }
+
+    public static void ZeroMemChar(char* buf, int len) { for (int i = 0; i < len; i++) buf[i] = '\0'; }
+    public static void ZeroMemByte(byte* buf, int len) { for (int i = 0; i < len; i++) buf[i] = 0; }
+}
