@@ -161,10 +161,9 @@ public static unsafe class InterruptHandlers
             Scheduler.Threads[id].UID = 9999; 
             IPC.ClearMailbox((uint)id);
             
-            ulong dyingPml4 = Scheduler.Threads[id].Pml4;
             Scheduler.Threads[id].Pml4 = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
-            
+
             // ==========================================================
             // [FIX CHÍ MẠNG] DÙNG CƠ CHẾ ZOMBIE (Active=4)!
             // Active=0 cho phép Lõi khác tái chế Thread Slot + Stack NGAY LẬP TỨC,
@@ -172,21 +171,16 @@ public static unsafe class InterruptHandlers
             // Active=4 = Zombie: Slot bị khóa cho đến khi SwitchTask lần tiếp xử lý.
             // ==========================================================
             Scheduler.Threads[id].Active = 4; // ZOMBIE!
-            
-            StoreFence(); 
-            
+
+            // [FIX] Đăng ký zombie để SwitchTask cleanup ngoài interrupt context.
+            if (Scheduler.DyingThreadPerCore[coreId] == -1)
+                Scheduler.DyingThreadPerCore[coreId] = id;
+
+            StoreFence();
+
             Scheduler.ReleaseSchedLockSafe(irq);
 
-            // ==========================================================
-            // [FIX CHÍ MẠNG] CẤM BẬT NGẮT TRƯỚC KHI DESTROY!
-            // ReleaseSchedLockSafe() có thể bật lại ngắt. Nếu Timer nã vào giữa
-            // DestroyUserSpace và SwitchTask, nó sẽ preempt ta vĩnh viễn,
-            // bỏ rơi Kernel Stack giữa chừng → IRET pop rác → CS=0xF6 → GPF!
-            // ==========================================================
-            IO.DisableInterrupts();
-            VMM.DestroyUserSpace(dyingPml4);
-
-            return Scheduler.SwitchTask(currentRsp); 
+            return Scheduler.SwitchTask(currentRsp);
         }
 
         // Ring 0 chia cho 0 = Bug Kernel thực sự → Halt!

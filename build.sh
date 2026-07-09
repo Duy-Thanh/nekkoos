@@ -13,6 +13,7 @@ echo "[1.5/4] Dang build Kernel (Vi vua) & Apps Ring 3 truoc..."
 
 nasm -f win64 src/Hardware.asm -o Hardware.obj
 nasm -f win64 src/boot_io.asm -o boot_io.obj
+nasm -f win64 src/stresstest_asm.asm -o stresstest_asm.obj
 # nasm -f bin src/app.asm -o app.bin
 nasm -f bin src/smp_x86.asm -o smp.bin
 # nasm -f win64 src/app_syscall.asm -o app_syscall.obj
@@ -28,7 +29,7 @@ $BF build src/acpi.cs src/API.cs -Ot --no-pie --deterministic --map maps/ACPI.ma
 $BF build src/Shell.cs src/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain"
 $BF build src/Login.cs src/Crypto.cs src/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain"
 $BF build src/top.cs src/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain"
-$BF build src/stresstest.cs src/API.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain"
+$BF build src/stresstest.cs src/API.cs src/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj"
 
 # Additional userland apps from build.bat
 $BF build src/dsrv.cs src/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain"
