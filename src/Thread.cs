@@ -571,9 +571,7 @@ public static unsafe class Scheduler
         }
         irq = AcquireSchedLockSafe(); 
         
-        // [TEST] Hardcode 0x3FF8 để xác định là compiler bug hay issue khác
-        // Nếu hardcode work → compiler bug 100%. Nếu vẫn fail → issue ở IRET/assembly
-        ulong appStackTop = stackVirtualBase + 0x3FF8; // 4 pages (16KB) - 8
+        ulong appStackTop = stackVirtualBase + 0x3FF8;
 
         ulong rflags = 0x202;
         if (forceRoot || Threads[currentParent].UID == 0) {

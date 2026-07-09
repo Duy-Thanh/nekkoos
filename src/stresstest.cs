@@ -17,8 +17,9 @@ public static unsafe class StressTest
         uint rand = 0xC0FFEE;
 
         // [VÁ TỬ HUYỆT APP STACK] Khai báo cố định một lần duy nhất!
-        ulong* outV = stackalloc ulong[1]; 
+        ulong* outV = stackalloc ulong[1];
         char* num = stackalloc char[32];
+        char* rev = stackalloc char[32]; // Khai báo ngoài loop: tránh sub rsp leak mỗi 1024 vòng
 
         while (true)
         {
@@ -55,9 +56,9 @@ public static unsafe class StressTest
             {
                 fixed (char* s = "[STRESS] heartbeat: \0") SyscallPrint(s);
                 ulong v = counter; int idx = 0;
-                if (v == 0) num[idx++] = '0'; 
-                else { 
-                    char* rev = stackalloc char[32]; // Hàm ngắn gọn trong scope con tạm chấp nhận, hoặc dùng mảng phụ ngoài
+                if (v == 0) num[idx++] = '0';
+                else {
+                    // rev tái sử dụng buffer đã cấp phát ngoài loop (không sub rsp thêm)
                     int c = 0; 
                     while (v > 0) { rev[c++] = (char)('0' + (v % 10)); v /= 10; } 
                     while (c > 0) num[idx++] = rev[--c]; 
