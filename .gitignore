@@ -32,3 +32,5 @@ efi/boot/bootx64.efi.til
 .aider*
 *.docx
 *.log
+passwd
+sudoers
