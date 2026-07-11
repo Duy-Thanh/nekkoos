@@ -206,8 +206,8 @@ namespace NekkoOS
     }
 
     // ==========================================================
-    // [VŨ KHÍ TỐI THƯỢNG] BAREMETAL RSA-2048 PKCS#1 v1.5 VERIFIER
-    // Xử lý số siêu lớn (BigInt 2048-bit) 100% bằng Stack! Đéo xài Heap!
+    // [CRYPTO] BAREMETAL RSA-2048 PKCS#1 v1.5 VERIFIER
+    // Stack-based big integer arithmetic (2048-bit) without heap allocation
     // ==========================================================
     public static unsafe class BaremetalRSA
     {
@@ -232,7 +232,7 @@ namespace NekkoOS
 
         // Phép chia Modulo siêu to khổng lồ (128 uints chia cho 64 uints)
         // ==========================================================
-        // [FIX CHÍ MẠNG] HÀM MODULO BỌC THÉP CHỐNG TRÀN BIT!
+        // [SAFE ARITHMETIC] Overflow-safe modulo operation for big integers
         // ==========================================================
         private static void Mod(uint* a, uint* n, uint* r) {
             // Kiểm tra các tham số đầu vào
@@ -348,13 +348,13 @@ namespace NekkoOS
         }
 
         // ==========================================================
-        // [VŨ KHÍ MỚI] ĐỌC SERIAL VỚI ĐỒNG HỒ ĐẾM NGƯỢC (NON-BLOCKING TIMEOUT)
+        // [UTILITY] Non-blocking serial read with timeout
         // ==========================================================
         public static char SerialReadCharWithTimeout(EFI_BOOT_SERVICES* bs, ulong timeoutMs) {
             ulong elapsed = 0;
             while (elapsed < timeoutMs) {
                 if (SerialReceived()) {
-                    return (char)In8(COM1); // Kẻ xâm nhập đã gõ phím!
+                    return (char)In8(COM1); // Character received
                 }
                 // Kiểm tra xem bs có null không
                 if (bs == null) return '\0';
@@ -483,8 +483,8 @@ namespace NekkoOS
         }
 
         // ==========================================================
-        // [VŨ KHÍ TỐI THƯỢNG] HÀM TRÍCH XUẤT VÀ VẼ LOGO OEM (BGRT)
-        // Lục lọi ACPI -> Tìm BGRT -> Giải mã BMP -> Nã thẳng ra màn hình!
+        // [GRAPHICS] Extract and render OEM logo from ACPI BGRT
+        // Search ACPI tables -> Find BGRT -> Decode BMP -> Render to framebuffer
         // ==========================================================
         public static unsafe void DrawOEMLogo(ulong rsdpAddress, uint* fb, uint fbWidth, uint fbHeight, uint scanLine)
         {
