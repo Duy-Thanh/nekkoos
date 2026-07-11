@@ -117,6 +117,10 @@ public static unsafe class VMM
 
         pd[pdIndex] = physAddr | 0x87;
 
+        // [FIX CVE-2026-006] FLUSH TLB sau khi modify PTE!
+        // TLB cache có thể giữ old permissions, phải flush ngay
+        FlushTLB((void*)virtAddr);
+
         VmmLock.ReleaseSafe(irq); 
     }
 

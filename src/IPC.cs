@@ -11,7 +11,12 @@ public unsafe struct Message {
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct SharedMemoryBlock { public fixed byte ShellCommandBuffer[4096]; public fixed byte FatRequestName[4096]; public fixed byte FatResponseData[8192]; public fixed byte AtaRawBuffer[4096]; }
+public unsafe struct SharedMemoryBlock { 
+    public fixed byte ShellCommandBuffer[4096];
+    public fixed byte FatRequestName[4096];
+    public fixed byte FatResponseData[8192];
+    public fixed byte AtaRawBuffer[4096];
+}
 
 public static unsafe class IPC
 {
@@ -101,14 +106,16 @@ public static unsafe class IPC
                         queue[i].Type = type; // Chốt hạ Type để giải phóng trạng thái trống
                         StoreFence(); 
                         queue[i].IsLocked = 0; // Nhả khóa an toàn
-                        
-                        // [MÁY ĐÁNH THỨC CORE] Nếu thằng nhận đang ngủ chờ IPC (Active == 2), gọi nó dậy ngay!
-                        // Cờ SchedLock sẽ bảo vệ việc ghi trạng thái này an toàn xuyên Core
-                        if (Scheduler.Threads[receiver].Active == 2) 
+
+                        // [FIX CVE-2026-001] MÁY ĐÁNH THỨC CORE - BẢO VỆ BẰNG SCHEDLOCK!
+                        // Tránh race condition với Timer interrupt hoặc cores khác thay đổi Active state
+                        bool schedIrq = Scheduler.AcquireSchedLockSafe();
+                        if (Scheduler.Threads[receiver].Active == 2)
                         {
                             Scheduler.Threads[receiver].Active = 1;     // Trở lại trạng thái Ready!
                             Scheduler.Threads[receiver].WakeUpTick = 0; // Xóa cờ ngủ hẹn giờ
                         }
+                        Scheduler.ReleaseSchedLockSafe(schedIrq);
 
                         return true;
                     }

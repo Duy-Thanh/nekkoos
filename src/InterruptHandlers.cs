@@ -233,10 +233,26 @@ public static unsafe class InterruptHandlers
         ulong realRsp    = stackPtr[19];
         ulong realSs     = stackPtr[20];
 
+        // Khai báo ctx một lần cho cả Ring 3 và Ring 0
+        RegisterContext* ctx = (RegisterContext*)currentRsp;
+        ctx->Rip = realRip;
+        ctx->Cs = realCs;
+        ctx->Rflags = realRflags;
+        ctx->Rsp = realRsp;
+        ctx->Ss = realSs;
+
         // 3. DÙNG BIẾN REAL_CS XỊN ĐỂ CHECK PHÂN QUYỀN
         // Nếu sập ở Ring 3 App -> Đá chết cụ nó đi, cứu mạng Kernel!
         if ((realCs & 0x03) == 3)
         {
+            bool scrIrq = Terminal.ScreenLock.AcquireSafe();
+            Terminal.SetColor(0x00FF0000);
+            fixed(char* m1 = "\n[!] MPU: GENERAL PROTECTION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.Print(m1);
+            Terminal.SetColor(0x00FFFFFF);
+            Terminal.ScreenLock.ReleaseSafe(scrIrq);
+
+            fixed (char* title = " [EXCEPTION 0x0D] Ring 3 GENERAL PROTECTION FAULT - App Killed\0") PanicToSerial(title, ctx);
+
             int id = Scheduler.CurrentThreadId;
             uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
 
@@ -267,13 +283,6 @@ public static unsafe class InterruptHandlers
         }
 
         // 4. Nếu thực sự sập ở Ring 0 Kernel, ép dữ liệu vào ctx thô rồi dump an toàn
-        RegisterContext* ctx = (RegisterContext*)currentRsp;
-        ctx->Rip = realRip;
-        ctx->Cs = realCs;
-        ctx->Rflags = realRflags;
-        ctx->Rsp = realRsp;
-        ctx->Ss = realSs;
-
         BroadcastApocalypse();
         PrintRegisterDumpToSerial(ctx);
         
@@ -322,93 +331,30 @@ public static unsafe class InterruptHandlers
         {
             bool scrIrq = Terminal.ScreenLock.AcquireSafe();
             Terminal.SetColor(0x00FF0000);
-            fixed(char* m1 = "\n[!] MPU: SEGMENTATION FAULT IN RING 3 APP!\n    -> Blocked Address: \0") Terminal.Print(m1);
-            Terminal.PrintHex(faultAddr);
-            fixed(char* nl = "\n\n\0") Terminal.Print(nl);
-            PrintRegisterDumpToSerial(ctx);
+            fixed(char* m1 = "\n[!] MPU: SEGMENTATION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.Print(m1);
             Terminal.SetColor(0x00FFFFFF);
             Terminal.ScreenLock.ReleaseSafe(scrIrq);
 
-            // [FIX TRIỆT ĐỂ] Tìm thread bằng kernel stack thay vì tin CurrentThreadId!
-            // currentRsp nằm trên kernel stack của thread bị lỗi. Quét tất cả threads
-            // để tìm thread nào có kernel stack chứa currentRsp.
-            const ulong KERNEL_STACK_SIZE = 4 * 4096; // 4 pages = 16KB
-            int id = -1;
+            fixed (char* title = " [EXCEPTION 0x0E] Ring 3 PAGE FAULT - App Killed\0") PanicToSerial(title, ctx, faultAddr);
 
-            for (int i = 0; i < Scheduler.ThreadCount; i++) {
-                if (Scheduler.Threads[i].Active == 0) continue;
-                ulong kTop = Scheduler.Threads[i].KernelStackTop;
-                if (kTop == 0) continue;
-                ulong kBottom = kTop - KERNEL_STACK_SIZE;
-                if (currentRsp >= kBottom && currentRsp <= kTop) {
-                    id = i;
-                    break;
-                }
-            }
-
-            // Nếu vẫn không tìm thấy, fallback về CurrentThreadId (có validate)
-            if (id == -1) {
-                id = Scheduler.CurrentThreadId;
-                if (id < 0 || id >= Scheduler.ThreadCount) {
-                    // Không thể xác định thread - kill tất cả Ring 3 threads trên core này
-                    uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
-                    if (coreId >= 256) coreId = 0;
-
-                    int firstZombie = -1;
-                    bool irqFallback = Scheduler.AcquireSchedLockSafe();
-                    for (int i = 0; i < Scheduler.ThreadCount; i++) {
-                        if (Scheduler.Threads[i].ExecutingOnCore == (int)coreId &&
-                            (Scheduler.Threads[i].Active == 1 || Scheduler.Threads[i].Active == 2)) {
-                            Scheduler.Threads[i].Active = 4; // Zombie
-                            if (firstZombie == -1) firstZombie = i;
-                        }
-                    }
-
-                    // Đăng ký zombie đầu tiên để SwitchTask cleanup (các zombie còn lại sẽ leak)
-                    if (firstZombie != -1 && Scheduler.DyingThreadPerCore[coreId] == -1) {
-                        Scheduler.DyingThreadPerCore[coreId] = firstZombie;
-                    }
-
-                    StoreFence();
-                    Scheduler.ReleaseSchedLockSafe(irqFallback);
-                    return Scheduler.SwitchTask(currentRsp);
-                }
-            }
-
-            uint coreId2 = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
-            if (coreId2 >= 256) coreId2 = 0;
+            int id = Scheduler.CurrentThreadId;
+            uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
 
             bool irq = Scheduler.AcquireSchedLockSafe();
 
-            if (Scheduler.ForegroundTask == id) {
-                Scheduler.Threads[id].UID = 9999;
-                Scheduler.ForegroundTask = Scheduler.Threads[id].ParentId;
-            }
-
-            Scheduler.Threads[id].UID = 9999; 
-            IPC.ClearMailbox((uint)id);
-            
-            ulong dyingPml4 = Scheduler.Threads[id].Pml4;
+            // [FIX] Load về kernel page table TRƯỚC khi access scheduler structures!
             Scheduler.Threads[id].Pml4 = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
-            
-            // [FIX CHÍ MẠNG] DÙNG CƠ CHẾ ZOMBIE! (Active=4)
-            Scheduler.Threads[id].Active = 4; // ZOMBIE!
 
-            // [FIX] Đăng ký zombie để SwitchTask gọi DestroyUserSpace đúng chỗ
-            // (ngoài interrupt context). Guard tránh overwrite nếu slot đã có zombie.
-            if (Scheduler.DyingThreadPerCore[coreId2] == -1)
-                Scheduler.DyingThreadPerCore[coreId2] = id;
+            Scheduler.Threads[id].Active = 4;
+
+            if (Scheduler.DyingThreadPerCore[coreId] == -1)
+                Scheduler.DyingThreadPerCore[coreId] = id;
 
             StoreFence();
-
             Scheduler.ReleaseSchedLockSafe(irq);
 
-            // [FIX CHÍ MẠNG] CẤM GỌI DestroyUserSpace() TRONG INTERRUPT CONTEXT!
-            // dyingPml4 là physical address, không thể dereferencing trực tiếp
-            // để tránh free garbage addresses. Zombie mechanism sẽ xử lý cleanup ở SwitchTask.
-
-            return Scheduler.SwitchTask(currentRsp); 
+            return Scheduler.SwitchTask(currentRsp);
         }
 
         BroadcastApocalypse();

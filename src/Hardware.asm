@@ -107,15 +107,32 @@ ReadMmio32:
 ; [BỌC THÉP 2] SPINLOCK ARCHITECTURE
 ; ==========================================================
 AsmSpinlockAcquire:
-    mov eax, 1              
+    mov eax, 1
+    xor r10d, r10d          ; [MITIGATION CVE-2026-007] Counter = 0
 .spin:
     xchg eax, dword [rcx]   ; xchg trên x86 TỰ ĐỘNG khóa BUS (Atomic)
-    test eax, eax           
-    jz .acquired            
-    pause                   
-    jmp .spin               
+    test eax, eax
+    jz .acquired
+
+    ; [MITIGATION CVE-2026-007] Check spin count
+    inc r10d
+    cmp r10d, 10000000      ; 10 million iterations (~100ms trên 3GHz CPU)
+    jae .spinlock_timeout   ; Jump if Above or Equal
+
+    pause
+    jmp .spin
+
+.spinlock_timeout:
+    ; Potential deadlock/priority inversion detected!
+    ; Note: Không thể call Terminal.Print ở đây vì nó cần lock
+    ; Chỉ có thể halt hoặc trigger triple fault
+    mov rax, 0xDEADDEAD
+    mov rbx, 0xDEADDEAD
+    hlt                     ; Halt - better than infinite spin
+    jmp .spinlock_timeout   ; Loop halt nếu interrupt wake up
+
 .acquired:
-    lfence                  ; [LÁ CHẮN LOAD] Cấm Speculative Execution! Đéo cho phép CPU "đoán trước" mà chạy lén vào Vùng Cấm khi chưa cầm chắc chìa khóa!
+    lfence                  ; [LÁ CHẮN LOAD] Cấm Speculative Execution!
     ret
 
 AsmSpinlockRelease:
@@ -492,10 +509,6 @@ IsrPageFault:
     pop rdx
     pop rcx
     pop rax
-
-    ; 3. [TỬ HUYỆT ĐƯỢC VÁ] DỌN DẸP ERROR CODE TRƯỚC KHI IRETQ!
-    ; Lúc này RSP đang trỏ thẳng vào ERROR CODE, ta phải bước qua nó để tới RIP!
-    add rsp, 8             
     iretq
 
 
@@ -547,9 +560,6 @@ IsrGPF:
     pop rdx
     pop rcx
     pop rax
-
-    ; 4. [TỬ HUYỆT ĐƯỢC VÁ] TRẢ TỰ DO CHO STACK, ĐÁ PHĂNG ERROR CODE!
-    add rsp, 8            
     iretq
 
 IsrKeyboard:
@@ -654,14 +664,9 @@ IsrMouse:
     iretq
 
 IsrDiv0:
-    add rsp, 8               ; Lấy error code từ stack
+    ; [FIX] Divide by Zero KHÔNG có error code - push dummy 0!
+    push 0
 
-    ; Kiểm tra tính hợp lệ của error code
-    mov r10d, [rsp-8]         ; Lấy error code
-    test r10d, r10d           ; Kiểm tra error code có hợp lệ không
-    js .invalid_error_code    ; Error code âm -> không hợp lệ
-
-.valid_error_code:
     push rax
     push rcx
     push rdx
@@ -678,10 +683,6 @@ IsrDiv0:
     push r14
     push r15
 
-    ; ==========================================================
-    ; [FIX CHÍ MẠNG] CHUYỀN CON TRỎ STACK VÀO RCX CHO C#!
-    ; DivideByZeroHandler giờ trả về RSP mới qua RAX (context switch)!
-    ; ==========================================================
     mov rcx, rsp
 
     push rbp
@@ -689,13 +690,13 @@ IsrDiv0:
     and rsp, -16
     sub rsp, 32
 
-    cld                     
+    cld
     call DivideByZeroHandler
-    
+
     mov rsp, rbp
     pop rbp
 
-    mov rsp, rax           ; NHẬN STACK MỚI TỪ CONTEXT SWITCH!
+    mov rsp, rax           ; Context switch - stack MỚI!
 
     pop r15
     pop r14

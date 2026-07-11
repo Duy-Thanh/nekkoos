@@ -89,7 +89,10 @@ public static unsafe class Scheduler
             // [FIX CRITICAL] Guard against out-of-bounds or uninitialized (-1)
             if (coreId >= 256) return 0;
             int tid = CurrentThreadIds[coreId];
-            if (tid < 0 || tid >= ThreadCount) return 0;
+
+            // [FIX CVE-2026-008] Extra safety: check Threads không null và tid trong range
+            if (Threads == null || tid < 0 || tid >= ThreadCount) return 0;
+
             return tid;
         }
     }
@@ -371,18 +374,18 @@ public static unsafe class Scheduler
         if (bestId == -1) bestId = IdleThreadIds[coreId];
 
         CurrentThreadIds[coreId] = bestId;
-        Threads[bestId].ExecutingOnCore = (int)coreId; 
+        Threads[bestId].ExecutingOnCore = (int)coreId;
 
         ulong nextRsp = Threads[bestId].Rsp;
         ulong nextKStack = Threads[bestId].KernelStackTop;
         ulong nextPml4 = Threads[bestId].Pml4;
-        
+
         if (nextKStack != 0) {
-            if (coreId == 0) GDT.Tss->Rsp0 = nextKStack; 
-            else if (SMP.CoreTssList != null && SMP.CoreTssList[coreId] != null) SMP.CoreTssList[coreId]->Rsp0 = nextKStack; 
+            if (coreId == 0) GDT.Tss->Rsp0 = nextKStack;
+            else if (SMP.CoreTssList != null && SMP.CoreTssList[coreId] != null) SMP.CoreTssList[coreId]->Rsp0 = nextKStack;
         }
 
-        if (nextPml4 == 0 || !VMM.IsCanonical(nextPml4) || nextPml4 >= PMM.TotalPages * 4096UL) 
+        if (nextPml4 == 0 || !VMM.IsCanonical(nextPml4) || nextPml4 >= PMM.TotalPages * 4096UL)
         {
             nextPml4 = (ulong)VMM.PML4;
             Threads[bestId].Pml4 = (ulong)VMM.PML4;
@@ -394,7 +397,7 @@ public static unsafe class Scheduler
         RestoreFPU(Threads[bestId].FpuState);
 
         UnlockScheduler();
-        
+
         return nextRsp;
     }
 
@@ -651,6 +654,9 @@ public static unsafe class Scheduler
 
         Threads[id].UID = 9999; Threads[id].GID = 9999; Threads[id].AppHeapBase = 0;
         IPC.ClearMailbox((uint)id);
+
+        // [CVE-2026-012 ANALYSIS] SharedMemPhys is already freed by VMM.DestroyUserSpace()
+        // when it walks the page tables. No explicit free needed here - it would be a double free!
         Threads[id].SharedMemPhys = 0; Threads[id].SharedMemVirt = 0;
 
         bool isSelf = (id == CurrentThreadIds[coreId]);

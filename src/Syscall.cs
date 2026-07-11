@@ -139,7 +139,10 @@ public static unsafe class Syscall
         ulong syscallId = ctx->Rax;
         int id = Scheduler.CurrentThreadId;
 
-        // Low-volume syscall logging for triage: sample 1/256 calls
+        // [FIX CVE-2026-009] DISABLED: Serial logging leaks CR3/TID to QEMU monitor
+        // This information can be used to bypass ASLR or map kernel memory layout
+        // If debugging is needed, re-enable temporarily and rebuild
+        /*
         SyscallLogCounter++;
         if ((SyscallLogCounter & 0xFF) == 0) {
             ulong cr3 = VMM.ReadCR3() & 0x000FFFFFFFFFF000UL;
@@ -151,6 +154,7 @@ public static unsafe class Syscall
             Serial.WriteHex(cr3);
             fixed (char* nl = "\n\0") Serial.WriteString(nl);
         }
+        */
 
         // Validate scheduler/thread table before touching it
         if (Scheduler.Threads == null || id < 0 || id >= Scheduler.ThreadCount) {
@@ -181,18 +185,38 @@ public static unsafe class Syscall
             case 0: { Scheduler.TerminateCurrentTask(); break; }
             
             // [SYSCALL 1]: IN CHUỖI RA MÀN HÌNH (Print)
-            case 1: 
-            {                
+            case 1:
+            {
                 if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx)) { ctx->Rax = 0; break; }
                 char* str = (char*)ctx->Rcx;
-                
+
+                // [MITIGATION CVE-2026-003] TOCTOU hardening:
+                // Không fix hoàn toàn (gây crash/hang), nhưng validate định kỳ mỗi 256 chars
+                // để phát hiện page unmap trong hầu hết trường hợp, làm exploit khó hơn
                 bool irq = Terminal.ScreenLock.AcquireSafe();
-                int maxPrint = 8192; 
-                while (*str != '\0' && maxPrint > 0) 
+                int maxPrint = 8192;
+                int charsSinceLastCheck = 0;
+                const int CHECK_INTERVAL = 256;  // Validate mỗi 256 chars
+
+                while (*str != '\0' && maxPrint > 0)
                 {
-                    Terminal.DrawCharUnsafe(*str); 
-                    str++; maxPrint--;
+                    // Validate định kỳ để catch page unmap attacks
+                    if (charsSinceLastCheck >= CHECK_INTERVAL)
+                    {
+                        if (!IsValidUserPtr((ulong)str))
+                        {
+                            // Page đã bị unmap giữa chừng - nghi vấn attack!
+                            break;
+                        }
+                        charsSinceLastCheck = 0;
+                    }
+
+                    Terminal.DrawCharUnsafe(*str);
+                    str++;
+                    maxPrint--;
+                    charsSinceLastCheck++;
                 }
+
                 Terminal.ScreenLock.ReleaseSafe(irq);
                 break;
             }
@@ -355,18 +379,29 @@ public static unsafe class Syscall
                 }
 
                 // Gọi Send của cấu trúc Lock-Free mới
-                IPC.Send(msgType, (uint)id, receiverId, ctx->R8);
+                // [FIX CVE-2026-002] BẮT RETURN VALUE để caller biết send có thành công không!
+                bool sendSuccess = IPC.Send(msgType, (uint)id, receiverId, ctx->R8);
 
-                bool irq = Scheduler.AcquireSchedLockSafe();
-                if (Scheduler.Threads[receiverId].Active == 2) {
-                    Scheduler.Threads[receiverId].Active = 1; 
+                if (sendSuccess)
+                {
+                    // Chỉ wake receiver nếu send thành công
+                    bool irq = Scheduler.AcquireSchedLockSafe();
+                    if (Scheduler.Threads[receiverId].Active == 2) {
+                        Scheduler.Threads[receiverId].Active = 1;
+                    }
+                    Scheduler.Threads[receiverId].VRuntime = Scheduler.Threads[id].VRuntime;
+                    Scheduler.ReleaseSchedLockSafe(irq);
+
+                    ctx->Rax = 1;  // Success
                 }
-                Scheduler.Threads[receiverId].VRuntime = Scheduler.Threads[id].VRuntime;
-                Scheduler.ReleaseSchedLockSafe(irq);
-                
+                else
+                {
+                    ctx->Rax = 0;  // Failed - queue full, caller nên retry!
+                }
+
                 // [FIX CHÍ MẠNG NGẮT LỒNG] Bỏ Scheduler.Yield() lồng - xem giải
                 // thích ở đầu hàm SyscallHandler. Timer Interrupt tự lo liệu.
-                ctx->Rax = 1; break;
+                break;
             }
 
             // [SYSCALL 6]: XIN THÊM RAM ẢO (Allocate Heap Memory)

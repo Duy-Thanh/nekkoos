@@ -66,12 +66,14 @@ public static unsafe class PMM
         for (ulong i = 0; i < numEntries; i++)
         {
             EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mapPtr + (i * descSize));
-            ulong topAddress = desc->PhysicalStart + (desc->NumberOfPages * 4096);
-            // Kiểm tra tràn khi tính toán topAddress
+
+            // [FIX CVE-2026-005] Kiểm tra tràn TRƯỚC KHI tính toán topAddress!
             if (desc->NumberOfPages > (ULongMax - desc->PhysicalStart) / 4096) {
-                // Bỏ qua descriptor này vì nó quá lớn
+                // Bỏ qua descriptor này vì nó quá lớn, có thể là attack vector
                 continue;
             }
+
+            ulong topAddress = desc->PhysicalStart + (desc->NumberOfPages * 4096);
             if (topAddress > maxPhysicalAddress) maxPhysicalAddress = topAddress;
         }
 

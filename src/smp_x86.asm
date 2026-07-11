@@ -158,11 +158,11 @@ long_mode:
     ; chỉ chứa 0x00001000 → BẢN ĐỒ BỘ NHỚ SAI HOÀN TOÀN!
     ; Giờ đã ở Long Mode, nạp lại 64-bit đầy đủ để sửa chữa!
     ; ==========================================================
-    mov rax, qword [0x8F00]
+    mov rax, qword [abs 0x8F00]
     mov cr3, rax
 
     ; 7. LẤY STACK TỪ HÒM THƯ (0x8F10)
-    mov rsp, qword [0x8F10]
+    mov rsp, qword [abs 0x8F10]
 
     ; If stack mailbox is zero, halt to avoid NULL-stack GPF
     test rsp, rsp
@@ -171,19 +171,19 @@ long_mode:
     ; ==========================================================
     ; [VŨ KHÍ MỚI] GIAO THỨC ACK (BÁO NHẬN HÀNG)
     ; ==========================================================
-    mov qword [0x8F10], 0 
-    
+    mov qword [abs 0x8F10], 0
+
     ; ==========================================================
     ; [BỌC THÉP 1 - STORE FENCE] DAO MỔ TRÂU CỦA PHẦN CỨNG!
-    ; Ép CPU xả Store Buffer ngay lập tức! Số 0 phải hiện hình 
+    ; Ép CPU xả Store Buffer ngay lập tức! Số 0 phải hiện hình
     ; trên RAM ĐỂ LÕI 0 THẤY ĐƯỢC NGAY TỨC KHẮC!
     ; ==========================================================
-    sfence 
+    sfence
 
     xor rbp, rbp
 
     ; 8. Run C# code!
-    mov rax, qword [0x8F08]
+    mov rax, qword [abs 0x8F08]
     
     ; ==========================================================
     ; [BỌC THÉP 2 - LOAD FENCE] CHỐNG ĐỌC MÙ (SPECULATIVE EXECUTION)!
