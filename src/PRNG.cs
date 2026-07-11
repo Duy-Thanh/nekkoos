@@ -10,8 +10,8 @@ public static unsafe class PRNG
     private static ulong state = 0;
 
     // ==========================================================
-    // [VŨ KHÍ MỚI] Ổ KHÓA LƯỢNG TỬ (SPINLOCK)
-    // Đảm bảo 8 Lõi CPU đéo bao giờ xâu xé cái hạt giống này!
+    // [SYNCHRONIZATION] Spinlock to protect seed state
+    // Ensures multi-core safety by preventing concurrent access to seed state
     // ==========================================================
     private static Spinlock PrngLock = new Spinlock();
 
@@ -23,15 +23,15 @@ public static unsafe class PRNG
         if (state == 0) {
             state = 0x1337CAFE8BADBEEFUL; // Sử dụng giá trị mặc định nếu TSC = 0
         }
-        
+
         state ^= PIT.Ticks << 16;
-        
+
         state = (state ^ (state >> 30)) * 0xbf58476d1ce4e5b9UL;
         state = (state ^ (state >> 27)) * 0x94d049bb133111ebUL;
 
         // ==========================================================
-        // [FIX CHÍ MẠNG 1] LUẬT TỬ TẾ CỦA XORSHIFT!
-        // State đéo bao giờ được phép bằng 0! Nếu bằng 0, ép nó thành số khác!
+        // [XORSHIFT RULE] Seed state must never be 0
+        // If state is 0, initialize it to a default non-zero value
         // ==========================================================
         if (state == 0) state = 0x1337CAFE8BADBEEFUL; 
     }
@@ -39,11 +39,11 @@ public static unsafe class PRNG
     public static ulong Next()
     {
         // ==========================================================
-        // [FIX CHÍ MẠNG 2] KHÓA MÕM TẤT CẢ CÁC LÕI KHÁC KHI LẤY SỐ!
+        // [SYNCHRONIZATION] Lock seed state during generation
         // ==========================================================
         bool irq = PrngLock.AcquireSafe();
 
-        // Đề phòng trường hợp có thằng ngáo đá nào gọi Next() trước khi KernelMain gọi Init()
+        // Guard against early calls to Next() before Init() has executed
         if (state == 0) {
             ulong tsc = ReadTSC();
             // Kiểm tra xem ReadTSC có trả về giá trị hợp lệ không
@@ -62,23 +62,23 @@ public static unsafe class PRNG
         
         ulong result = state * 0x2545F4914F6CDD1DUL;
 
-        PrngLock.ReleaseSafe(irq); // TRẢ KHÓA!
-        
+        PrngLock.ReleaseSafe(irq); // Release spinlock
+
         return result;
     }
 
     public static ulong Next(ulong min, ulong max)
     {
-        if (min >= max) return min; // Cản tụi ngáo truyền max nhỏ hơn min
+        if (min >= max) return min; // Guard: check parameter boundaries
 
         // ==========================================================
-        // [FIX CHÍ MẠNG 3] CHỐNG TRÀN SỐ (OVERFLOW) GÂY KERNEL PANIC DIVIDE BY ZERO!
+        // [SAFETY] Prevent integer overflow that can lead to division by zero
         // ==========================================================
         ulong range = max - min;
-        
+
         // ==========================================================
-        // [SỬA LỖI CS0117 CHÍ MẠNG] DÙNG RAW HEX THAY VÌ ULONG.MAXVALUE!
-        // Baremetal đéo có System.UInt64.MaxValue! Phải tự đúc bằng thép!
+        // [COMPILER LIMITATION] Use raw hex instead of ulong.MaxValue
+        // Baremetal target lacks standard System.UInt64 metadata
         // ==========================================================
         if (range == 0xFFFFFFFFFFFFFFFFUL) return Next(); 
         

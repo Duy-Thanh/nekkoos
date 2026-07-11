@@ -105,23 +105,21 @@ public static unsafe class Syscall
     [UnmanagedCallersOnly(EntryPoint = "SyscallHandler")]
     public static ulong SyscallHandler(ulong currentRsp)
     {
-        // [FIX CHÍ MẠNG VŨ TRỤ] CẤM TUYỆT ĐỐI BẬT NGẮT Ở ĐÂY!
-        // Nếu bật ngắt, Timer sẽ nã Context Switch giữa lúc đang thao tác Page Table,
-        // ReadCR3() sẽ trả về PML4 của thằng khác → GHI BỘ NHỚ VÀO TIẾN TRÌNH SAI → KERNEL PANIC!
+        // ==========================================================
+        // [CRITICAL PRECAUTION] Disable interrupts during syscall handling
+        // Enabling interrupts allows context switches during page table modifications,
+        // which could cause CR3 address space mismatches and lead to kernel crashes.
+        // ==========================================================
         //
         // ==========================================================
-        // [FIX CHÍ MẠNG NGẮT LỒNG - NGUỒN GỐC GPF "THOẮT ẨN THOẮT HIỆN"]
-        // TUYỆT ĐỐI CẤM gọi Scheduler.Yield() (dùng "int 0x81") TỪ BÊN TRONG
-        // hàm này! SyscallHandler đang chạy TRONG NGẮT "int 0x80" (Ring3->Ring0),
-        // nên CPU đã đẩy đủ Frame 5-word (RIP/CS/RFLAGS/RSP/SS) lên Stack.
-        // Nếu gọi Yield() ở đây, nó tạo ra một NGẮT MỀM LỒNG bên trong ngắt
-        // hiện tại. Vì lúc này đã ở Ring 0 rồi (không đổi quyền), CPU chỉ đẩy
-        // Frame CỤT 3-word (RIP/CS=0x08/RFLAGS) cho ngắt lồng đó - KHÔNG có
-        // RSP/SS! SwitchTask() lại đi lưu Rsp của Thread NÀY (vốn dĩ là App
-        // Ring 3!) trúng ngay cái Frame cụt CS=0x08 (Ring 0) đó. Khi Scheduler
-        // sau này phục hồi lại Thread này, IRETQ đọc CS=0x08 -> tưởng vẫn
-        // Ring0->Ring0 -> KHÔNG phục hồi RSP/SS thật -> Stack lệch -> IRETQ
-        // nạp CS rác từ Stack sai vị trí -> #GP FAULT ngay tại chính IRETQ!
+        // [SCHEDULER PROTECTION] Prevent nested interrupts and soft yields
+        // Do not call Scheduler.Yield() (via int 0x81) inside the syscall handler.
+        // The syscall handler runs within an active "int 0x80" frame (Ring 3 to Ring 0 transition),
+        // meaning the CPU pushed a full 5-word interrupt stack frame (RIP/CS/RFLAGS/RSP/SS).
+        // Calling Yield() here triggers a nested Ring 0 interrupt, which only pushes a 3-word frame,
+        // omitting RSP/SS. When the scheduler attempts to restore this task, the missing stack context
+        // causes stack misalignment and general protection faults (#GP) on IRETQ.
+        // ==========================================================
         // Đã verify bằng cách disassemble Kernel.exe: RIP crash luôn lệch
         // đúng offset cố định trước "Kernel Text Address" - trúng phóc lệnh
         // iretq cuối IsrYield, bất kể KASLR đổi base mỗi lần boot.
@@ -233,7 +231,7 @@ public static unsafe class Syscall
 
                 uint x = (uint)ctx->Rcx; uint y = (uint)ctx->Rdx; uint color = (uint)ctx->R8;
 
-                // [FIX CHÍ MẠNG] CHẶN ĐỨNG GHI ĐÈ KERNEL MEMORY!
+                // [SECURITY] Prevent kernel memory overwrite by validating framebuffer coordinates
                 if (x >= Terminal.width || y >= Terminal.height) { ctx->Rax = 0; break; }
 
                 Terminal.fb[y * Terminal.scanLine + x] = color;
@@ -292,7 +290,7 @@ public static unsafe class Syscall
                         // Nếu là phím bấm (Type = 1) và từ Keyboard (Sender = 33)
                         if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
                         {
-                            // [VŨ KHÍ MỚI] Cướp quyền đọc bằng AtomicExchange trên cờ IsLocked!
+                            // [ATOMIC] Acquire exclusive read access using AtomicExchange on IsLocked flag
                             if (IPC.AtomicExchange(ref IPC.queue[i].IsLocked, 1) == 0)
                             {
                                 // Kiểm tra lại lần nữa cho chắc sau khi chiếm được khóa ô
@@ -399,8 +397,7 @@ public static unsafe class Syscall
                     ctx->Rax = 0;  // Failed - queue full, caller nên retry!
                 }
 
-                // [FIX CHÍ MẠNG NGẮT LỒNG] Bỏ Scheduler.Yield() lồng - xem giải
-                // thích ở đầu hàm SyscallHandler. Timer Interrupt tự lo liệu.
+                // [SCHEDULER] Do not yield inside the interrupt frame - context switch is handled by the timer IRQ
                 break;
             }
 
@@ -420,7 +417,7 @@ public static unsafe class Syscall
                 ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
                 
                 // ==========================================================
-                // [FIX CHÍ MẠNG VŨ TRỤ] DÙNG PML4 CỦA THREAD, ĐÉO DÙNG ReadCR3()!
+                // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
                 // Validate the PML4 pointer thoroughly before mapping into it.
                 // ==========================================================
                 // Ensure caller maps into the currently active PML4 (CR3) to avoid dereferencing other PML4s
@@ -521,7 +518,7 @@ public static unsafe class Syscall
                 ulong alignedPhys = physAddr & ~0xFFFUL; ulong offset = physAddr & 0xFFFUL; 
                 ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
                 
-                // [FIX CHÍ MẠNG] DÙNG PML4 CỦA THREAD! Validate pointer first.
+                // [PAGING] Use the thread's own PML4 and validate the pointer first
                 ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                 if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
                 // Ensure the syscall is running under the thread's PML4 before mapping.
@@ -1208,7 +1205,7 @@ public static unsafe class Syscall
                     Scheduler.Threads[id].VirtPages += 5;
                     Scheduler.Threads[id].SharedMemVirt = Scheduler.Threads[id].AppHeapBase;
                     
-                    // [FIX CHÍ MẠNG] DÙNG PML4 CỦA THREAD! Validate PML4 and GlobalSharedRAM_Phys
+                    // [PAGING] Use the thread's own PML4 pointer. Validate PML4 and GlobalSharedRAM_Phys
                     ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                     if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
                     if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
@@ -1285,7 +1282,7 @@ public static unsafe class Syscall
                 ulong myVAddr = Scheduler.Threads[id].AppHeapBase;
                 ulong targetVAddr = Scheduler.Threads[targetPid].AppHeapBase;
                 ulong targetPml4 = Scheduler.Threads[targetPid].Pml4;
-                // [FIX CHÍ MẠNG] DÙNG PML4 CỦA THREAD THAY VÌ ReadCR3()!
+                // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
                 ulong* myPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                 if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
                 if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
@@ -1313,7 +1310,7 @@ public static unsafe class Syscall
 
                 Scheduler.ReleaseSchedLockSafe(irq);
 
-                // [FIX CHÍ MẠNG] Only load PML4 if it matches current CR3 to avoid loading
+                // [PAGING] Only load PML4 if it matches current CR3 to avoid loading
                 // an attacker-controlled or stale PML4 (hard-block unsafe loads).
                 ulong* currentPml4_after = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)myPml4 == currentPml4_after) {

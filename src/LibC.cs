@@ -255,9 +255,9 @@ public static unsafe class LibC
                 byte scanCode = 0;
                 
                 // ==========================================================
-                // [BỌC THÉP TRỊ -Ot] KHÓA MÕM LLVM TRONG VÒNG LẶP DRIVER BÀN PHÍM!
-                // Ép LLVM đọc lại giá trị cổng 0x64 mỗi lần lặp!
-                // Nếu đéo có, bàn phím cứng ngắc, DRM khóa vĩnh viễn!
+                // [COMPILER FENCE] Prevent LLVM loop optimization in keyboard driver
+                // Forces CPU to read port 0x64 on every iteration to monitor input status
+                // Without this fence, the keyboard polling loop may hang due to compiler register caching
                 // ==========================================================
                 while ((IO.In8(0x64) & 1) == 0) { CompilerFence(); }
                 

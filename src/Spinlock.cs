@@ -13,7 +13,7 @@ public unsafe struct Spinlock
     public static extern ulong GetRflags();
 
     // ==========================================================
-    // NẠP KHO VŨ KHÍ RÀO CHẮN
+    // [BARRIERS] Import memory barrier functions from assembly
     // ==========================================================
     [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
     [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
@@ -27,8 +27,8 @@ public unsafe struct Spinlock
     }
 
     // ==========================================================
-    // [VŨ KHÍ TỐI THƯỢNG] KHÓA AN TOÀN (TỰ ĐỘNG BỊT LỖ TAI)
-    // Đảm bảo đéo có thằng Timer hay Keyboard nào dám ngắt lúc đang ôm khóa!
+    // [SYNCHRONIZATION] Interrupt-safe lock acquisition
+    // Disables interrupts to prevent deadlocks from interrupt handlers (e.g. Timer, Keyboard)
     // ==========================================================
     public bool AcquireSafe()
     {

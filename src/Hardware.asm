@@ -88,7 +88,7 @@ WriteMmio32:
     test rcx, rcx
     jz .wmz_ret
     mov dword [rcx], edx
-    mfence              ; Ép CPU phóng lệnh Ghi thẳng ra thiết bị ngoại vi, đéo được ngâm trong Cache!
+    mfence              ; Force memory write to peripheral register immediately (bypass cache)
     ret
 .wmz_ret:
     ret
@@ -355,9 +355,9 @@ GetIsrYield:
     ret
 
 ; =========================================================================
-; CÁC ISR CHUYỂN LUỒNG VÀ KHÔNG ĐỔI LUỒNG
-; (Giữ nguyên vì lệnh IRETQ trên x86_64 vốn dĩ đã là một Serializing Instruction - 
-; nó tự động hoạt động như một cái Rào Chắn Tuyệt Đối rồi, đéo cần thêm mfence!)
+; INTERRUPT SERVICE ROUTINES (ISR) - TASK SWITCHING AND REGISTER PRESERVATION
+; (Note: The IRETQ instruction on x86_64 is inherently serializing and acts as
+; a memory barrier; explicit mfence calls are not required here).
 ; =========================================================================
 
 IsrYield:
@@ -543,7 +543,7 @@ IsrGPF:
     mov rsp, rbp
     pop rbp
 
-    mov rsp, rax         ; Nhận RSP xịn từ GPFHandler bọc thép tao với mày vừa sửa
+    mov rsp, rax         ; Load new RSP returned from GPFHandler
 
     pop r15
     pop r14
@@ -625,24 +625,23 @@ IsrMouse:
     push r15
 
     ; ==========================================================
-    ; [FIX CHÍ MẠNG 1] CHUYỀN CON TRỎ STACK VÀO RCX CHO THẰNG C#!
+    ; [SCHEDULER] Pass stack pointer to C# handler via RCX
     ; ==========================================================
-    mov rcx, rsp           
-    
+    mov rcx, rsp
+
     push rbp
     mov rbp, rsp
     and rsp, -16
     sub rsp, 32
 
-    cld                     
-    call MouseHandler      
-    
-    mov rsp, rbp           
+    cld
+    call MouseHandler
+
+    mov rsp, rbp
     pop rbp
 
     ; ==========================================================
-    ; [FIX CHÍ MẠNG 2] NHẬN STACK MỚI TỪ RAX ĐỂ THỰC THI CONTEXT SWITCH!
-    ; Đéo có dòng này thì Scheduler của mày vứt đi!
+    ; [SCHEDULER] Update stack pointer from RAX to execute context switch
     ; ==========================================================
     mov rsp, rax           
 
@@ -779,29 +778,29 @@ StoreFence:
     sfence
     ret
 
-; [4] RÀO CHẮN TUYỆT ĐỐI (Dao mổ trâu - Chỉ dùng khi đụng chạm I/O Device nhạy cảm)
+; [4] MEMORY BARRIER (Used for sensitive I/O device access)
 FullFence:
     mfence
     ret
 
 ; ==========================================================
-; [VŨ KHÍ NGUYÊN TỬ] COMPARE-AND-SWAP (CAS)
-; Hàm C# sẽ là: int CompareExchange(ref uint location, uint value, uint comparand)
+; [ATOMIC] COMPARE-AND-SWAP (CAS)
+; C# signature: int CompareExchange(ref uint location, uint value, uint comparand)
 ; ==========================================================
 InterlockedCompareExchange:
     ; RCX = Địa chỉ của biến (ref location)
     ; EDX = Giá trị mới muốn ghi vào (value)
     ; R8D = Giá trị cũ dùng để so sánh (comparand)
-    
+
     mov eax, r8d                    ; EAX = comparand
     lock cmpxchg dword [rcx], edx   ; So sánh EAX với [RCX]. Nếu bằng, ghi EDX vào [RCX].
                                     ; Bất kể thành công hay không, giá trị gốc tại [RCX] sẽ được trả về trong EAX.
     ret
 
 ; ==========================================================
-; [VŨ KHÍ TỐI THƯỢNG] ATOMIC EXCHANGE (XCHG)
-; Hàm C# sẽ là: uint AtomicExchange(ref uint location, uint newValue)
-; Đéo cần Compare! Đổi thẳng và lấy giá trị cũ về để tự xét xử!
+; [ATOMIC] ATOMIC EXCHANGE (XCHG)
+; C# signature: uint AtomicExchange(ref uint location, uint newValue)
+; Replaces value atomically and returns the previous value
 ; ==========================================================
 AtomicExchange:
     ; RCX = Địa chỉ của biến (ref location)

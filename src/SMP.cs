@@ -116,12 +116,13 @@ public static unsafe class SMP
         CompilerFence();
 
         // ==========================================================
-        // [FIX CHÍ MẠNG RACE #4] TẠO IDLE THREAD TRƯỚC KHI BẬT NGẮT!
-        // CreateIdleTaskForCore() trước đây KHÔNG BAO GIỜ được gọi cho
-        // các Lõi phụ (AP)! IdleThreadIds[coreId] luôn = -1 vĩnh viễn.
-        // Hệ quả: Nếu Timer IRQ nổ trên lõi này (đã Arm timer + Enable
-        // Interrupts ngay bên dưới) TRƯỚC KHI có Thread nào khác sẵn
-        // sàng chạy trên đúng lõi này, SwitchTask() sẽ chọn
+        // [RACE CONDITION FIX] Create idle thread before enabling interrupts
+        // Previously, CreateIdleTaskForCore() was never called for Application Processors (APs)
+        // leaving IdleThreadIds[coreId] initialized to -1.
+        // If a timer interrupt fired on an AP before other threads were scheduled,
+        // SwitchTask() would attempt to pick a thread and cause a kernel panic due to -1.
+        // Creating the idle task here prevents this race condition.
+        // ==========================================================
         // bestId = IdleThreadIds[coreId] = -1, rồi truy cập
         // Threads[-1] => ĐỌC/GHI NGOÀI MẢNG => rác toàn bộ Rsp/Pml4/
         // ExecutingOnCore => sập máy random (GPF/Page Fault/treo/lỗi
@@ -272,10 +273,10 @@ public static unsafe class SMP
                 Scheduler.Threads[id].Pml4 = (ulong)VMM.PML4;
                 
                 // ==========================================================
-                // [FIX CHÍ MẠNG] TĂNG KERNEL STACK TỪ 1 PAGE (4KB) LÊN 4 PAGES (16KB)!
-                // ISR push 15 thanh ghi (120 bytes), SaveFPU cần 528 bytes trên Stack,
-                // cộng thêm overhead của C# = TRÀN STACK 4KB như chơi!
-                // 16KB = An toàn tuyệt đối, khớp với CreateTask/CreateIdleTaskForCore!
+                // [MEMORY CONFIGURATION] Increase kernel stack size from 4KB to 16KB
+                // APIC interrupts push registers (120 bytes) and SaveFPU requires 528 bytes,
+                // which combined with C# runtime overhead can easily exceed a 4KB stack limit.
+                // 16KB stack size ensures safety margin and matches CreateTask settings.
                 // ==========================================================
                 ulong* kStackTop = (ulong*)((byte*)PMM.AllocateContiguousPages(4) + (4 * 4096));
 
@@ -290,15 +291,15 @@ public static unsafe class SMP
                 Scheduler.Threads[id].KernelStackTop = (ulong)kStackTop; 
                 
                 // ==========================================================
-                // [FIX CHÍ MẠNG TOÀN VŨ TRỤ] DÓNG LỀ ABI CHO IRETQ FRAME!
-                // Trừ đi 8 byte giả làm lệnh CALL để cứu sống lệnh MOVAPS!
+                // [ALIGNMENT] ABI stack alignment for IRETQ frame
+                // Align stack pointer to 16-byte boundary to satisfy x86_64 ABI requirements
                 // ==========================================================
                 *(--kStackTop) = 0;
-                *(--kStackTop) = 0; 
-                ulong originalTop = (ulong)kStackTop; // <--- CỨU TINH Ở ĐÂY NÀY!
-                
-                *(--kStackTop) = Scheduler.GetSS(); 
-                *(--kStackTop) = originalTop; // <--- NẠP ORIGINAL TOP CHỨ ĐÉO PHẢI KERNELSTACKTOP!
+                *(--kStackTop) = 0;
+                ulong originalTop = (ulong)kStackTop; // Save aligned stack top
+
+                *(--kStackTop) = Scheduler.GetSS();
+                *(--kStackTop) = originalTop; // Load aligned stack top instead of unaligned stack limit
                 *(--kStackTop) = 0x202; 
                 *(--kStackTop) = Scheduler.GetCS(); 
                 
@@ -351,16 +352,15 @@ public static unsafe class SMP
                 APIC.Write(ICR_LOW, 0x00004608);
                 
                 // ==========================================================
-                // [FIX CHÍ MẠNG VŨ TRỤ] KHÓA CHÂN LÕI 0!
-                // Phải đợi đến khi thằng ASM của Lõi Phụ bốc xong Stack
-                // (nó sẽ set Hòm thư về 0) thì mới được phép đi vòng tiếp theo!
-                // Cấm tuyệt đối Data Race Ghi Đè Hòm Thư!
+                // [SYNCHRONIZATION] Wait for AP stack initialization
+                // Block BSP until the AP assembly bootstrap retrieves the stack pointer
+                // (AP clears the mailbox to 0). This prevents data races when spawning multiple APs.
                 // ==========================================================
                 int stackTimeout = 10000000;
                 while (*stackMailbox != 0 && stackTimeout > 0) {
                     // ==========================================================
-                    // [BỨC TƯỜNG THÉP] COMPILER FENCE!
-                    // Ép LLVM phải reload *stackMailbox từ RAM cho vòng lặp tiếp theo!
+                    // [COMPILER FENCE]
+                    // Force compiler to reload *stackMailbox from RAM on each iteration
                     // ==========================================================
                     CompilerFence();
 

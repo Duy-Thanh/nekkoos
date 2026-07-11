@@ -93,9 +93,9 @@ public static unsafe class Heap
         while (current != null)
         {
             // ==========================================================
-            // [BỌC THÉP COMPILER] 
-            // Ép LLVM đéo được cache con trỏ 'current' vào thanh ghi 
-            // qua các vòng lặp, bắt buộc phải duyệt Linked List từ RAM thật!
+            // [COMPILER FENCE]
+            // Prevent LLVM from caching the 'current' pointer in registers
+            // Forces sequential retrieval from RAM during linked list traversal
             // ==========================================================
             CompilerFence();
 

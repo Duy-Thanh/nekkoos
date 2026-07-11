@@ -9,9 +9,9 @@ mov es, ax
 mov ss, ax
 
 ; ==========================================================
-; [FIX CHÍ MẠNG 3] CẮM CỌC STACK 16-BIT CHỐNG NGẮT NMI!
+; [SAFETY] Set up temporary 16-bit stack
 ; ==========================================================
-mov sp, 0x8000 
+mov sp, 0x8000
 
 ; 1. Enable protected mode
 lgdt [gdt32_desc]
@@ -28,7 +28,7 @@ protected_mode:
     mov ss, ax
 
     ; ==========================================================
-    ; 2. [FIX CHÍ MẠNG] BẬT PAE VÀ SSE (OSFXSR) TRỌN GÓI!
+    // 2. [CPU FEATURES] Enable PAE and SSE (OSFXSR)
     ; ==========================================================
     ; Kiểm tra PAE
     mov eax, 1
@@ -52,15 +52,15 @@ protected_mode:
     mov cr4, eax
 
     ; ==========================================================
-    ; [FIX CHÍ MẠNG 2] KHỞI TẠO BỘ ĐỒNG XỬ LÝ (FPU) CHUẨN MỰC!
+    ; [COPROCESSOR] Initialize Floating-Point Unit (FPU)
     ; ==========================================================
     mov eax, cr0
-    and eax, 0xFFFFFFFB ; Xóa cờ EM (Emulation)
-    or eax, 0x22        ; Bật cờ MP (Monitor Coproc) VÀ NE (Numeric Error)
+    and eax, 0xFFFFFFFB ; Clear EM (Emulation) flag
+    or eax, 0x22        ; Set MP (Monitor Coprocessor) and NE (Numeric Error) flags
     mov cr0, eax
-    
-    clts                ; Xóa cờ Task Switched
-    fninit              ; Rửa sạch FPU tinh khiết 100%!
+
+    clts                ; Clear Task Switched flag
+    fninit              ; Initialize FPU
 
     ; Kiểm tra xem FPU có được khởi tạo thành công không
     fnstsw ax
@@ -69,10 +69,10 @@ protected_mode:
 
     ; 3. Load PML4 (page tables) from IPC
     ; ==========================================================
-    ; [FIX CHÍ MẠNG VŨ TRỤ] LOAD CR3 32-BIT TRƯỚC, RỒI SỬA LẠI 64-BIT!
-    ; PMM có thể cấp PML4 trên 4GB (0x100000000+) khi QEMU dùng RAM > 2GB.
-    ; Trong Protected Mode, CR3 chỉ chứa được 32 bit (tối đa 4GB).
-    ; => Nạp phần THẤP trước, rồi khi vào Long Mode sẽ nạp đầy đủ 64 bit!
+    ; [PAGING] Load 32-bit CR3 initially, then switch to 64-bit
+    // PMM may allocate PML4 above 4GB (0x100000000+) on systems with >2GB RAM.
+    // In 32-bit Protected Mode, CR3 only supports 32-bit physical addresses.
+    // We load the lower 32 bits here, then reload the full 64-bit value once in Long Mode.
     ; ==========================================================
     mov eax, dword [0x8F00]
     mov cr3, eax
@@ -144,19 +144,17 @@ long_mode:
     mov ss, ax
 
     ; ==========================================================
-    ; [FIX CHÍ MẠNG VŨ TRỤ] DỌN SẠCH CACHE RÁC TỪ REAL MODE!
-    ; Trình biên dịch C# đụng vào FS/GS sẽ ĐÉO bị GPF nữa!
+    ; [SEGMENTS] Clear FS/GS segment registers
+    ; Ensures C# compiler/runtime does not trigger GPF when referencing these registers
     ; ==========================================================
     xor ax, ax
     mov fs, ax
     mov gs, ax
 
     ; ==========================================================
-    ; [FIX CHÍ MẠNG NHẤT VŨ TRỤ] NẠP LẠI CR3 ĐẦY ĐỦ 64-BIT!
-    ; Ở Protected Mode, CR3 chỉ nhận được 32 bit thấp.
-    ; Nếu PML4 nằm trên 4GB (ví dụ 0x100001000), thì CR3 cũ
-    ; chỉ chứa 0x00001000 → BẢN ĐỒ BỘ NHỚ SAI HOÀN TOÀN!
-    ; Giờ đã ở Long Mode, nạp lại 64-bit đầy đủ để sửa chữa!
+    ; [PAGING] Load full 64-bit CR3 register
+    ; Reload CR3 with the full 64-bit PML4 address now that we are in Long Mode.
+    ; This corrects the truncated address loaded during 32-bit Protected Mode.
     ; ==========================================================
     mov rax, qword [abs 0x8F00]
     mov cr3, rax
@@ -169,14 +167,15 @@ long_mode:
     je .halt
 
     ; ==========================================================
-    ; [VŨ KHÍ MỚI] GIAO THỨC ACK (BÁO NHẬN HÀNG)
+    ; [SYNCHRONIZATION] Acknowledge stack retrieval
     ; ==========================================================
     mov qword [abs 0x8F10], 0
 
     ; ==========================================================
-    ; [BỌC THÉP 1 - STORE FENCE] DAO MỔ TRÂU CỦA PHẦN CỨNG!
-    ; Ép CPU xả Store Buffer ngay lập tức! Số 0 phải hiện hình
-    ; trên RAM ĐỂ LÕI 0 THẤY ĐƯỢC NGAY TỨC KHẮC!
+    ; [BARRIER] Hardware store fence
+    ; Forces CPU to flush the Store Buffer immediately to ensure the
+    ; BSP core detects the mailbox state update.
+    ; ==========================================================
     ; ==========================================================
     sfence
 

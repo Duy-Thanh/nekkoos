@@ -8,7 +8,7 @@ namespace NekkoOS.Kernel;
 public static unsafe class VMM
 {
     // ==========================================================
-    // [KHÔI PHỤC VŨ KHÍ] KHAI BÁO CÁC HÀM CẦU NỐI ASSEMBLY!
+    // [INTEROP] Assembly bridge function declarations
     // ==========================================================
     [DllImport("*", EntryPoint = "LoadPML4")]
     public static extern void LoadPML4_ASM(void* pml4Address);
@@ -224,9 +224,9 @@ public static unsafe class VMM
         fixed (char* nxMsg = "[+] Hardware NX-Bit (No-Execute) Engaged!\n\0") Terminal.Print(nxMsg);
 
         // ==========================================================
-        // [FIX CHÍ MẠNG VŨ TRỤ] PML4 PHẢI NẰM DƯỚI 4GB!
-        // SMP Trampoline ở Protected Mode chỉ load được CR3 32 bit.
-        // Nếu PML4 trên 4GB, CR3 bị cắt cụt → AP CRASH → KERNEL PANIC!
+        // [MEMORY CONFIGURATION] PML4 directory must reside below 4GB
+        // SMP AP startup trampoline runs in 32-bit Protected Mode and can only load a 32-bit CR3.
+        // If PML4 is placed above 4GB, the high 32 bits of CR3 are lost, leading to AP boot failures.
         // ==========================================================
         PML4 = (ulong*)PMM.AllocatePageBelow4GB();
         if (PML4 == null) {

@@ -90,8 +90,8 @@ public unsafe struct FADT {
     public byte ResetValue; 
     
     // ==========================================================
-    // [FIX CHÍ MẠNG] BỔ SUNG TRƯỜNG EXTENDED ACPI 2.0 (UEFI OVMF)!
-    // Phải có X_Dsdt (64-bit) thì mới húp được RAM trên 4GB!
+    // [SPECIFICATION] Extended ACPI 2.0 fields for UEFI OVMF compatibility
+    // X_Dsdt (64-bit pointer) is required to parse ACPI tables on systems with >4GB RAM
     // ==========================================================
     public fixed byte Reserved3[3];
     public ulong X_FirmwareCtrl;
@@ -154,9 +154,9 @@ public unsafe class Program
     public static bool S5Parsed = false;
 
     // ==========================================================
-    // [VŨ KHÍ TỐI THƯỢNG] HÀM MAP RAM VẬT LÝ BẤT BẠI!
-    // Bù đắp phần bị lệch lề (Offset) để trỏ chính xác tuyệt đối 100%!
-    // Chống cạn kiệt PMM, chống đọc rác gây GPF!
+    // [MEMORY MAPPING] Map physical ACPI memory into virtual address space
+    // Preserves page offset to return the exact requested virtual address
+    // Handles PMM allocation failures and prevents invalid memory reads
     // ==========================================================
     public static ulong MapACPI(ulong physAddr, uint sizeBytes)
     {
@@ -196,7 +196,7 @@ public unsafe class Program
         // CỰC KỲ AN TOÀN!
         int entriesCount = (int)((sdtRealLength - sizeof(ACPISDTHeader)) / (useXsdt ? 8 : 4));
         
-        // [FIX CHÍ MẠNG] BẢO VỆ PMM KHỎI RÁC!
+        // [VALIDATION] Prevent buffer overflow if ACPI table is corrupted
         if (entriesCount > 500) {
             fixed(char* e = "[!] ACPI FATAL: XSDT Length seems corrupted! Aborting.\n\0") SyscallPrint(e);
             SyscallExit();
@@ -236,7 +236,7 @@ public unsafe class Program
                     byte length = ptr[1];
                     
                     // ==========================================================
-                    // [FIX CHÍ MẠNG] CHỐNG LẶP VÔ TẠN KHI GẶP RÁC!
+                    // [VALIDATION] Prevent infinite loop if length field is 0
                     // ==========================================================
                     if (length == 0) break; 
                     

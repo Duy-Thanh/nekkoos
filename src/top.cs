@@ -11,7 +11,7 @@ public static unsafe class NekkoTop
     // [DllImport("*", EntryPoint = "SyscallYield")] public static extern void Yield();
     // [DllImport("*", EntryPoint = "SyscallGetChar")] public static extern byte GetChar();
     // [DllImport("*", EntryPoint = "SyscallExit")] public static extern void Exit();
-    // // [VŨ KHÍ MỚI] GỌI THẲNG LỆNH NGỦ IPC!
+    // // [SYSTEM CALL] Direct IPC wait system call
     // [DllImport("*", EntryPoint = "SyscallWaitIPC")] public static extern void WaitIPC();
     // [DllImport("*", EntryPoint = "SyscallResetCursor")] public static extern void ResetCursor();
 
@@ -144,9 +144,9 @@ public static unsafe class NekkoTop
             SyscallPrint(frameBuffer);
 
             // ==========================================================
-            // [ĐẬP NÁT CPU BURST] THAY BẰNG VÒNG LẶP NGỦ ĐÔNG 20MS
-            // Lặp 50 lần ngủ 20ms = 1 giây cập nhật màn hình một lần!
-            // Đọc phím siêu mượt mà đéo cắn 1% CPU nào cả!
+            // [CPU OPTIMIZATION] Non-blocking keyboard polling with sleep loop
+            // Polls 100 times with a short sleep interval to update the screen once per second.
+            // This prevents CPU resource starvation during key checking.
             // ==========================================================
             for (int wait = 0; wait < 100; wait++) 
             {

@@ -75,7 +75,7 @@ public static unsafe class Scheduler
     public static int* IdleThreadIds;
     
     // ==========================================================
-    // [VŨ KHÍ MỚI] NHÀ XÁC ZOMBIE (THE REAPER ARRAY)
+    // [SCHEDULER] Zombie thread tracking array
     // ==========================================================
     public static int* DyingThreadPerCore;
 
@@ -149,12 +149,12 @@ public static unsafe class Scheduler
         Threads[0].ParentId = 0;
         Threads[0].ExecutingOnCore = 0; 
         // ==========================================================
-        // [FIX CHÍ MẠNG RACE #5] THREAD 0 PHẢI LÀ IDLE-PINNED (Priority=99)!
-        // Thread 0 (KERNEL boot thread) chính là IdleThreadIds[0] - tức là
-        // Core 0 sẽ luôn fallback về nó khi rảnh. Nhưng trước đây nó bị gán
-        // Priority=1 (thường)! SwitchTask() có vòng "steal" chọn thread rảnh 
-        // nhất bất kỳ core nào (Active==1 && ExecutingOnCore==-1 && Priority!=99).
-        // Sau khi core 0 lưu Rsp của Thread 0 rồi set ExecutingOnCore=-1 (dòng
+        // [SCHEDULER RACE FIX] Thread 0 must be flagged as idle-pinned (Priority = 99)
+        // Thread 0 (Kernel boot thread) serves as IdleThreadIds[0], the fallback task for Core 0.
+        // Previously, it had normal priority (Priority = 1), causing other cores'
+        // task stealers to select it, leading to concurrency issues.
+        // Setting Priority = 99 pins it exclusively to Core 0.
+        // ==========================================================
         // "Threads[current].ExecutingOnCore = -1;" ngay dưới), Thread 0 sẽ 
         // LỌT ĐIỀU KIỆN STEAL vì Priority=1 != 99! Core phụ (AP) hoàn toàn 
         // có thể "cướp" chạy Thread 0 CÙNG LÚC với core 0 - HAI LÕI DÙNG CHUNG 
@@ -226,12 +226,12 @@ public static unsafe class Scheduler
         }
 
         // ==========================================================
-        // [FIX CHÍ MẠNG] SAI ABI ALIGNMENT! Trước đây mask thẳng
-        // rspValue về bội số 16 (rspValue &= ~0xFUL), nhưng KernelIdleLoop
-        // được nhảy vào bằng IRETQ (như 1 lệnh JMP trực tiếp), KHÔNG
-        // phải qua CALL! Hàm C# (bflat) luôn giả định RSP ≡ 8 (mod 16)
-        // ngay tại điểm entry (vì bình thường CALL đẩy thêm 8 byte địa
-        // chỉ trả về). Nếu thiếu offset -8 này, các lệnh dùng SSE aligned
+        // [ALIGNMENT] ABI stack alignment for C# runtime entry
+        // Previously, rspValue was aligned strictly to 16-byte boundaries (rspValue &= ~0xFUL).
+        // Since KernelIdleLoop is entered directly via IRETQ rather than a CALL instruction,
+        // we must subtract 8 bytes to satisfy the C# compiler assumption of RSP ≡ 8 (mod 16)
+        // at function entry. Missing this offset causes alignment faults on SSE instructions.
+        // ==========================================================
         // (movaps) bên trong hàm sẽ #GP ngay khi vừa nhảy vào KernelIdleLoop!
         // Phải bắt chước đúng như CreateTask() đã làm: đẩy thêm 1 word rác
         // để RSP lệch đúng 8 so với bội số 16, y hệt hành vi của CALL.
@@ -315,8 +315,9 @@ public static unsafe class Scheduler
         int current = CurrentThreadIds[coreId];
 
         // ==========================================================
-        // [FIX CHÍ MẠNG LỊCH SỬ] CHẶN TRUY CẬP MẢNG ÂM!
-        // Lõi phụ (AP) lần đầu Boot lên thì current = -1. Đéo có Thread cũ để lưu!
+        // [SCHEDULER] Avoid out-of-bounds array access on boot
+        // When AP cores first boot, current is initialized to -1.
+        // Skip context saving if there is no active previous thread context.
         // ==========================================================
         if (current != -1 && Threads[current].Active != 0)
         {
@@ -456,9 +457,9 @@ public static unsafe class Scheduler
         } else {
             stackTop = (ulong*)Threads[id].KernelStackTop;
             // ==========================================================
-            // [FIX CHÍ MẠNG 2] ĐÉO BAO GIỜ ĐƯỢC DÙNG MEMSET VỚI KERNEL STACK!
-            // Khi tái chế Stack, cứ ghi đè giá trị mới lên TOP là đủ. 
-            // MemSet sẽ làm nổ tung Core khác nếu nó tình cờ dính data race!
+            // [STACK MANAGEMENT] Avoid MemSet on stack recycling
+            // When recycling stacks, overwrite stack top values directly.
+            // MemSet operations on active stacks can lead to data races and crash other cores.
             // ==========================================================
         }
 
@@ -555,7 +556,7 @@ public static unsafe class Scheduler
         } else {
             kStackTop = (ulong*)Threads[id].KernelStackTop;
             // ==========================================================
-            // [FIX CHÍ MẠNG 2] ĐÉO BAO GIỜ ĐƯỢC DÙNG MEMSET VỚI KERNEL STACK!
+            // [STACK MANAGEMENT] Overwrite values directly to recycle stack
             // ==========================================================
         }
 

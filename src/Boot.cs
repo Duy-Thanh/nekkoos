@@ -605,8 +605,8 @@ namespace NekkoOS
         }
 
         // ==========================================================
-        // [VŨ KHÍ TỐI THƯỢNG] MEMCPY POLYFILL CHO LINKER!
-        // Trị dứt điểm thói lanh chanh copy mảng .rdata của C# Compiler!
+        // [INTEROP] memcpy polyfill for C# compiler linker
+        // Provides C-compatible memcpy implementation for .rdata array copying
         // ==========================================================
         [UnmanagedCallersOnly(EntryPoint = "memcpy")]
         public static unsafe void* MemCpyInterop(void* dest, void* src, ulong count)
@@ -635,9 +635,9 @@ namespace NekkoOS
             // fixed (char* buildDate = "NekkoOS EFI Stub 2026-03-03 11:42:25 AM UTC +7 nekkochan user/test-keys EFI\r\n") Print(systemTable->ConOut, buildDate);
 
             // ==========================================================
-            // [VŨ KHÍ TỐI THƯỢNG] LẤY SỔ ĐỎ BẢO VỆ VÙNG ĐẤT THÁNH 0x8000!
-            // Ép UEFI cấp phát ĐÚNG TẠI 0x8000 (Type 2 = AllocateAddress).
-            // Xin hẳn 2 Pages (8KB, từ 0x8000 -> 0x9FFF). Đéo thằng nào được đụng vào!
+            // [MEMORY PROTECTION] Reserve SMP trampoline memory at 0x8000
+            // Force UEFI to allocate at exactly 0x8000 (Type 2 = AllocateAddress)
+            // Reserve 2 pages (8KB, from 0x8000 -> 0x9FFF) to prevent conflicts
             // ==========================================================
             ulong smpHolyLand = 0x8000;
             ulong reserveStatus = systemTable->BootServices->AllocatePages(2, 2, 2, &smpHolyLand);
@@ -785,9 +785,9 @@ namespace NekkoOS
                 // fixed (char* m_rsa = "[BOOT] Decrypting RSA-2048 Signature...\r\n\0") Print(systemTable->ConOut, m_rsa);
                 
                 // ==========================================================
-                // [FIX CHÍ MẠNG] ĐẨY RSA LÊN HEAP (POOL) ĐỂ TRÁNH TRÀN STACK!
-                // Cần: S(256) + N(256) + Res(256) + tempMul(512) + baseS(256) = 1536 Bytes.
-                // Xin luôn 2048 Bytes (2KB) cho nó rộng rãi!
+                // [MEMORY ALLOCATION] Allocate RSA buffers on heap to prevent stack overflow
+                // Required: S(256) + N(256) + Res(256) + tempMul(512) + baseS(256) = 1536 bytes
+                // Allocate 2048 bytes (2KB) for safety margin
                 // ==========================================================
                 void* rsaBuffer = null;
                 systemTable->BootServices->AllocatePool(2, 2048, &rsaBuffer);
@@ -869,7 +869,8 @@ namespace NekkoOS
             //     }
 
             //     // ==========================================================
-            //     // [FIX CHÍ MẠNG] CĂN TRỤC Y (DỌC) TỰ ĐỘNG BẰNG TOÁN HỌC!
+            //     // [ALIGNMENT] Automatic Y-axis (vertical) alignment using math
+            //     // ==========================================================
 
             //     byte* asn1Magic = stackalloc byte[19] { 0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20 };
             //     for (int i = 0; i < 19; i++) {
@@ -914,9 +915,9 @@ namespace NekkoOS
                 }
 
                 // ==========================================================
-                // [FIX CHÍ MẠNG] CĂN TRỤC Y (DỌC) TỰ ĐỘNG BẰNG TOÁN HỌC!
-                // Tính xem đáy của cái Icon cách đỉnh màn hình bao nhiêu Pixel.
-                // Chiều cao 1 dòng Text UEFI chuẩn là khoảng 16 Pixel.
+                // [LAYOUT] Automatic Y-axis (vertical) alignment using math
+                // Calculates the distance from the bottom of the icon to the top of the screen.
+                // Standard UEFI text line height is approximately 16 pixels.
                 // ==========================================================
                 int cols = (int)(width / 8); 
                 int targetRow = (cy + r + 1) / 16; // Cộng thêm 60 pixel lề (Margin) cho thoáng!
@@ -1059,16 +1060,16 @@ namespace NekkoOS
             bootInfo->MemoryMap = (void*)finalMemoryMap; bootInfo->MemoryMapSize = finalMemoryMapSize; bootInfo->DescriptorSize = finalDescriptorSize; bootInfo->AcpiRsdp = rsdpAddress;
 
             // ==========================================================
-            // [VŨ KHÍ TỐI THƯỢNG] GIAO THỨC BẮT TAY DEBUGGER (HANDSHAKE PROTOCOL)
+            // [DEBUG] Debugger Handshake Protocol
             // ==========================================================
             // fixed (char* waitMsg = "\r\nNekkoOS EFI Stub (Version 2026.03.26) is loading...\r\n\0") Print(systemTable->ConOut, waitMsg);
-            
+
             // Mở cửa sổ sinh tử 2000ms (2 giây)
-            char magicKey = SerialReadCharWithTimeout(systemTable->BootServices, 2000); 
+            char magicKey = SerialReadCharWithTimeout(systemTable->BootServices, 2000);
 
             if (magicKey == 'D' || magicKey == 'd') {
                 // ==========================================================
-                // [VŨ KHÍ TỐI THƯỢNG] NEKKO BOOTLOADER MINI SHELL!
+                // [DEBUG] Nekko Bootloader Mini Shell
                 // ==========================================================
                 fixed (char* ack = "\r\n[DEBUG] DEBUGGER ATTACHED!\r\n\0") Print(systemTable->ConOut, ack);
                 fixed (char* help = "Type 'H' for Help.\r\n\0") Print(systemTable->ConOut, help);
@@ -1102,8 +1103,8 @@ namespace NekkoOS
                             break;
 
                         // ==========================================================
-                        // [VŨ KHÍ 1] DUMP PHYSICAL MEMORY (SOI RAM TRỰC TIẾP)
-                        // Ví dụ: Gõ D -> gõ 8000 -> Nó sẽ in ra dữ liệu Trampoline của mày!
+                        // [DEBUG TOOL 1] DUMP PHYSICAL MEMORY
+                        // Example: D -> 8000 -> dumps 16 bytes starting at address 0x8000
                         // ==========================================================
                         case 'D': case 'd':
                             fixed (char* msgD = "Enter Physical Address (Hex): 0x\0") Print(systemTable->ConOut, msgD);
@@ -1123,8 +1124,8 @@ namespace NekkoOS
                             break;
 
                         // ==========================================================
-                        // [VŨ KHÍ 2] I/O PORT READER (ĐỌC CỔNG PHẦN CỨNG)
-                        // Ví dụ: Gõ I -> gõ 21 -> Nó đọc PIC Mask Mask Register
+                        // [DEBUG TOOL 2] I/O PORT READER
+                        // Example: I -> 21 -> reads PIC Master Mask Register
                         // ==========================================================
                         case 'I': case 'i':
                             fixed (char* msgI = "Enter I/O Port (Hex): 0x\0") Print(systemTable->ConOut, msgI);
@@ -1139,8 +1140,8 @@ namespace NekkoOS
                             break;
 
                         // ==========================================================
-                        // [VŨ KHÍ 3] ĐỌC ĐỒNG HỒ CMOS RTC (KHÔNG XÀI NGẮT)
-                        // Chứng minh I/O Port hoạt động hoàn hảo!
+                        // [DEBUG TOOL 3] READ CMOS RTC DIRECTLY
+                        // Verifies I/O port read/write functionality
                         // ==========================================================
                         case 'T': case 't':
                             Out8(0x70, 0x04); byte hrs = In8(0x71);
@@ -1163,7 +1164,7 @@ namespace NekkoOS
                             break;
 
                         // ==========================================================
-                        // [VŨ KHÍ 4] KIỂM TRA TRẠNG THÁI FRAMEBUFFER GOP
+                        // [DEBUG TOOL 4] CHECK GOP FRAMEBUFFER STATE
                         // ==========================================================
                         case 'G': case 'g':
                             fixed (char* msgG1 = "[DEBUG] FrameBuffer Base : \0") Print(systemTable->ConOut, msgG1);
