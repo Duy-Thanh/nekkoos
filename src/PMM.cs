@@ -14,8 +14,9 @@ public static unsafe class PMM
     public static Spinlock PmmLock = new Spinlock();
 
     // ==========================================================
-    // [VŨ KHÍ MỚI] CON TRỎ NEXT-FIT BẤT TỬ!
-    // Ghi nhớ vị trí Page rảnh cuối cùng để đéo phải quét lại từ 0!
+    // [OPTIMIZATION] Next-Fit allocation pointer
+    // Remembers the last allocated page position to avoid rescanning from 0
+    // This improves allocation performance by reducing bitmap traversal time
     // ==========================================================
     private static ulong LastUsedIndex = 0;
 
@@ -133,14 +134,16 @@ public static unsafe class PMM
         }
 
         // ==========================================================
-        // [FIX CHÍ MẠNG VŨ TRỤ] THIẾT LẬP VÙNG CẤM BAY BAREMETAL!
-        // Cấm PMM đụng vào Page 0 (BIOS IVT) và Page 8 (0x8000 - SMP Trampoline)
-        // Nếu không PMM sẽ lấy Trampoline ra cấp cho App và gây GPF!
+        // [CRITICAL PROTECTION] Reserve critical system memory pages
+        // Page 0 (0x0000): BIOS Interrupt Vector Table
+        // Page 8 (0x8000): SMP Trampoline code for AP startup
+        // Page 9 (0x9000): SMP Trampoline extension (if code exceeds 4KB)
+        // These pages must never be allocated to userspace to prevent GPF
         // ==========================================================
         if (!TestBit(0)) { SetBit(0); FreePages--; }
-        if (!TestBit(8)) { SetBit(8); FreePages--; } 
-        
-        // Cẩn thận khóa luôn Page 9 (0x9000) nếu Trampoline của mày dài hơn 4KB
+        if (!TestBit(8)) { SetBit(8); FreePages--; }
+
+        // Lock page 9 as well to ensure trampoline code has sufficient space
         if (!TestBit(9)) { SetBit(9); FreePages--; }
 
         LastUsedIndex = 0;
@@ -200,10 +203,11 @@ public static unsafe class PMM
     }
 
     // ==========================================================
-    // [FIX CHÍ MẠNG] CẤP PHÁT TRANG RAM DƯỚI 4GB CHO SMP TRAMPOLINE!
-    // Protected Mode chỉ chứa được 32 bit trong CR3.
-    // Nếu PML4 nằm trên 4GB, Trampoline sẽ load CR3 bị cắt cụt
-    // → Bảng phâng trang SAI → RIP=0x100000000 → KERNEL PANIC!
+    // [MEMORY CONSTRAINT] Allocate pages below 4GB for SMP Trampoline
+    // Protected Mode only supports 32-bit addressing in CR3.
+    // If PML4 is above 4GB, the trampoline will truncate the CR3 value,
+    // resulting in incorrect page table pointer and kernel panic.
+    // This function ensures SMP bootstrap code has accessible memory.
     // ==========================================================
     public static void* AllocatePageBelow4GB()
     {
@@ -368,11 +372,12 @@ public static unsafe class PMM
         ulong index = addr / 4096; 
 
         // ==========================================================
-        // [LÁ CHẮN BẤT TỬ] CẤM TUYỆT ĐỐI FREE PAGE 0 ĐẾN 9!
-        // Nếu thằng lồn nào truyền NULL vào, index sẽ là 0. Bỏ qua cmnl!
-        // Đéo bao giờ được cấp phát lại vùng BIOS và Trampoline!
+        // [CRITICAL PROTECTION] Pages 0-9 must NEVER be freed!
+        // These pages contain BIOS data structures and SMP trampoline code.
+        // If ptr is NULL, index will be 0, so this check also prevents NULL frees.
+        // Freeing these pages would cause system instability or boot failures.
         // ==========================================================
-        // Mở rộng danh sách các trang bị cấm
+        // Protected page range (expandable if needed)
         const ulong minProtectedPage = 0;
         const ulong maxProtectedPage = 9;
         

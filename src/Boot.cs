@@ -111,12 +111,9 @@ namespace NekkoOS
     }
 
     // ==========================================================
-    // [VŨ KHÍ TỐI THƯỢNG] BAREMETAL SHA-256 CRYPTO ENGINE
-    // Chạy hoàn toàn bằng thanh ghi và Stack, đéo cần GC!
-    // ==========================================================
-    // ==========================================================
-    // [VŨ KHÍ TỐI THƯỢNG] BAREMETAL SHA-256 CRYPTO ENGINE (BẢN VÁ LỖI)
-    // 100% Stack Allocation! Đéo đụng tới một hạt bụi của Heap!
+    // [CRYPTO] Baremetal SHA-256 Implementation
+    // Pure stack-based implementation using registers only - no heap allocation required
+    // Designed for UEFI boot environment where heap management is not yet initialized
     // ==========================================================
     public static unsafe class BaremetalSHA256
     {
@@ -392,15 +389,16 @@ namespace NekkoOS
                     result = (result << 4) | (ulong)(c - 'A' + 10); 
                     SerialWriteChar(c); 
                 }
-                // Gõ bậy (chữ X, Y, Z) thì nó lơ đi, đéo echo!
+                // Invalid hex characters (X, Y, Z, etc.) are ignored without echo
             }
             return result;
         }
 
         // ==========================================================
-        // [FIX LẶP TỪ] THUẬN NƯỚC ĐẨY THUYỀN!
-        // Thằng UEFI OVMF đã tự động chẻ log ra COM1 rồi, 
-        // đéo cần tự gọi SerialWriteChar ở đây nữa để tránh Double Echo!
+        // ==========================================================
+        // [OPTIMIZATION] Avoid double echo on serial output
+        // UEFI OVMF automatically forwards console output to COM1.
+        // No need to explicitly call SerialWriteChar here to prevent duplicate echoing.
         // ==========================================================
         public static void Print(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL* conOut, char* str) {
             conOut->OutputString(conOut, str); 
