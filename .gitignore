@@ -30,3 +30,4 @@ efi/boot/bootx64.efi.id2
 efi/boot/bootx64.efi.nam
 efi/boot/bootx64.efi.til
 .aider*
+*.docx
