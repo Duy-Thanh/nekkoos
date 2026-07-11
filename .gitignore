@@ -31,3 +31,4 @@ efi/boot/bootx64.efi.nam
 efi/boot/bootx64.efi.til
 .aider*
 *.docx
+*.log
