@@ -28,7 +28,7 @@ protected_mode:
     mov ss, ax
 
     ; ==========================================================
-    // 2. [CPU FEATURES] Enable PAE and SSE (OSFXSR)
+    ; 2. [CPU FEATURES] Enable PAE and SSE (OSFXSR)
     ; ==========================================================
     ; Kiểm tra PAE
     mov eax, 1
@@ -70,9 +70,9 @@ protected_mode:
     ; 3. Load PML4 (page tables) from IPC
     ; ==========================================================
     ; [PAGING] Load 32-bit CR3 initially, then switch to 64-bit
-    // PMM may allocate PML4 above 4GB (0x100000000+) on systems with >2GB RAM.
-    // In 32-bit Protected Mode, CR3 only supports 32-bit physical addresses.
-    // We load the lower 32 bits here, then reload the full 64-bit value once in Long Mode.
+    ; PMM may allocate PML4 above 4GB (0x100000000+) on systems with >2GB RAM.
+    ; In 32-bit Protected Mode, CR3 only supports 32-bit physical addresses.
+    ; We load the lower 32 bits here, then reload the full 64-bit value once in Long Mode.
     ; ==========================================================
     mov eax, dword [0x8F00]
     mov cr3, eax
