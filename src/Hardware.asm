@@ -1,4 +1,8 @@
 ; =========================================================================
+; NekkoOS - A 64-bit x86-64 Educational Operating System
+; Copyright (C) 2026 Nguyen Duy Thanh (Nekkochan)
+; Licensed under the GNU General Public License v3.0 (GPLv3)
+; =========================================================================
 ; NEKKO OS - HARDWARE ABSTRACTION LAYER (NASM)
 ; BẢN ĐÚC BÊ TÔNG MÁC 1000 - CHUẨN MILITARY GRADE
 ; =========================================================================
