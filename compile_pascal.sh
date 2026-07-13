@@ -9,7 +9,7 @@ mkdir -p build
 # ==========================================================================
 # [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
 # ==========================================================================
-PASCAL_MODULES=(libc prng kerncrypto pmm heap)
+PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."

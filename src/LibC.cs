@@ -31,6 +31,15 @@ public static unsafe class LibC
     [DllImport("*", EntryPoint = "MemCmp_Pas")]
     public static extern int MemCmp(void* ptr1, void* ptr2, uint count);
 
+    [DllImport("*", EntryPoint = "StrCmp_Pas")]
+    private static extern byte StrCmp_Pas(char* str1, char* str2);
+
+    [DllImport("*", EntryPoint = "StrStartsWith_Pas")]
+    private static extern byte StrStartsWith_Pas(char* str, char* prefix);
+
+    [DllImport("*", EntryPoint = "FormatFATName_Pas")]
+    private static extern void FormatFATName_Pas(char* input, byte* output);
+
     public static void MemCpy(void* dest, void* src, uint count)
     {
         // Kiểm tra xem dest và src có null không
@@ -73,72 +82,37 @@ public static unsafe class LibC
         MemSet_Pas(ptr, value, count);
     }
 
-    private static char ToLowerCase(char c)
-    {
-        if (c >= 'A' && c <= 'Z') return (char)(c + 32);
-        return c;
-    }
-
     public static bool StrCmp(char* str1, char* str2)
     {
-        // Kiểm tra xem str1 và str2 có null không
         if (str1 == null || str2 == null) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: Null pointer in StrCmp!\n\0") Terminal.Print(err);
             return false;
         }
-        
-        int i = 0;
-        while (str1[i] != '\0' && str2[i] != '\0') {
-            if (ToLowerCase(str1[i]) != ToLowerCase(str2[i])) return false;
-            i++;
-        }
-        return str1[i] == '\0' && str2[i] == '\0';
+
+        return StrCmp_Pas(str1, str2) != 0;
     }
 
     public static bool StrStartsWith(char* str, char* prefix)
     {
-        // Kiểm tra xem str và prefix có null không
         if (str == null || prefix == null) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: Null pointer in StrStartsWith!\n\0") Terminal.Print(err);
             return false;
         }
 
-        int i = 0;
-        while (prefix[i] != '\0') {
-            if (str[i] == '\0') return false; 
-            if (ToLowerCase(str[i]) != ToLowerCase(prefix[i])) return false;
-            i++;
-        }
-        return true;
+        return StrStartsWith_Pas(str, prefix) != 0;
     }
 
     public static void FormatFATName(char* input, byte* output)
     {
-        // Kiểm tra xem input và output có null không
         if (input == null || output == null) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: Null pointer in FormatFATName!\n\0") Terminal.Print(err);
             return;
         }
 
-        for (int i = 0; i < 11; i++) output[i] = (byte)' ';
-        int inPos = 0, outPos = 0;
-        while (input[inPos] != '\0' && input[inPos] != '.' && outPos < 8) {
-            char c = input[inPos++];
-            if (c >= 'a' && c <= 'z') c = (char)(c - 32); 
-            output[outPos++] = (byte)c;
-        }
-        while (input[inPos] != '\0' && input[inPos] != '.') inPos++;
-        if (input[inPos] == '.') {
-            inPos++; outPos = 8;
-            while (input[inPos] != '\0' && outPos < 11) {
-                char c = input[inPos++];
-                if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-                output[outPos++] = (byte)c;
-            }
-        }
+        FormatFATName_Pas(input, output);
     }
 
     private static ushort GetFwCfgSelector(char* name, int nameLen)
