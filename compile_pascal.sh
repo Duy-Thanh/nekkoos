@@ -6,16 +6,15 @@ set -e
 # Đảm bảo thư mục build tồn tại
 mkdir -p build
 
-echo "[Pascal] Compiling libc.pas for Win64 target using native fpc with custom config..."
+# ==========================================================================
+# [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
+# ==========================================================================
+PASCAL_MODULES=(libc prng kerncrypto pmm heap)
 
-# 1. Compile LibC
-fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ src/libc.pas
-
-# 2. Compile PRNG
-fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ src/prng.pas
-
-# 3. Compile KernCrypto (SHA-256 + hex utils)
-fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ src/kerncrypto.pas
+for mod in "${PASCAL_MODULES[@]}"; do
+    echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
+    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "src/${mod}.pas"
+done
 
 echo "[Pascal] Stripping bogus type-0 (ABSOLUTE/placeholder) relocations from COFF object files..."
 # NOTE: These are placeholder relocations FPC emits (e.g. tied to \$unwind\$ symbols at
@@ -25,8 +24,9 @@ echo "[Pascal] Stripping bogus type-0 (ABSOLUTE/placeholder) relocations from CO
 # an absolute address at that offset, smashing the first bytes of function prologues and
 # causing #GP crashes at runtime. The correct fix is to just DELETE the relocation entries
 # (not touch any code/data bytes) so the linker never even sees them.
-python3 - <<'EOF'
+python3 - "${PASCAL_MODULES[@]}" <<'EOF'
 import struct
+import sys
 
 def patch_coff(filename):
     with open(filename, 'rb+') as f:
@@ -65,16 +65,21 @@ def patch_coff(filename):
         f.truncate()
         print(f"[Pascal]   {filename}: removed {removed_total} placeholder relocation(s)")
 
-patch_coff('build/libc.o')
-patch_coff('build/prng.o')
-patch_coff('build/kerncrypto.o')
+for mod in sys.argv[1:]:
+    patch_coff(f'build/{mod}.o')
 EOF
 
-if [ -f "build/libc.o" ] && [ -f "build/prng.o" ] && [ -f "build/kerncrypto.o" ]; then
-    echo "[Pascal] ✓ build/libc.o, build/prng.o & build/kerncrypto.o compiled and patched successfully!"
-    ls -lh build/libc.o build/prng.o build/kerncrypto.o
+all_ok=1
+for mod in "${PASCAL_MODULES[@]}"; do
+    if [ ! -f "build/${mod}.o" ]; then
+        all_ok=0
+    fi
+done
+
+if [ "$all_ok" -eq 1 ]; then
+    echo "[Pascal] ✓ All Pascal modules compiled and patched successfully!"
+    ls -lh build/*.o
 else
     echo "[Pascal] ✗ Compilation failed!"
     exit 1
 fi
-

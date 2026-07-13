@@ -3,57 +3,68 @@
 // Copyright (C) 2026 Nguyen Duy Thanh (Nekkochan)
 // Licensed under the GNU General Public License v3.0 (GPLv3)
 // =========================================================================
+using System.Runtime.InteropServices;
 namespace NekkoOS.Kernel;
 
+// ==========================================================
+// INTEROP: Thuật toán bitmap allocator (thuần logic, không phụ thuộc
+// kiến trúc CPU) đã port sang src/pmm.pas. Phần duy nhất còn lại ở đây
+// là Init() - đọc UEFI Memory Map (EFI_MEMORY_DESCRIPTOR), thuộc lớp
+// "boot-glue" của firmware chứ không phải kiến trúc CPU, nên được giữ ở
+// C# cho tới khi có lớp trừu tượng bootloader riêng cho các kiến trúc khác.
+// ==========================================================
 public static unsafe class PMM
 {
     // Định nghĩa hằng số để thay thế ulong.MaxValue
     private const ulong ULongMax = 0xFFFFFFFFFFFFFFFF;
     private const uint UIntMax = 0xFFFFFFFF;
+    private const ulong PmmInvalidIndex = ULongMax;
 
     public static byte* Bitmap;
-    public static ulong TotalPages;
-    public static ulong FreePages;
     public static ulong BitmapSize;
 
     public static Spinlock PmmLock = new Spinlock();
 
     // ==========================================================
-    // [OPTIMIZATION] Next-Fit allocation pointer
-    // Remembers the last allocated page position to avoid rescanning from 0
-    // This improves allocation performance by reducing bitmap traversal time
+    // INTEROP: Gọi sang implementation bằng Pascal (src/pmm.pas)
     // ==========================================================
-    private static ulong LastUsedIndex = 0;
+    [DllImport("*", EntryPoint = "PMM_SetState_Pas")]
+    private static extern void PMM_SetState_Pas(byte* bitmap, ulong totalPages, ulong bitmapSize, ulong freePages);
 
-    public static void SetBit(ulong index) 
-    {
-        // Kiểm tra xem index có hợp lệ không
-        if (index >= TotalPages) return;
-        if (Bitmap == null) return;
-        ulong byteIndex = index / 8;
-        if (byteIndex >= BitmapSize) return;
-        Bitmap[byteIndex] |= (byte)(1 << (int)(index % 8));
-    }
-    
-    public static void ClearBit(ulong index) 
-    {
-        // Kiểm tra xem index có hợp lệ không
-        if (index >= TotalPages) return;
-        if (Bitmap == null) return;
-        ulong byteIndex = index / 8;
-        if (byteIndex >= BitmapSize) return;
-        Bitmap[byteIndex] &= (byte)~(1 << (int)(index % 8));
-    }
-    
-    public static bool TestBit(ulong index) 
-    {
-        // Kiểm tra xem index có hợp lệ không
-        if (index >= TotalPages) return false;
-        if (Bitmap == null) return false;
-        ulong byteIndex = index / 8;
-        if (byteIndex >= BitmapSize) return false;
-        return (Bitmap[byteIndex] & (byte)(1 << (int)(index % 8))) != 0;
-    }
+    [DllImport("*", EntryPoint = "PMM_SetFreePages_Pas")]
+    private static extern void PMM_SetFreePages_Pas(ulong freePages);
+
+    [DllImport("*", EntryPoint = "PMM_SetBit_Pas")]
+    private static extern void PMM_SetBit_Pas(ulong index);
+
+    [DllImport("*", EntryPoint = "PMM_ClearBit_Pas")]
+    private static extern void PMM_ClearBit_Pas(ulong index);
+
+    [DllImport("*", EntryPoint = "PMM_TestBit_Pas")]
+    private static extern byte PMM_TestBit_Pas(ulong index);
+
+    [DllImport("*", EntryPoint = "PMM_GetTotalPages_Pas")]
+    private static extern ulong PMM_GetTotalPages_Pas();
+
+    [DllImport("*", EntryPoint = "PMM_GetFreePages_Pas")]
+    private static extern ulong PMM_GetFreePages_Pas();
+
+    [DllImport("*", EntryPoint = "PMM_AllocatePageIndex_Pas")]
+    private static extern ulong PMM_AllocatePageIndex_Pas();
+
+    [DllImport("*", EntryPoint = "PMM_AllocatePageBelow4GBIndex_Pas")]
+    private static extern ulong PMM_AllocatePageBelow4GBIndex_Pas();
+
+    [DllImport("*", EntryPoint = "PMM_AllocateContiguousIndex_Pas")]
+    private static extern ulong PMM_AllocateContiguousIndex_Pas(ulong count);
+
+    [DllImport("*", EntryPoint = "PMM_FreePageByIndex_Pas")]
+    private static extern byte PMM_FreePageByIndex_Pas(ulong index);
+
+    // TotalPages không đổi sau Init(); FreePages đổi liên tục - cả hai đều
+    // đọc trực tiếp từ trạng thái nội bộ trong Pascal để luôn nhất quán.
+    public static ulong TotalPages => PMM_GetTotalPages_Pas();
+    public static ulong FreePages => PMM_GetFreePages_Pas();
 
     public static void Init(NekkoBootInfo* bootInfo, ulong largestFreeStart)
     {
@@ -88,30 +99,35 @@ public static unsafe class PMM
             maxPhysicalAddress = 0x100000000000;
         }
 
-        TotalPages = maxPhysicalAddress / 4096;
+        ulong totalPages = maxPhysicalAddress / 4096;
         // Tính toán BitmapSize chính xác
-        BitmapSize = (TotalPages + 7) / 8; // Sửa lại để đảm bảo đủ bit
+        ulong bitmapSize = (totalPages + 7) / 8; // Sửa lại để đảm bảo đủ bit
         // Đảm bảo BitmapSize không vượt quá giới hạn
-        if (BitmapSize > ULongMax / 4096) {
-            BitmapSize = ULongMax / 4096;
+        if (bitmapSize > ULongMax / 4096) {
+            bitmapSize = ULongMax / 4096;
         }
-        if (BitmapSize == 0) BitmapSize = 1; // Đảm bảo ít nhất 1 byte
+        if (bitmapSize == 0) bitmapSize = 1; // Đảm bảo ít nhất 1 byte
 
         Bitmap = (byte*)largestFreeStart;
+        BitmapSize = bitmapSize;
 
         // Kiểm tra xem có đủ bộ nhớ cho bitmap không
-        if (largestFreeStart + BitmapSize > maxPhysicalAddress) {
+        if (largestFreeStart + bitmapSize > maxPhysicalAddress) {
             // Xử lý lỗi: không đủ bộ nhớ cho bitmap
             return;
         }
 
-        for (ulong i = 0; i < BitmapSize; i++) Bitmap[i] = 0xFF;
+        for (ulong i = 0; i < bitmapSize; i++) Bitmap[i] = 0xFF;
 
-        FreePages = 0;
+        // Đăng ký trạng thái ban đầu vào Pascal (FreePages tạm = 0, sẽ cập
+        // nhật sau khi quét xong các descriptor free bên dưới).
+        PMM_SetState_Pas(Bitmap, totalPages, bitmapSize, 0);
+
+        ulong freePages = 0;
         for (ulong i = 0; i < numEntries; i++)
         {
             EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mapPtr + (i * descSize));
-            if (desc->Type == 7) 
+            if (desc->Type == 7)
             {
                 // Kiểm tra tràn khi tính toán startPage
                 if (desc->PhysicalStart > ULongMax - 1) continue;
@@ -121,20 +137,20 @@ public static unsafe class PMM
                     desc->NumberOfPages = ULongMax - startPage;
                 }
                 for (ulong j = 0; j < desc->NumberOfPages; j++) {
-                    if (startPage + j < TotalPages) {
-                        ClearBit(startPage + j);
+                    if (startPage + j < totalPages) {
+                        PMM_ClearBit_Pas(startPage + j);
                     }
                 }
-                FreePages += desc->NumberOfPages;
+                freePages += desc->NumberOfPages;
             }
         }
 
-        ulong bitmapPages = (BitmapSize + 4095) / 4096;
+        ulong bitmapPages = (bitmapSize + 4095) / 4096;
         ulong bitmapStartPage = largestFreeStart / 4096;
-        for (ulong i = 0; i < bitmapPages; i++) { 
-            if (bitmapStartPage + i < TotalPages) {
-                SetBit(bitmapStartPage + i); 
-                FreePages--; 
+        for (ulong i = 0; i < bitmapPages; i++) {
+            if (bitmapStartPage + i < totalPages) {
+                PMM_SetBit_Pas(bitmapStartPage + i);
+                freePages--;
             }
         }
 
@@ -145,66 +161,26 @@ public static unsafe class PMM
         // Page 9 (0x9000): SMP Trampoline extension (if code exceeds 4KB)
         // These pages must never be allocated to userspace to prevent GPF
         // ==========================================================
-        if (!TestBit(0)) { SetBit(0); FreePages--; }
-        if (!TestBit(8)) { SetBit(8); FreePages--; }
+        if (PMM_TestBit_Pas(0) == 0) { PMM_SetBit_Pas(0); freePages--; }
+        if (PMM_TestBit_Pas(8) == 0) { PMM_SetBit_Pas(8); freePages--; }
+        if (PMM_TestBit_Pas(9) == 0) { PMM_SetBit_Pas(9); freePages--; }
 
-        // Lock page 9 as well to ensure trampoline code has sufficient space
-        if (!TestBit(9)) { SetBit(9); FreePages--; }
-
-        LastUsedIndex = 0;
+        // Chốt lại FreePages cuối cùng vào trạng thái Pascal.
+        PMM_SetFreePages_Pas(freePages);
     }
 
     public static void* AllocatePage()
     {
         bool irq = PmmLock.AcquireSafe();
-
-        // Giới hạn số lần thử để tránh vòng lặp vô hạn
-        const int maxAttempts = 2;
-        int attempt = 0;
-        void* result = null;
-
-        while (attempt < maxAttempts && result == null)
-        {
-            // Thử lần 1: từ LastUsedIndex đến cuối
-            for (ulong i = LastUsedIndex; i < TotalPages; i++)
-            {
-                if (!TestBit(i)) 
-                {
-                    SetBit(i);   
-                    FreePages--;
-                    LastUsedIndex = i; // Cập nhật Next-Fit
-                    result = (void*)(i * 4096);
-                    break;
-                }
-            }
-
-            // Nếu không tìm thấy, thử lần 2: từ đầu đến LastUsedIndex
-            if (result == null)
-            {
-                for (ulong i = 0; i < LastUsedIndex; i++)
-                {
-                    if (!TestBit(i)) 
-                    {
-                        SetBit(i);   
-                        FreePages--;
-                        LastUsedIndex = i; 
-                        result = (void*)(i * 4096);
-                        break;
-                    }
-                }
-            }
-
-            attempt++;
-        }
-
-        if (result != null) {
-            // Tẩy rửa RAM (MemSet) ở BÊN NGOÀI KHÓA!
-            LibC.MemSet((byte*)result, 0, 4096);
-        }
-
+        ulong index = PMM_AllocatePageIndex_Pas();
         PmmLock.ReleaseSafe(irq);
-        
-        return result; 
+
+        if (index == PmmInvalidIndex) return null;
+
+        void* result = (void*)(index * 4096);
+        // Tẩy rửa RAM (MemSet) ở BÊN NGOÀI KHÓA!
+        LibC.MemSet((byte*)result, 0, 4096);
+        return result;
     }
 
     // ==========================================================
@@ -217,28 +193,14 @@ public static unsafe class PMM
     public static void* AllocatePageBelow4GB()
     {
         bool irq = PmmLock.AcquireSafe();
-        
-        // Tính toán maxPage chính xác
-        ulong maxPage = TotalPages;
-        if (maxPage > 1048576) { // 4GB / 4096 = 1048576 pages
-            maxPage = 1048576;
-        }
-
-        for (ulong i = 10; i < maxPage; i++) // Skip pages 0-9 (protected)
-        {
-            if (!TestBit(i)) 
-            {
-                SetBit(i);   
-                FreePages--;
-                void* ptr = (void*)(i * 4096);
-                PmmLock.ReleaseSafe(irq); 
-                LibC.MemSet((byte*)ptr, 0, 4096);
-                return ptr; 
-            }
-        }
-
+        ulong index = PMM_AllocatePageBelow4GBIndex_Pas();
         PmmLock.ReleaseSafe(irq);
-        return null; 
+
+        if (index == PmmInvalidIndex) return null;
+
+        void* result = (void*)(index * 4096);
+        LibC.MemSet((byte*)result, 0, 4096);
+        return result;
     }
 
     // ==========================================================
@@ -248,110 +210,30 @@ public static unsafe class PMM
     // ==========================================================
     public static void* AllocateContiguousPages(ulong count)
     {
-        if (count == 0) return null;
-        
-        // Giới hạn số trang liên tiếp tối đa
-        if (count > 1024 * 1024) { // 4GB
-            return null;
-        }
-
         bool irq = PmmLock.AcquireSafe();
-        void* result = null;
-
-        // [VÒNG QUÉT CHÍNH] Tìm kiếm tiến lên đỉnh RAM
-        ulong consecutiveFree = 0;
-        ulong startPage = 0;
-        ulong searchStart = (LastUsedIndex > 4096) ? LastUsedIndex : 4096;
-
-        for (ulong i = searchStart; i < TotalPages; i++)
-        {
-            if (!TestBit(i)) // Page này rảnh!
-            {
-                if (consecutiveFree == 0) startPage = i;
-                
-                // Kiểm tra tràn khi cộng
-                if (consecutiveFree < ULongMax - count) {
-                    consecutiveFree++;
-                } else {
-                    consecutiveFree = 0; // Reset bộ đếm để tránh tràn
-                    continue;
-                }
-
-                if (consecutiveFree == count)
-                {
-                    // TÌM THẤY RỒI! Đủ dung lượng liền kề!
-                    for (ulong j = 0; j < count; j++) { 
-                        if (startPage + j < TotalPages) {
-                            SetBit(startPage + j); 
-                            FreePages--; 
-                        }
-                    }
-                    LastUsedIndex = startPage + count; 
-                    result = (void*)(startPage * 4096);
-                    break;
-                }
-            }
-            else consecutiveFree = 0; // Đứt đoạn! Reset bộ đếm!
-        }
-
-        // ==========================================================
-        // [VÒNG QUÉT XE LU LẦN 2] QUÉT TỪ MỐC 16MB ĐẾN LAST_USED_INDEX!
-        // Đéo bao giờ quét ngược về mốc 0! 16MB đầu tiên là Vùng Đất Cấm!
-        // ==========================================================
-        if (result == null)
-        {
-            consecutiveFree = 0;
-            for (ulong i = 4096; i < searchStart; i++) 
-            {
-                if (!TestBit(i))
-                {
-                    if (consecutiveFree == 0) startPage = i;
-                    
-                    // Kiểm tra tràn khi cộng
-                    if (consecutiveFree < ULongMax - count) {
-                        consecutiveFree++;
-                    } else {
-                        consecutiveFree = 0; // Reset bộ đếm để tránh tràn
-                        continue;
-                    }
-
-                    if (consecutiveFree == count)
-                    {
-                        for (ulong j = 0; j < count; j++) { 
-                            if (startPage + j < TotalPages) {
-                                SetBit(startPage + j); 
-                                FreePages--; 
-                            }
-                        }
-                        LastUsedIndex = startPage + count; 
-                        result = (void*)(startPage * 4096);
-                        break;
-                    }
-                }
-                else consecutiveFree = 0;
-            }
-        }
-
+        ulong index = PMM_AllocateContiguousIndex_Pas(count);
         PmmLock.ReleaseSafe(irq);
 
-        if (result != null) {
-            // Tẩy rửa RAM bằng (uint)count để tránh tràn!
-            if (count <= UIntMax / 4096) {
-                LibC.MemSet((byte*)result, 0, (uint)(count * 4096)); 
-            } else {
-                // Xử lý trường hợp count > UIntMax bằng memset nhiều lần
-                ulong remaining = count;
-                byte* current = (byte*)result;
-                
-                while (remaining > 0) {
-                    uint chunkSize = remaining > UIntMax ? UIntMax : (uint)remaining;
-                    LibC.MemSet(current, 0, chunkSize);
-                    current += chunkSize;
-                    remaining -= chunkSize;
-                }
+        if (index == PmmInvalidIndex) return null;
+
+        void* result = (void*)(index * 4096);
+
+        // Tẩy rửa RAM bằng (uint)count để tránh tràn!
+        if (count <= UIntMax / 4096) {
+            LibC.MemSet((byte*)result, 0, (uint)(count * 4096));
+        } else {
+            // Xử lý trường hợp count > UIntMax bằng memset nhiều lần
+            ulong remaining = count;
+            byte* current = (byte*)result;
+
+            while (remaining > 0) {
+                uint chunkSize = remaining > UIntMax ? UIntMax : (uint)remaining;
+                LibC.MemSet(current, 0, chunkSize);
+                current += chunkSize;
+                remaining -= chunkSize;
             }
         }
-        
+
         return result; // Hết RAM liền kề rồi con trai!
     }
 
@@ -363,60 +245,24 @@ public static unsafe class PMM
     {
         if (ptr == null) return; // Kiểm tra null pointer
 
-        bool irq = PmmLock.AcquireSafe();
-
         ulong addr = (ulong)ptr;
-        
+
         // Kiểm tra xem địa chỉ có hợp lệ không
         if (addr % 4096 != 0) {
             // Địa chỉ không phải là boundary của trang
-            PmmLock.ReleaseSafe(irq);
-            return;
-        }
-        
-        ulong index = addr / 4096; 
-
-        // ==========================================================
-        // [CRITICAL PROTECTION] Pages 0-9 must NEVER be freed!
-        // These pages contain BIOS data structures and SMP trampoline code.
-        // If ptr is NULL, index will be 0, so this check also prevents NULL frees.
-        // Freeing these pages would cause system instability or boot failures.
-        // ==========================================================
-        // Protected page range (expandable if needed)
-        const ulong minProtectedPage = 0;
-        const ulong maxProtectedPage = 9;
-        
-        if (index >= minProtectedPage && index <= maxProtectedPage)
-        {
-            PmmLock.ReleaseSafe(irq);
             return;
         }
 
-        if (index < TotalPages)
-        {
-            if (!TestBit(index))
-            {
-                // Double free or freeing unallocated page
-                Terminal.SetColor(0x00FF0000);
-                fixed (char* msg = "[!] PMM WARNING: Attempt to free unallocated page!\n\0") Terminal.Print(msg);
-                PmmLock.ReleaseSafe(irq);
-                return;
-            }
+        ulong index = addr / 4096;
 
-            // Mark page free
-            ClearBit(index);
-            FreePages++;
-
-            // Sanity clamp
-            if (FreePages > TotalPages) FreePages = TotalPages;
-
-            // Cập nhật LastUsedIndex nếu cần thiết
-            // Chỉ cập nhật nếu trang được free nằm trước LastUsedIndex
-            if (index < LastUsedIndex) {
-                LastUsedIndex = index;
-            }
-        }
-
+        bool irq = PmmLock.AcquireSafe();
+        byte status = PMM_FreePageByIndex_Pas(index);
         PmmLock.ReleaseSafe(irq);
+
+        if (status == 2) {
+            // Double free or freeing unallocated page
+            Terminal.SetColor(0x00FF0000);
+            fixed (char* msg = "[!] PMM WARNING: Attempt to free unallocated page!\n\0") Terminal.Print(msg);
+        }
     }
 }

@@ -38,3 +38,5 @@ sudoers
 .direnv/nix-profile-.4659.8f0500b96605.rc
 .direnv/nix-profile-.4364.0ad6f47ea4fe
 .direnv/nix-profile-.4364.0ad6f47ea4fe.rc
+*.ppu
+*.o
