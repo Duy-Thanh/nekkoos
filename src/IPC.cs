@@ -8,22 +8,28 @@ using System.Runtime.InteropServices;
 namespace NekkoOS.Kernel;
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct Message { 
-    public uint Type; 
-    public uint Sender; 
-    public uint Receiver; 
+public unsafe struct Message {
+    public uint Type;
+    public uint Sender;
+    public uint Receiver;
     public uint IsLocked; // [CỜ MỚI] 0 = Tự do, 1 = Đang có thằng thao tác!
-    public ulong Payload; 
+    public ulong Payload;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct SharedMemoryBlock { 
+public unsafe struct SharedMemoryBlock {
     public fixed byte ShellCommandBuffer[4096];
     public fixed byte FatRequestName[4096];
     public fixed byte FatResponseData[8192];
     public fixed byte AtaRawBuffer[4096];
 }
 
+// ==========================================================
+// INTEROP: Core MPMC lock-free queue algorithm (architecture-independent)
+// ported to src/ipc.pas. Atomic operations (XCHG, fences) are x86_64-specific
+// but abstracted as function calls, so the queue algorithm itself is portable.
+// C# keeps Init() (PMM allocation) and Scheduler wakeup policy.
+// ==========================================================
 public static unsafe class IPC
 {
     // Định nghĩa hằng số ulong.MaxValue vì nó không có sẵn trong --stdlib zero
@@ -33,13 +39,28 @@ public static unsafe class IPC
     [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
     [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
     [DllImport("*", EntryPoint = "LoadFence")] public static extern void LoadFence();
-    
+
     // [VŨ KHÍ MỚI] GỌI THẲNG LỆNH XCHG TỪ ASSEMBLY!
-    [DllImport("*", EntryPoint = "AtomicExchange")] 
+    [DllImport("*", EntryPoint = "AtomicExchange")]
     public static extern uint AtomicExchange(ref uint location, uint newValue);
 
+    // ==========================================================
+    // INTEROP: Gọi sang Pascal MPMC queue algorithms
+    // ==========================================================
+    [DllImport("*", EntryPoint = "IPC_SendCore_Pas")]
+    private static extern byte IPC_SendCore_Pas(Message* queue, int maxMessages, uint type, uint sender, uint receiver, ulong payload, out byte needsWakeup, out uint wakeReceiverId);
+
+    [DllImport("*", EntryPoint = "IPC_ReceiveFor_Pas")]
+    private static extern byte IPC_ReceiveFor_Pas(Message* queue, int maxMessages, uint receiverId, out uint type, out uint sender, out ulong payload);
+
+    [DllImport("*", EntryPoint = "IPC_Receive_Pas")]
+    private static extern byte IPC_Receive_Pas(Message* queue, int maxMessages, out uint type, out uint sender, out uint receiver, out ulong payload);
+
+    [DllImport("*", EntryPoint = "IPC_ClearMailbox_Pas")]
+    private static extern void IPC_ClearMailbox_Pas(Message* queue, int maxMessages, uint threadId);
+
     public static Message* queue;
-    public static int MAX_MESSAGES; 
+    public static int MAX_MESSAGES;
 
     public static void Init(int capacity = 8192) {
         // Kiểm tra xem capacity có hợp lệ không
@@ -74,14 +95,14 @@ public static unsafe class IPC
             fixed (char* err = "[!] FATAL: Cannot allocate memory for IPC queue!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         // Kiểm tra xem queue có được căn chỉnh đúng không
         if (((ulong)queue & 0x7) != 0) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: IPC queue is not 8-byte aligned!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         LibC.MemSet((byte*)queue, 0, (uint)(numPages * 4096));
         StoreFence();
 
@@ -92,44 +113,30 @@ public static unsafe class IPC
 
     public static bool Send(uint type, uint sender, uint receiver, ulong payload) {
         if (queue == null) return false;
-        if (type == 0) return false; 
+        if (type == 0) return false;
 
-        for (int i = 0; i < MAX_MESSAGES; i++) {
-            // [BỌC THÉP 1] CHỈ KHI NÀO THẤY Ô TRỐNG THÌ MỚI LAO VÀO KHÓA!
-            // Tránh việc nện lệnh LOCK XCHG bừa bãi lên các ô đã đầy gây bão Cache!
-            if (queue[i].Type == 0 && queue[i].IsLocked == 0) 
+        // ==========================================================
+        // [ARCHITECTURE DECOUPLING] Delegate MPMC queue algorithm to Pascal.
+        // Only thread wakeup policy (OS-specific) stays in C#.
+        // ==========================================================
+        byte needsWakeup;
+        uint wakeReceiverId;
+        byte success = IPC_SendCore_Pas(queue, MAX_MESSAGES, type, sender, receiver, payload, out needsWakeup, out wakeReceiverId);
+
+        if (success != 0 && needsWakeup != 0)
+        {
+            // [FIX CVE-2026-001] MÁY ĐÁNH THỨC CORE - BẢO VỆ BẰNG SCHEDLOCK!
+            // Tránh race condition với Timer interrupt hoặc cores khác thay đổi Active state
+            bool schedIrq = Scheduler.AcquireSchedLockSafe();
+            if (Scheduler.Threads[wakeReceiverId].Active == 2)
             {
-                // Lao vào chiếm quyền sở hữu ô RAM
-                if (AtomicExchange(ref queue[i].IsLocked, 1) == 0) 
-                {
-                    // Double check lại một lần nữa cho chắc chắn sau khi đã cầm khóa
-                    if (queue[i].Type == 0) 
-                    {
-                        queue[i].Sender = sender;
-                        queue[i].Receiver = receiver;
-                        queue[i].Payload = payload;
-                        FullFence(); 
-                        queue[i].Type = type; // Chốt hạ Type để giải phóng trạng thái trống
-                        StoreFence(); 
-                        queue[i].IsLocked = 0; // Nhả khóa an toàn
-
-                        // [FIX CVE-2026-001] MÁY ĐÁNH THỨC CORE - BẢO VỆ BẰNG SCHEDLOCK!
-                        // Tránh race condition với Timer interrupt hoặc cores khác thay đổi Active state
-                        bool schedIrq = Scheduler.AcquireSchedLockSafe();
-                        if (Scheduler.Threads[receiver].Active == 2)
-                        {
-                            Scheduler.Threads[receiver].Active = 1;     // Trở lại trạng thái Ready!
-                            Scheduler.Threads[receiver].WakeUpTick = 0; // Xóa cờ ngủ hẹn giờ
-                        }
-                        Scheduler.ReleaseSchedLockSafe(schedIrq);
-
-                        return true;
-                    }
-                    queue[i].IsLocked = 0; // Trả khóa nếu bị thằng khác nẫng tay trên giữa chừng
-                }
+                Scheduler.Threads[wakeReceiverId].Active = 1;     // Trở lại trạng thái Ready!
+                Scheduler.Threads[wakeReceiverId].WakeUpTick = 0; // Xóa cờ ngủ hẹn giờ
             }
+            Scheduler.ReleaseSchedLockSafe(schedIrq);
         }
-        return false; 
+
+        return success != 0;
     }
 
     public static bool SendFromInterrupt(uint type, uint sender, uint receiver, ulong payload) {
@@ -146,53 +153,38 @@ public static unsafe class IPC
 
     public static bool ReceiveForRaw(uint receiverId, uint* outType, uint* outSender, ulong* outPayload) {
         if (outType == null || outSender == null || outPayload == null || queue == null) return false;
-        
-        for (int i = 0; i < MAX_MESSAGES; i++) {
-            // [BỌC THÉP 2] Kiểm tra thô trước khi ra đòn khóa nguyên tử
-            if (queue[i].Type != 0 && queue[i].Receiver == receiverId && queue[i].IsLocked == 0) 
-            {
-                if (AtomicExchange(ref queue[i].IsLocked, 1) == 0) 
-                {
-                    if (queue[i].Type != 0 && queue[i].Receiver == receiverId) {
-                        *outType = queue[i].Type; 
-                        *outSender = queue[i].Sender;
-                        *outPayload = queue[i].Payload;
-                        
-                        StoreFence();
-                        queue[i].Type = 0; // Đánh dấu ô trống NGAY TRONG KHÓA
-                        StoreFence();
-                        queue[i].IsLocked = 0; // Mở khóa
-                        return true;
-                    }
-                    queue[i].IsLocked = 0; 
-                }
-            }
+
+        uint type, sender;
+        ulong payload;
+        byte success = IPC_ReceiveFor_Pas(queue, MAX_MESSAGES, receiverId, out type, out sender, out payload);
+
+        if (success != 0)
+        {
+            *outType = type;
+            *outSender = sender;
+            *outPayload = payload;
+            return true;
         }
+
         return false;
     }
 
     public static bool ReceiveRaw(uint* outType, uint* outSender, uint* outReceiver, ulong* outPayload) {
         if (outType == null || outSender == null || outReceiver == null || outPayload == null || queue == null) return false;
-        
-        for (int i = 0; i < MAX_MESSAGES; i++) {
-            // [BỌC THÉP 3] Kiểm tra thô tránh bão Cache Line
-            if (queue[i].Type != 0 && queue[i].IsLocked == 0) {
-                if (AtomicExchange(ref queue[i].IsLocked, 1) == 0) {
-                    if (queue[i].Type != 0) {
-                        *outType = queue[i].Type;
-                        *outSender = queue[i].Sender;
-                        *outReceiver = queue[i].Receiver;
-                        *outPayload = queue[i].Payload;
-                        StoreFence();
-                        queue[i].Type = 0; 
-                        StoreFence();
-                        queue[i].IsLocked = 0;
-                        return true;
-                    }
-                    queue[i].IsLocked = 0;
-                }
-            }
+
+        uint type, sender, receiver;
+        ulong payload;
+        byte success = IPC_Receive_Pas(queue, MAX_MESSAGES, out type, out sender, out receiver, out payload);
+
+        if (success != 0)
+        {
+            *outType = type;
+            *outSender = sender;
+            *outReceiver = receiver;
+            *outPayload = payload;
+            return true;
         }
+
         return false;
     }
 
@@ -203,20 +195,7 @@ public static unsafe class IPC
             fixed (char* err = "[!] FATAL: IPC queue not initialized!\n\0") Terminal.Print(err);
             return;
         }
-        
-        for (int i = 0; i < MAX_MESSAGES; i++) {
-            if (queue[i].Type != 0 && (queue[i].Receiver == threadId || queue[i].Sender == threadId)) {
-                if (AtomicExchange(ref queue[i].IsLocked, 1) == 0) {
-                    if (queue[i].Type != 0 && (queue[i].Receiver == threadId || queue[i].Sender == threadId)) {
-                        queue[i].Sender = 0;
-                        queue[i].Receiver = 0;
-                        queue[i].Payload = 0;
-                        StoreFence();
-                        queue[i].Type = 0;
-                    }
-                    queue[i].IsLocked = 0;
-                }
-            }
-        }
+
+        IPC_ClearMailbox_Pas(queue, MAX_MESSAGES, threadId);
     }
 }
