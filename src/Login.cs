@@ -31,55 +31,45 @@ public unsafe class Login
     // ==========================================================
     // [FIX BẢO MẬT] Helper hex cho định dạng PASSWD mới: user:salt:hash:UID:GID
     // salt/hash lưu dạng chuỗi hex - không còn plaintext password trên đĩa.
+    // INTEROP: Logic thật đã port sang src/kerncrypto.pas (dùng chung với
+    // Kernel.exe qua src/KernCrypto.cs) - các hàm bên dưới chỉ là shim gọi
+    // sang cùng một module Pascal, không copy-paste thuật toán ra 2 nơi nữa.
     // ==========================================================
-    private static int HexNibble(char c) {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    }
+    [DllImport("*", EntryPoint = "HexToBytes_Pas")]
+    private static extern int HexToBytes_Pas(char* hex, byte* outBytes, int maxOutBytes);
+
+    [DllImport("*", EntryPoint = "BytesToHex_Pas")]
+    private static extern void BytesToHex_Pas(byte* bytes, int len, char* outHex);
+
+    [DllImport("*", EntryPoint = "ConstantTimeEq_Pas")]
+    private static extern byte ConstantTimeEq_Pas(char* a, char* b, int maxLen);
+
+    [DllImport("*", EntryPoint = "ZeroMemChar_Pas")]
+    private static extern void ZeroMemChar_Pas(char* buf, int len);
+
+    [DllImport("*", EntryPoint = "ZeroMemByte_Pas")]
+    private static extern void ZeroMemByte_Pas(byte* buf, int len);
 
     public static int HexToBytes(char* hex, byte* outBytes, int maxOutBytes) {
-        int i = 0, o = 0;
-        while (hex[i] != '\0' && hex[i + 1] != '\0' && o < maxOutBytes) {
-            int hi = HexNibble(hex[i]); int lo = HexNibble(hex[i + 1]);
-            if (hi < 0 || lo < 0) break;
-            outBytes[o++] = (byte)((hi << 4) | lo);
-            i += 2;
-        }
-        return o;
+        return HexToBytes_Pas(hex, outBytes, maxOutBytes);
     }
 
     public static void BytesToHex(byte* bytes, int len, char* outHex) {
-        char* digits = stackalloc char[16] { '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f' };
-        for (int i = 0; i < len; i++) {
-            outHex[i * 2] = digits[(bytes[i] >> 4) & 0xF];
-            outHex[i * 2 + 1] = digits[bytes[i] & 0xF];
-        }
-        outHex[len * 2] = '\0';
+        BytesToHex_Pas(bytes, len, outHex);
     }
 
     // [FIX BẢO MẬT] So sánh constant-time: luôn duyệt hết độ dài cố định thay vì
     // thoát ngay khi gặp ký tự sai khác - tránh lộ thông tin qua thời gian thực thi
     // (timing side-channel), khác với StrCmp thông thường vốn return false sớm.
     public static bool ConstantTimeEq(char* a, char* b, int maxLen) {
-        int diff = 0;
-        bool endedA = false, endedB = false;
-        for (int i = 0; i < maxLen; i++) {
-            char ca = endedA ? '\0' : a[i];
-            char cb = endedB ? '\0' : b[i];
-            if (a[i] == '\0') endedA = true;
-            if (b[i] == '\0') endedB = true;
-            diff |= (ca ^ cb);
-        }
-        return diff == 0;
+        return ConstantTimeEq_Pas(a, b, maxLen) != 0;
     }
 
     // [FIX BẢO MẬT - LOW] Xóa sạch buffer chứa dữ liệu nhạy cảm (mật khẩu, salt,
     // hash) khỏi RAM ngay sau khi dùng xong, tránh bị đọc lại qua memory dump/leak
     // ở tiến trình khác hoặc lần chạy sau tái sử dụng cùng vùng stack.
-    public static void ZeroMemChar(char* buf, int len) { for (int i = 0; i < len; i++) buf[i] = '\0'; }
-    public static void ZeroMemByte(byte* buf, int len) { for (int i = 0; i < len; i++) buf[i] = 0; }
+    public static void ZeroMemChar(char* buf, int len) { ZeroMemChar_Pas(buf, len); }
+    public static void ZeroMemByte(byte* buf, int len) { ZeroMemByte_Pas(buf, len); }
 
     public static void PrintLineWithNum(char* prefix, uint num) {
         char* buf = stackalloc char[128];

@@ -129,6 +129,14 @@ pkgs.mkShell {
         # Tạo fpc.cfg config path cho current shell (đúng cú pháp FPC, không có wildcard)
         mkdir -p .fpc
         echo "-Fu${fpc-win64}/lib/fpc/${pkgs.fpc.version}/units/x86_64-win64" > .fpc/fpc.cfg
+
+        # Tạo symlink cho FPC tìm thấy Assembler
+        mkdir -p .bin
+        ln -sf $(which x86_64-w64-mingw32-as) .bin/x86_64-win64-as
+        ln -sf $(which x86_64-w64-mingw32-ld) .bin/x86_64-win64-ld
+        ln -sf $(which x86_64-w64-mingw32-strip) .bin/x86_64-win64-strip
+        export PATH="$PWD/.bin:$PATH"
+
         echo "Project: $(basename $PWD)"
         echo "Compiler: $(bflat --version 2>/dev/null || echo 'bflat ready!')"
     '';
