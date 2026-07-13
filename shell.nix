@@ -70,6 +70,36 @@ let
             done
         '';
     };
+    fpc-win64 = pkgs.stdenv.mkDerivation rec {
+        pname = "fpc-win64";
+        version = pkgs.fpc.version;
+        src = pkgs.fpc.src;
+
+        nativeBuildInputs = with pkgs; [
+            fpc
+            gnumake
+            binutils
+            pkgsCross.mingwW64.stdenv.cc
+        ];
+
+        # Chỉ build RTL (Runtime Library) cho Win64 target
+        # Dùng native compiler (fpc) để build RTL
+        buildPhase = ''
+          if [ -d "fpcsrc" ]; then cd fpcsrc; fi
+          make -C rtl all \
+            FPC=${pkgs.fpc}/bin/fpc \
+            OS_TARGET=win64 \
+            CPU_TARGET=x86_64
+        '';
+
+        installPhase = ''
+          if [ -d "fpcsrc" ]; then cd fpcsrc; fi
+          mkdir -p $out/lib/fpc/${version}/units/x86_64-win64
+
+          # Install RTL units
+          cp -r rtl/units/x86_64-win64/* $out/lib/fpc/${version}/units/x86_64-win64/
+        '';
+    };
 in
 
 pkgs.mkShell {
@@ -84,6 +114,10 @@ pkgs.mkShell {
         gcc
         gnumake
         fpc
+        fpc-win64
+        # MinGW-w64 cross-compiler for Win64 target
+        pkgsCross.mingwW64.stdenv.cc
+        pkgsCross.mingwW64.windows.pthreads
         nasm
         yasm
         binutils
@@ -92,6 +126,9 @@ pkgs.mkShell {
 
     shellHook = ''
         export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+        # Tạo fpc.cfg config path cho current shell (đúng cú pháp FPC, không có wildcard)
+        mkdir -p .fpc
+        echo "-Fu${fpc-win64}/lib/fpc/${pkgs.fpc.version}/units/x86_64-win64" > .fpc/fpc.cfg
         echo "Project: $(basename $PWD)"
         echo "Compiler: $(bflat --version 2>/dev/null || echo 'bflat ready!')"
     '';

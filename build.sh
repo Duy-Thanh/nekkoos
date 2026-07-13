@@ -9,6 +9,9 @@ rm -f *.exe *.efi *.obj *.bin *.map hdd.img Kernel.exe.mui pubkey.bin
 rm -rf efi/boot *.pdb *.lib
 mkdir -p efi/boot
 
+echo "[1.2/4] Dang build Pascal modules..."
+./compile_pascal.sh
+
 echo "[1.5/4] Dang build Kernel (Vi vua) & Apps Ring 3 truoc..."
 
 nasm -f win64 src/Hardware.asm -o Hardware.obj
@@ -21,7 +24,7 @@ nasm -f bin src/smp_x86.asm -o smp.bin
 BF="bflat"
 
 # Build Kernel + apps (no-pie, deterministic, map files)
-$BF build src/Kernel.cs src/Syscall.cs src/IDT.cs src/ISR.cs src/RTC.cs src/PCI.cs src/Heap.cs src/Thread.cs src/IPC.cs src/KeyboardDriver.cs src/LibC.cs src/VMM.cs src/Terminal.cs src/PMM.cs src/IO.cs src/PIC.cs src/PIT.cs src/InterruptHandlers.cs src/ATA.cs src/FAT16.cs src/GlobalUsings.cs src/System.Runtime.InteropServices.cs src/System.Runtime.CompilerServices.cs src/PELoader.cs src/StrandScheduler.cs src/GDT.cs src/PRNG.cs src/Power.cs src/APIC.cs src/SMP.cs src/Spinlock.cs src/IOAPIC.cs src/vDSO.cs src/Serial.cs src/MouseDriver.cs src/NekkoInt.cs src/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj"
+$BF build src/Kernel.cs src/Syscall.cs src/IDT.cs src/ISR.cs src/RTC.cs src/PCI.cs src/Heap.cs src/Thread.cs src/IPC.cs src/KeyboardDriver.cs src/LibC.cs src/VMM.cs src/Terminal.cs src/PMM.cs src/IO.cs src/PIC.cs src/PIT.cs src/InterruptHandlers.cs src/ATA.cs src/FAT16.cs src/GlobalUsings.cs src/System.Runtime.InteropServices.cs src/System.Runtime.CompilerServices.cs src/PELoader.cs src/StrandScheduler.cs src/GDT.cs src/PRNG.cs src/Power.cs src/APIC.cs src/SMP.cs src/Spinlock.cs src/IOAPIC.cs src/vDSO.cs src/Serial.cs src/MouseDriver.cs src/NekkoInt.cs src/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o"
 
 $BF build src/ATA_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
 $BF build src/FAT16_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain"

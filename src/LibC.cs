@@ -19,6 +19,18 @@ public static unsafe class LibC
     public static ulong HardwareTscOffset = 0;
     public static ulong RtcInterruptHandler_Ptr = 0;
 
+    // ==========================================================
+    // INTEROP: Gọi sang implementation bằng Pascal
+    // ==========================================================
+    [DllImport("*", EntryPoint = "MemSet_Pas")]
+    private static extern void MemSet_Pas(byte* ptr, byte value, uint count);
+
+    [DllImport("*", EntryPoint = "MemCopy_Pas")]
+    private static extern void MemCopy_Pas(void* dest, void* src, uint count);
+
+    [DllImport("*", EntryPoint = "MemCmp_Pas")]
+    public static extern int MemCmp(void* ptr1, void* ptr2, uint count);
+
     public static void MemCpy(void* dest, void* src, uint count)
     {
         // Kiểm tra xem dest và src có null không
@@ -27,7 +39,7 @@ public static unsafe class LibC
             fixed (char* err = "[!] FATAL: Null pointer in MemCpy!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         // Kiểm tra xem count có hợp lệ không
         if (count == 0) return;
         if (count > 0x10000000) { // Giới hạn 256MB
@@ -35,14 +47,9 @@ public static unsafe class LibC
             fixed (char* err = "[!] FATAL: MemCpy size too large!\n\0") Terminal.Print(err);
             return;
         }
-        byte* d = (byte*)dest;
-        byte* s = (byte*)src;
-        ulong* d64 = (ulong*)dest;
-        ulong* s64 = (ulong*)src;
-        uint count64 = count / 8;
-        for (uint i = 0; i < count64; i++) { d64[i] = s64[i]; }
-        uint remainder = count % 8;
-        for (uint i = count - remainder; i < count; i++) { d[i] = s[i]; }
+
+        // Gọi sang Pascal!
+        MemCopy_Pas(dest, src, count);
     }
 
     public static void MemSet(byte* ptr, byte value, uint count)
@@ -53,7 +60,7 @@ public static unsafe class LibC
             fixed (char* err = "[!] FATAL: Null pointer in MemSet!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         // Kiểm tra xem count có hợp lệ không
         if (count == 0) return;
         if (count > 0x10000000) { // Giới hạn 256MB
@@ -62,7 +69,8 @@ public static unsafe class LibC
             return;
         }
 
-        for (uint i = 0; i < count; i++) ptr[i] = value;
+        // Gọi sang Pascal!
+        MemSet_Pas(ptr, value, count);
     }
 
     private static char ToLowerCase(char c)
