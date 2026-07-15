@@ -417,12 +417,12 @@ public static unsafe class SMP
                 LoadFence(); // [BỌC THÉP] Chặn đứng Speculative Execution lấn lướt qua vòng lặp!
             }
 
-            Terminal.ScreenLock.Acquire();
+            bool smpScrIrq = Terminal.ScreenLock.AcquireSafe();
             Terminal.SetColor(0x0000FF00);
-            fixed (char* m3 = "[+] SMP Initialization Complete! CPU Cores online: \0") Terminal.Print(m3);
-            Terminal.PrintDec(CoreCountAwake);
-            fixed (char* m4 = "\n\0") Terminal.Print(m4);
-            Terminal.ScreenLock.Release();
+            fixed (char* m3 = "[+] SMP Initialization Complete! CPU Cores online: \0") Terminal.PrintUnsafe(m3);
+            Terminal.PrintDecUnsafe(CoreCountAwake);
+            fixed (char* m4 = "\n\0") Terminal.PrintUnsafe(m4);
+            Terminal.ScreenLock.ReleaseSafe(smpScrIrq);
             
             WriteMmio32((ulong)&CoreReadyAcks[0], 1);
             StoreFence();

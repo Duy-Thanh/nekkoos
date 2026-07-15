@@ -126,9 +126,9 @@ public unsafe class Program
     {
         if (buffer == null) return;
 
-        SyscallSendIPC(ATA_PID, 10, lba); 
+        SyscallSendIPC(ATA_PID, 10, lba);
         Message res = default;
-        int retryCount = 0; 
+        int retryCount = 0;
 
         while (true)
         {

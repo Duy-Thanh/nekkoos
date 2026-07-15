@@ -38,13 +38,13 @@ public static unsafe class Terminal
     private static extern void Terminal_DrawChar_Pas(ushort c);
 
     [DllImport("*", EntryPoint = "Terminal_Print_Pas")]
-    public static extern void Print(char* str);
+    private static extern void Terminal_Print_Pas(char* str);
 
     [DllImport("*", EntryPoint = "Terminal_PrintHex_Pas")]
-    public static extern void PrintHex(ulong val);
+    private static extern void Terminal_PrintHex_Pas(ulong val);
 
     [DllImport("*", EntryPoint = "Terminal_PrintDec_Pas")]
-    public static extern void PrintDec(ulong val);
+    private static extern void Terminal_PrintDec_Pas(ulong val);
 
     [DllImport("*", EntryPoint = "Terminal_PrintObfuscated_Pas")]
     public static extern void PrintObfuscated(byte* encryptedBytes, int length);
@@ -82,9 +82,32 @@ public static unsafe class Terminal
     // DrawCharUnsafe — used by Syscall.cs (already inside ScreenLock)
     public static void DrawCharUnsafe(char c) => Terminal_DrawChar_Pas((ushort)c);
 
+    // Unsafe variants for code that already holds ScreenLock (e.g., SMP.cs)
+    public static void PrintUnsafe(char* str) => Terminal_Print_Pas(str);
+    public static void PrintHexUnsafe(ulong val) => Terminal_PrintHex_Pas(val);
+    public static void PrintDecUnsafe(ulong val) => Terminal_PrintDec_Pas(val);
+
     public static void DrawChar(char c) {
         bool irq = ScreenLock.AcquireSafe();
         Terminal_DrawChar_Pas((ushort)c);
+        ScreenLock.ReleaseSafe(irq);
+    }
+
+    public static void Print(char* str) {
+        bool irq = ScreenLock.AcquireSafe();
+        Terminal_Print_Pas(str);
+        ScreenLock.ReleaseSafe(irq);
+    }
+
+    public static void PrintHex(ulong val) {
+        bool irq = ScreenLock.AcquireSafe();
+        Terminal_PrintHex_Pas(val);
+        ScreenLock.ReleaseSafe(irq);
+    }
+
+    public static void PrintDec(ulong val) {
+        bool irq = ScreenLock.AcquireSafe();
+        Terminal_PrintDec_Pas(val);
         ScreenLock.ReleaseSafe(irq);
     }
 
@@ -181,44 +204,24 @@ public static unsafe class Terminal
     public static class ScreenLock
     {
         private static Spinlock rawLock = new Spinlock();
-        private static uint lockOwnerCore = 0xFFFFFFFF;
-        private static int lockDepth = 0;
-        private static bool lastIrq = false;
 
+        // Simple irq-safe spinlock: disable interrupts on this core, then spin.
+        // No per-core reentrant tracking — callers must not nest AcquireSafe.
+        // (Syscall handler already has IF=0 from INT gate; timer handler does not
+        //  touch terminal directly, so no nesting occurs in practice.)
         public static bool AcquireSafe() {
-            bool irq = false;
-            if (Scheduler.Ready) irq = (GetRflags() & 0x200) != 0;
-            IO.Cli();
-            uint coreId = 0;
-            if (APIC.IsAwake) coreId = APIC.Read(0x020) >> 24;
-            if (lockOwnerCore == coreId) { lockDepth++; return irq; }
-            rawLock.Acquire();
-            lastIrq = irq;
-            lockOwnerCore = coreId;
-            lockDepth = 1;
+            bool irq = (GetRflags() & 0x200) != 0;
+            IO.Cli();          // disable interrupts on this core first
+            rawLock.Acquire(); // then spin until we own the lock
             return irq;
         }
 
         public static void ReleaseSafe(bool irq) {
-            uint coreId = 0;
-            if (APIC.IsAwake) coreId = APIC.Read(0x020) >> 24;
-            if (lockOwnerCore == coreId) {
-                lockDepth--;
-                if (lockDepth <= 0) {
-                    lockOwnerCore = 0xFFFFFFFF;
-                    lockDepth = 0;
-                    rawLock.Release();
-                    if (lastIrq) IO.EnableInterrupts();
-                }
-            } else {
-                lockOwnerCore = 0xFFFFFFFF;
-                lockDepth = 0;
-                rawLock.Release();
-                if (lastIrq) IO.EnableInterrupts();
-            }
+            rawLock.Release();
+            if (irq) IO.EnableInterrupts();
         }
 
         public static void Acquire() { AcquireSafe(); }
-        public static void Release() { ReleaseSafe(lastIrq); }
+        public static void Release() { ReleaseSafe(false); }
     }
 }

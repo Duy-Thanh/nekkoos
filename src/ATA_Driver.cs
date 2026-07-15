@@ -208,7 +208,7 @@ public unsafe class Program
                 // ==========================================================
                 // LỆNH 10: ĐỌC Ổ CỨNG (READ)
                 // ==========================================================
-                if (msg.Type == 10) 
+                if (msg.Type == 10)
                 {
                     // Kiểm tra xem lba có nằm trong phạm vi hợp lệ không
                     if (!IsLbaInRange(lba)) {

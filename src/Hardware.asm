@@ -65,21 +65,82 @@ global InterlockedCompareExchange
 global AtomicExchange
 global AtomicAdd64
 
+; =========================================================================
+; Arch_* aliases — Architecture Abstraction Layer (AAL) symbol names.
+; arch_interface.pas declares these as the portable interface; the actual
+; implementation is right here in Hardware.asm via NASM EQU aliases.
+; No Pascal forwarder stubs needed — zero overhead, no ABI risk.
+; =========================================================================
+global Arch_WritePort8
+global Arch_WritePort16
+global Arch_WritePort32
+global Arch_ReadPort8
+global Arch_ReadPort16
+global Arch_ReadPort32
+global Arch_IoWait
+global Arch_WriteMmio32
+global Arch_ReadMmio32
+global Arch_EnableInterrupts
+global Arch_DisableInterrupts
+global Arch_Halt
+global Arch_InterruptsEnabled
+global Arch_AtomicExchange
+global Arch_AtomicAdd64
+global Arch_CmpXchg
+global Arch_CompilerFence
+global Arch_StoreFence
+global Arch_LoadFence
+global Arch_FullFence
+global Arch_SpinlockAcquire
+global Arch_SpinlockRelease
+global Arch_LoadPageTable
+global Arch_ReadPageTable
+global Arch_GetFaultAddress
+global Arch_FlushTLB
+global Arch_EnableNX
+global Arch_LoadGDT
+global Arch_LoadIDT
+global Arch_LoadTSS
+global Arch_GetCS
+global Arch_GetSS
+global Arch_GetIDTR
+global Arch_GetFlags
+global Arch_ReadTimestamp
+global Arch_SaveFPU
+global Arch_RestoreFPU
+global Arch_ReadVolatile64
+global Arch_GetIsrDiv0
+global Arch_GetIsrGPF
+global Arch_GetIsrPageFault
+global Arch_GetIsrTimer
+global Arch_GetIsrKeyboard
+global Arch_GetIsrMouse
+global Arch_GetIsrSyscall
+global Arch_GetIsrYield
+global Arch_LockScheduler
+global Arch_UnlockScheduler
+global Arch_ForceYield
+
 section .data
 global GlobalSchedLock
 GlobalSchedLock: dd 0
 
 section .text
 
+; Arch_* aliases — same code, alternate entry point names for AAL
+; Defined before the implementation labels so forward references work.
+Arch_ReadPageTable:
 ReadCR3:
     mov rax, cr3
     ret
 
+Arch_GetFlags:
 GetRflags:
     pushfq          
     pop rax         
     ret
 
+Arch_GetIDTR:
 GetIdtr:
     sidt [rcx]
     ret
@@ -88,6 +149,7 @@ GetIdtr:
 ; [BỌC THÉP 1] MMIO (MEMORY-MAPPED I/O)
 ; Đụng vào thanh ghi của APIC, PCIe là phải chốt sổ ngay!
 ; ==========================================================
+Arch_WriteMmio32:
 WriteMmio32:
     test rcx, rcx
     jz .wmz_ret
@@ -97,6 +159,7 @@ WriteMmio32:
 .wmz_ret:
     ret
 
+Arch_ReadMmio32:
 ReadMmio32:
     test rcx, rcx
     jz .rmz_zero
@@ -110,6 +173,7 @@ ReadMmio32:
 ; ==========================================================
 ; [BỌC THÉP 2] SPINLOCK ARCHITECTURE
 ; ==========================================================
+Arch_SpinlockAcquire:
 AsmSpinlockAcquire:
     mov eax, 1
     xor r10d, r10d          ; [MITIGATION CVE-2026-007] Counter = 0
@@ -139,27 +203,32 @@ AsmSpinlockAcquire:
     lfence                  ; [LÁ CHẮN LOAD] Cấm Speculative Execution!
     ret
 
+Arch_SpinlockRelease:
 AsmSpinlockRelease:
     sfence                  ; [LÁ CHẮN STORE] Quan Trọng Nhất!!! Ép CPU xả toàn bộ dữ liệu rác trong Vùng Cấm xuống RAM trước khi vứt chìa khóa đi!
     mov dword [rcx], 0      
     ret
 
 global LockScheduler
+Arch_LockScheduler:
 LockScheduler:
     lea rcx, [rel GlobalSchedLock]
     jmp AsmSpinlockAcquire
 
 global UnlockScheduler
+Arch_UnlockScheduler:
 UnlockScheduler:
     lea rcx, [rel GlobalSchedLock]
     jmp AsmSpinlockRelease
 
+Arch_ReadVolatile64:
 ReadVolatile64:
     mov rax, [rcx]  
     lfence                  ; Đọc xong phải chốt luôn!
     ret
 
 global SaveFPU
+Arch_SaveFPU:
 SaveFPU:
     push rbp
     mov rbp, rsp
@@ -187,6 +256,7 @@ SaveFPU:
     ret
 
 global RestoreFPU
+Arch_RestoreFPU:
 RestoreFPU:
     push rbp
     mov rbp, rsp
@@ -213,6 +283,7 @@ RestoreFPU:
     ret
 
 global EnableNXHardware
+Arch_EnableNX:
 EnableNXHardware:
     push rbx
     push rcx
@@ -237,30 +308,36 @@ EnableNXHardware:
 ; ==========================================================
 ; [BỌC THÉP 3] TLB FLUSH & PAGING
 ; ==========================================================
+Arch_FlushTLB:
 FlushTLB:
     mfence              ; Chờ Page Table cập nhật xong xuôi
     invlpg [rcx]
     mfence              ; Chốt sổ việc xóa Cache TLB
     ret
 
+Arch_LoadPageTable:
 LoadPML4:
     mfence              ; Xả toàn bộ dữ liệu rác trước khi đổi vũ trụ RAM
     mov cr3, rcx
     mfence              ; Ép CPU nhận không gian Paging mới ngay lập tức
     ret
 
+Arch_GetFaultAddress:
 ReadCR2:
     mov rax, cr2
     ret
 
+Arch_DisableInterrupts:
 DisableInterrupts:
     cli
     ret
 
+Arch_EnableInterrupts:
 EnableInterrupts:
     sti
     ret
 
+Arch_ReadTimestamp:
 ReadTSC:
     lfence              ; Ép bộ đếm thời gian phải chuẩn xác, không bị CPU reorder lệnh!
     rdtsc               
@@ -268,6 +345,7 @@ ReadTSC:
     or rax, rdx         
     ret
 
+Arch_LoadGDT:
 LoadGDT:
     lgdt [rcx]
     mov ax, 0x10
@@ -283,77 +361,97 @@ LoadGDT:
 .flush:
     ret
 
+Arch_LoadTSS:
 LoadTSS:
     ltr cx
     ret
 
+Arch_ForceYield:
 ForceYield:
     int 0x81 
     ret
 
+Arch_WritePort16:
 Out16:
     mov ax, dx
     mov dx, cx
     out dx, ax
     ret
 
+Arch_ReadPort16:
 In16:
     mov dx, cx
     in ax, dx
     ret
 
+Arch_WritePort32:
 Out32:
     mov eax, edx
     mov dx, cx
     out dx, eax
     ret
 
+Arch_ReadPort32:
 In32:
     mov dx, cx
     in eax, dx
     ret
 
+Arch_GetCS:
 GetCS:
     mov ax, cs
     ret
 
+Arch_GetSS:
 GetSS:
     mov ax, ss
     ret
 
+Arch_Halt:
 HltCPU:
     hlt
     ret
 
+Arch_WritePort8:
 Out8:
     mov al, dl
     mov dx, cx
     out dx, al
     ret
 
+Arch_ReadPort8:
 In8:
     mov dx, cx
     in al, dx
     ret
 
+Arch_LoadIDT:
 LoadIdt:
     lidt [rcx]
     ret
 
+Arch_GetIsrDiv0:
 GetIsrDiv0:       lea rax, [rel IsrDiv0]
                   ret
+Arch_GetIsrGPF:
 GetIsrGPF:        lea rax, [rel IsrGPF]
                   ret
+Arch_GetIsrPageFault:
 GetIsrPageFault:  lea rax, [rel IsrPageFault]
                   ret
+Arch_GetIsrTimer:
 GetIsrTimer:      lea rax, [rel IsrTimer]
                   ret
+Arch_GetIsrKeyboard:
 GetIsrKeyboard:   lea rax, [rel IsrKeyboard]
                   ret
+Arch_GetIsrMouse:
 GetIsrMouse:      lea rax, [rel IsrMouse]
                   ret
+Arch_GetIsrSyscall:
 GetIsrSyscall:    lea rax, [rel IsrSyscall]
                   ret
+Arch_GetIsrYield:
 GetIsrYield: 
     lea rax, [rel IsrYield]
     ret
@@ -769,20 +867,36 @@ IsrSyscall:
     iretq
 
 ; [1] RÀO CHẮN TRÌNH BIÊN DỊCH (Vũ khí mạnh nhất trị -Ot)
+Arch_InterruptsEnabled:
+    pushfq
+    pop rax
+    shr rax, 9
+    and rax, 1
+    ret
+
+Arch_IoWait:
+    xor eax, eax
+    out 0x80, al
+    ret
+
+Arch_CompilerFence:
 CompilerFence:
     ret 
 
 ; [2] RÀO CHẮN ĐỌC (Ép CPU x86_64 không được đọc lố)
+Arch_LoadFence:
 LoadFence:
     lfence
     ret
 
 ; [3] RÀO CHẮN GHI (Ép CPU x86_64 xả Store Buffer trước khi đi tiếp)
+Arch_StoreFence:
 StoreFence:
     sfence
     ret
 
 ; [4] MEMORY BARRIER (Used for sensitive I/O device access)
+Arch_FullFence:
 FullFence:
     mfence
     ret
@@ -791,6 +905,7 @@ FullFence:
 ; [ATOMIC] COMPARE-AND-SWAP (CAS)
 ; C# signature: int CompareExchange(ref uint location, uint value, uint comparand)
 ; ==========================================================
+Arch_CmpXchg:
 InterlockedCompareExchange:
     ; RCX = Địa chỉ của biến (ref location)
     ; EDX = Giá trị mới muốn ghi vào (value)
@@ -806,6 +921,7 @@ InterlockedCompareExchange:
 ; C# signature: uint AtomicExchange(ref uint location, uint newValue)
 ; Replaces value atomically and returns the previous value
 ; ==========================================================
+Arch_AtomicExchange:
 AtomicExchange:
     ; RCX = Địa chỉ của biến (ref location)
     ; EDX = Giá trị mới muốn nhét vào (newValue)
@@ -821,6 +937,7 @@ AtomicExchange:
 ; Returns previous value in RAX
 ; Implementation uses LOCK XADD to be atomic across cores
 ; ==========================================================
+Arch_AtomicAdd64:
 AtomicAdd64:
     mov rax, rdx
     lock xadd qword [rcx], rax
