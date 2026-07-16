@@ -55,12 +55,21 @@ begin
   GetConst_Mul3 := (QWord($2545F491) shl 32) or $4F6CDD1D;
 end;
 
+function HAL_GetHardwareRandom(buffer: Pointer; length: Cardinal): Cardinal; cdecl; external name 'HAL_GetHardwareRandom';
+
 { PRNG_Init: Initialize the state seed }
 procedure PRNG_Init(pitTicks: QWord); cdecl;
+var
+  hwRandom: QWord;
 begin
   Arch_SpinlockAcquire(lockStatus);
 
-  state := Arch_ReadTimestamp;
+  hwRandom := 0;
+  if HAL_GetHardwareRandom(@hwRandom, 8) = 8 then
+    state := hwRandom
+  else
+    state := Arch_ReadTimestamp;
+
   if state = 0 then
     state := GetConst_Seed;
 

@@ -40,4 +40,5 @@ sudoers
 .direnv/nix-profile-.4364.0ad6f47ea4fe.rc
 *.ppu
 *.o
+*.s
 src/arch/hal/README.md

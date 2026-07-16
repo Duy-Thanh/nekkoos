@@ -9,6 +9,11 @@ namespace NekkoOS.Kernel;
 
 public static unsafe class Power
 {
+    [DllImport("*", EntryPoint = "HAL_Reboot")]
+    public static extern void HAL_Reboot();
+
+    [DllImport("*", EntryPoint = "HAL_Shutdown")]
+    public static extern void HAL_Shutdown();
     // ==========================================================
     // [VŨ KHÍ TỐI THƯỢNG] CÚ HACK INIT IPI XUYÊN PHẦN CỨNG!
     // ==========================================================
@@ -174,9 +179,9 @@ public static unsafe class Power
         // Bit 13 (SLP_EN): Sleep Enable - Kích hoạt trạng thái ngủ/tắt
         // Bits 10-12 (SLP_TYP): Sleep Type - Trên QEMU, giá trị 0 thường đại diện cho S5 (Soft Off)
         
-        IO.Out16(0x0604, 0x2000);
+        HAL_Shutdown();
 
-        // Nếu lệnh trên chưa đủ đô (tùy cấu hình QEMU), thử giá trị 0x3400 
+        // Nếu lệnh trên chưa đủ đô (tùy cấu hình QEMU), thử giá trị 0x3400
         // (SLP_TYP là 5 thay vì 0)
         // IO.Out16(0x0604, 0x3400);
     }
@@ -294,15 +299,11 @@ public static unsafe class Power
 
     public static void HardReboot()
     {
-        // 0x06 vào cổng 0xCF9: Lệnh "System Reset" của chuẩn PCI/ACPI
-        // Nó sẽ kích hoạt chân RESET của CPU ngay lập tức!
-        IO.Out8(0xCF9, 0x06);
+        HAL_Reboot();
     }
 
     public static void LegacyReboot()
     {
-        // Gửi lệnh 0xFE vào cổng 0x64 (Keyboard Controller Command Port)
-        // 0xFE có nghĩa là "Pulse Reset Line"
-        IO.Out8(0x64, 0xFE);
+        HAL_Reboot();
     }
 }

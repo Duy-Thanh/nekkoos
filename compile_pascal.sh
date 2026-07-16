@@ -9,8 +9,8 @@ mkdir -p build
 # ==========================================================================
 # [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
 # ==========================================================================
-PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface)
-ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl)
+PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc)
+ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
@@ -84,6 +84,19 @@ for mod in "${PASCAL_MODULES[@]}"; do
 done
 
 if [ "$all_ok" -eq 1 ]; then
+    # --------------------------------------------------------------------------
+    # [ĐỐI CHIẾU MÃ NGUỒN] Sinh file Assembly (.s) nháp để lập trình viên soi code
+    # --------------------------------------------------------------------------
+    echo "[Pascal] Generating assembly listing (.s) files in build/asm/ for inspection..."
+    mkdir -p build/asm
+    for mod in "${PASCAL_MODULES[@]}"; do
+        fpc -Twin64 -O1 -CX -Ur -g- -Si -al -s -FEbuild/asm/ @.fpc/fpc.cfg -FUbuild/ "src/${mod}.pas" >/dev/null 2>&1 || true
+    done
+    for mod in "${ARCH_X86_64_MODULES[@]}"; do
+        fpc -Twin64 -O1 -CX -Ur -g- -Si -al -s -FEbuild/asm/ @.fpc/fpc.cfg -FUbuild/ "src/arch/x86_64/${mod}.pas" >/dev/null 2>&1 || true
+    done
+    mv build/*.s build/asm/ 2>/dev/null || true
+
     echo "[Pascal] ✓ All Pascal modules compiled and patched successfully!"
     ls -lh build/*.o
 else
