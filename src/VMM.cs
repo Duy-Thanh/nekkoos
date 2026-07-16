@@ -13,19 +13,30 @@ namespace NekkoOS.Kernel;
 public static unsafe class VMM
 {
     // ==========================================================
-    // [INTEROP] Assembly bridge function declarations
+    // [INTEROP] HAL MMU function declarations
     // ==========================================================
-    [DllImport("*", EntryPoint = "LoadPML4")]
-    public static extern void LoadPML4_ASM(void* pml4Address);
+    [DllImport("*", EntryPoint = "HAL_InitMMU")]
+    public static extern void HAL_InitMMU();
 
-    [DllImport("*", EntryPoint = "FlushTLB")]
-    public static extern void FlushTLB(void* virtualAddress);
+    [DllImport("*", EntryPoint = "HAL_LoadPageTable")]
+    public static extern void HAL_LoadPageTable(void* pageTable);
 
-    [DllImport("*", EntryPoint = "ReadCR3")] 
-    public static extern ulong ReadCR3();
+    [DllImport("*", EntryPoint = "HAL_GetCurrentPageTable")]
+    public static extern void* HAL_GetCurrentPageTable();
 
-    [DllImport("*", EntryPoint = "EnableNXHardware")]
-    public static extern void EnableNXHardware();
+    [DllImport("*", EntryPoint = "HAL_FlushTLB")]
+    public static extern void HAL_FlushTLB();
+
+    [DllImport("*", EntryPoint = "HAL_FlushTLBAddress")]
+    public static extern void HAL_FlushTLBAddress(ulong virtualAddress);
+
+    [DllImport("*", EntryPoint = "HAL_GetFaultAddress")]
+    public static extern ulong HAL_GetFaultAddress();
+
+    // Compatibility wrappers for existing code
+    public static void LoadPML4_ASM(void* pml4Address) => HAL_LoadPageTable(pml4Address);
+    public static ulong ReadCR3() => (ulong)HAL_GetCurrentPageTable();
+    public static void FlushTLB(void* virtualAddress) => HAL_FlushTLBAddress((ulong)virtualAddress);
 
     // ==========================================================
     // MẶT NẠ LỌC ĐỊA CHỈ VẬT LÝ CHUẨN X86_64!
@@ -225,7 +236,7 @@ public static unsafe class VMM
     {
         fixed (char* msg = "[*] Building Paging 4-Level (Strict Military Grade)...\n\0") Terminal.Print(msg);
 
-        EnableNXHardware();
+        HAL_InitMMU();
         fixed (char* nxMsg = "[+] Hardware NX-Bit (No-Execute) Engaged!\n\0") Terminal.Print(nxMsg);
 
         // ==========================================================

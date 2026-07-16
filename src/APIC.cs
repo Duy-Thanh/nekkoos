@@ -14,12 +14,23 @@ namespace NekkoOS.Kernel;
 public static unsafe class APIC
 {
     // ==========================================================
-    // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER
+    // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER & HAL INTERFACE
     // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "LoadFence")] public static extern void LoadFence();
-    [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
+    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
+    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
+    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
+    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
+
+    [DllImport("*", EntryPoint = "HAL_SetLocalApicBase")] public static extern void SetLocalApicBase(ulong baseAddr);
+    [DllImport("*", EntryPoint = "HAL_InitInterruptController")] public static extern void InitInterruptController();
+    [DllImport("*", EntryPoint = "HAL_SendEOI")] public static extern void SendEoiHal(byte vector);
+    [DllImport("*", EntryPoint = "HAL_SendIPI")] public static extern void SendIpiHal(uint targetCore, byte vector);
+    [DllImport("*", EntryPoint = "HAL_BroadcastIPI")] public static extern void BroadcastIpiHal(byte vector);
+    [DllImport("*", EntryPoint = "HAL_GetCoreId")] public static extern uint GetCoreIdHal();
+
+    [DllImport("*", EntryPoint = "Arch_ReadTimestamp")] public static extern ulong Arch_ReadTimestamp();
+    [DllImport("*", EntryPoint = "HAL_SetTimerFrequencies")] public static extern void SetTimerFrequenciesHal(ulong tsc, uint apicTicksPerMs);
+    [DllImport("*", EntryPoint = "HAL_InitTimer")] public static extern void InitTimerHal();
 
     public static ulong LocalApicBaseVirt = 0;
     public static bool IsAwake = false;
@@ -90,8 +101,8 @@ public static unsafe class APIC
 
     public static void SendEOI()
     {
-        if (IsAwake) Write(APIC_EOI, 0); 
-        else PIC.SendEOI(); 
+        if (IsAwake) SendEoiHal(0);
+        else PIC.SendEOI();
     }
 
     public static void Init(ulong physAddress)
@@ -180,8 +191,8 @@ public static unsafe class APIC
         
         VMM.MapPage(physAddress, LocalApicBaseVirt, 0x13);
 
-        Write(APIC_SVR, 0x1FF);
-        Write(APIC_TPR, 0);
+        SetLocalApicBase(LocalApicBaseVirt);
+        InitInterruptController();
 
         Write(APIC_TIMER_DIV, 0x03); 
         
@@ -215,13 +226,15 @@ public static unsafe class APIC
             return;
         }
 
-        Write(APIC_TIMER_INIT_CNT, 0xFFFFFFFF); 
+        ulong tscStart = Arch_ReadTimestamp();
+        Write(APIC_TIMER_INIT_CNT, 0xFFFFFFFF);
 
-        while(PIT.GetTicksRealtime() - startTicks < 10) { 
+        while(PIT.GetTicksRealtime() - startTicks < 10) {
             CompilerFence(); // Tát vỡ mặt LLVM lần 2!
-            IO.Hlt(); 
+            IO.Hlt();
         }
 
+        ulong tscEnd = Arch_ReadTimestamp();
         uint endCount = Read(APIC_TIMER_CURR_CNT);
         // Kiểm tra xem endCount có hợp lệ không
         if (endCount > 0xFFFFFFFF) {
@@ -251,8 +264,12 @@ public static unsafe class APIC
         CalibratedTicksPerQuantum = ticksPerMs * 4;
 
         if (CalibratedTicksPerQuantum < 10000 || CalibratedTicksPerQuantum > 10000000) {
-            CalibratedTicksPerQuantum = 60000; 
+            CalibratedTicksPerQuantum = 60000;
         }
+
+        ulong tscFreq = (tscEnd - tscStart) * 25;
+        SetTimerFrequenciesHal(tscFreq, ticksPerMs);
+        InitTimerHal();
 
         fixed(char* m2 = "[+] APIC Calibrated! CPU APIC Ticks per 1ms: \0") Terminal.Print(m2);
         Terminal.PrintDec(ticksPerMs);

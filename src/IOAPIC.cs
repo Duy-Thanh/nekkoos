@@ -11,18 +11,30 @@ namespace NekkoOS.Kernel;
 public static unsafe class IOAPIC
 {
     // ==========================================================
-    // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER
+    // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER & HAL INTERFACE
     // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "LoadFence")] public static extern void LoadFence();
-    [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
+    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
+    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
+    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
+    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
 
-    [DllImport("*", EntryPoint = "WriteMmio32")]
+    [DllImport("*", EntryPoint = "Arch_WriteMmio32")]
     public static extern void WriteMmio32(ulong address, uint value);
 
-    [DllImport("*", EntryPoint = "ReadMmio32")]
+    [DllImport("*", EntryPoint = "Arch_ReadMmio32")]
     public static extern uint ReadMmio32(ulong address);
+
+    [DllImport("*", EntryPoint = "HAL_SetIoApicBase")]
+    public static extern void SetIoApicBase(ulong baseAddr);
+
+    [DllImport("*", EntryPoint = "HAL_RouteInterrupt")]
+    public static extern void RouteInterruptHal(uint irq, uint coreId, byte vector);
+
+    [DllImport("*", EntryPoint = "HAL_UnmaskInterrupt")]
+    public static extern void UnmaskInterruptHal(uint irq);
+
+    [DllImport("*", EntryPoint = "HAL_MaskInterrupt")]
+    public static extern void MaskInterruptHal(uint irq);
 
     public static ulong BaseAddress = 0;
 
@@ -107,14 +119,14 @@ public static unsafe class IOAPIC
             fixed (char* err = "[!] FATAL: IOAPIC IRQ number too large!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         // Kiểm tra xem vector có nằm trong phạm vi hợp lệ không
         if (vector < 32 || vector > 255) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: IOAPIC vector number out of range!\n\0") Terminal.Print(err);
             return;
         }
-        
+
         // Kiểm tra xem destApicId có nằm trong phạm vi hợp lệ không
         if (destApicId > 255) {
             Terminal.SetColor(0x00FF0000);
@@ -122,23 +134,8 @@ public static unsafe class IOAPIC
             return;
         }
 
-        uint low = vector; 
-        uint high = destApicId << 24;
-
-        uint reg = (uint)(0x10 + (irq * 2));
-
-        // Kiểm tra xem reg có nằm trong phạm vi hợp lệ không
-        if (reg > 0xFF) {
-            Terminal.SetColor(0x00FF0000);
-            fixed (char* err = "[!] FATAL: IOAPIC register number out of range!\n\0") Terminal.Print(err);
-            return;
-        }
-        
-        bool irqFlag = IoApicLock.AcquireSafe(); 
-        WriteUnsafe(reg, low | 0x10000); // BƯỚC 1: MASK
-        WriteUnsafe(reg + 1, high);      // BƯỚC 2: TARGET CORE
-        WriteUnsafe(reg, low);           // BƯỚC 3: UNMASK
-        IoApicLock.ReleaseSafe(irqFlag);
+        RouteInterruptHal(irq, destApicId, vector);
+        UnmaskInterruptHal(irq);
     }
 
     public static void Init()
@@ -157,31 +154,12 @@ public static unsafe class IOAPIC
 
         PIC.Disable();
 
-        uint maxIntr = (Read(0x01) >> 16) & 0xFF;
-        
-        // Kiểm tra xem maxIntr có nằm trong phạm vi hợp lệ không
-        if (maxIntr > 255) {
-            Terminal.SetColor(0x00FF0000);
-            fixed (char* err = "[!] FATAL: IOAPIC maximum interrupt too large!\n\0") Terminal.Print(err);
-            return;
-        }
-        
-        // Kiểm tra xem maxIntr có hợp lệ không
-        if (maxIntr == 0) {
-            Terminal.SetColor(0x00FF0000);
-            fixed (char* err = "[!] FATAL: IOAPIC maximum interrupt is zero!\n\0") Terminal.Print(err);
-            return;
-        }
-
-        for (uint i = 0; i <= maxIntr; i++)
-        {
-            Write((uint)(0x10 + (i * 2)), 0x10000); 
-            Write((uint)(0x10 + (i * 2) + 1), 0);
-        }
+        SetIoApicBase(BaseAddress);
+        APIC.InitInterruptController();
 
         uint bspApicId = 0;
         if (APIC.LocalApicBaseVirt != 0) {
-            bspApicId = APIC.Read(0x020) >> 24;
+            bspApicId = APIC.GetCoreIdHal();
 
             // Kiểm tra xem bspApicId có hợp lệ không
             if (bspApicId > 255) {

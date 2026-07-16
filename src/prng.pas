@@ -17,9 +17,9 @@ unit prng;
 interface
 
 { Gọi trực tiếp các hàm Assembly gốc từ Hardware.obj }
-function ReadTSC: QWord; cdecl; external name 'ReadTSC';
-procedure AsmSpinlockAcquire(var lockStatus: Cardinal); cdecl; external name 'AsmSpinlockAcquire';
-procedure AsmSpinlockRelease(var lockStatus: Cardinal); cdecl; external name 'AsmSpinlockRelease';
+function Arch_ReadTimestamp: QWord; cdecl; external name 'Arch_ReadTimestamp';
+procedure Arch_SpinlockAcquire(var lockStatus: Cardinal); cdecl; external name 'Arch_SpinlockAcquire';
+procedure Arch_SpinlockRelease(var lockStatus: Cardinal); cdecl; external name 'Arch_SpinlockRelease';
 
 procedure PRNG_Init(pitTicks: QWord); cdecl; public name 'PRNG_Init_Pas';
 function PRNG_Next: QWord; cdecl; public name 'PRNG_Next_Pas';
@@ -58,9 +58,9 @@ end;
 { PRNG_Init: Initialize the state seed }
 procedure PRNG_Init(pitTicks: QWord); cdecl;
 begin
-  AsmSpinlockAcquire(lockStatus);
+  Arch_SpinlockAcquire(lockStatus);
 
-  state := ReadTSC;
+  state := Arch_ReadTimestamp;
   if state = 0 then
     state := GetConst_Seed;
 
@@ -72,7 +72,7 @@ begin
   if state = 0 then
     state := GetConst_Seed;
 
-  AsmSpinlockRelease(lockStatus);
+  Arch_SpinlockRelease(lockStatus);
 end;
 
 { PRNG_Next: Generate next 64-bit pseudo-random number }
@@ -81,12 +81,12 @@ var
   resultVal: QWord;
   tsc: QWord;
 begin
-  AsmSpinlockAcquire(lockStatus);
+  Arch_SpinlockAcquire(lockStatus);
 
   { Guard against early calls before Init }
   if state = 0 then
   begin
-    tsc := ReadTSC;
+    tsc := Arch_ReadTimestamp;
     if tsc = 0 then
       tsc := GetConst_Seed;
     state := tsc or 1;
@@ -98,7 +98,7 @@ begin
 
   resultVal := state * GetConst_Mul3;
 
-  AsmSpinlockRelease(lockStatus);
+  Arch_SpinlockRelease(lockStatus);
   PRNG_Next := resultVal;
 end;
 

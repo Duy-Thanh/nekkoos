@@ -54,7 +54,6 @@ public static unsafe class Scheduler
     [DllImport("*", EntryPoint = "GetCS")] public static extern ushort GetCS();
     [DllImport("*", EntryPoint = "GetSS")] public static extern ushort GetSS();
     [DllImport("*", EntryPoint = "ForceYield")] public static extern void Yield();
-    [DllImport("*", EntryPoint = "LoadPML4")] public static extern void LoadPML4_ASM(void* pml4_addr);
     [DllImport("*", EntryPoint = "SaveFPU")] public static extern void SaveFPU(void* buffer);
     [DllImport("*", EntryPoint = "RestoreFPU")] public static extern void RestoreFPU(void* buffer);
     [DllImport("*", EntryPoint = "GetRflags")] public static extern ulong GetRflags();
@@ -396,7 +395,7 @@ public static unsafe class Scheduler
             nextPml4 = (ulong)VMM.PML4;
             Threads[bestId].Pml4 = (ulong)VMM.PML4;
         }
-        LoadPML4_ASM((void*)nextPml4);
+        VMM.LoadPML4_ASM((void*)nextPml4);
 
         // No per-thread deferred mappings to process here.
 

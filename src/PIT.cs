@@ -14,11 +14,17 @@ namespace NekkoOS.Kernel;
 // ==========================================================
 public static unsafe class PIT
 {
-    // Biến đếm nhịp đập toàn cục. Lúc đầu do PIT bơm, sau này do APIC bơm!
-    public static ulong Ticks = 0;
-    
+    [DllImport("*", EntryPoint = "HAL_GetTickCount")]
+    public static extern ulong GetTickCountHal();
+
+    [DllImport("*", EntryPoint = "HAL_IncrementTicks")]
+    public static extern void IncrementTicksHal();
+
+    // Biến đếm nhịp đập toàn cục. Trỏ thẳng vào HAL!
+    public static ulong Ticks => GetTickCountHal();
+
     // Tần số hệ thống (Mặc định 250Hz - Chuẩn Linux Server/Desktop)
-    public static uint CurrentFreq = 250; 
+    public static uint CurrentFreq = 250;
 
     private const uint PIT_BASE_FREQ = 1193182;
     private const ushort PIT_CMD_PORT = 0x43;
@@ -27,7 +33,7 @@ public static unsafe class PIT
     // Vũ khí xuyên Cache
     public static ulong GetTicksRealtime()
     {
-        fixed (ulong* pTicks = &Ticks) return *pTicks;
+        return Ticks;
     }
 
     public static void Init(uint frequency)

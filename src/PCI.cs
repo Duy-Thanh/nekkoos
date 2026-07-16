@@ -13,8 +13,8 @@ namespace NekkoOS.Kernel.Driver;
 // ==========================================================
 public static unsafe class PCI
 {
-    [DllImport("*", EntryPoint = "Out32")] public static extern void Out32(ushort port, uint value);
-    [DllImport("*", EntryPoint = "In32")] public static extern uint In32(ushort port);
+    [DllImport("*", EntryPoint = "Arch_WritePort32")] public static extern void Out32(ushort port, uint value);
+    [DllImport("*", EntryPoint = "Arch_ReadPort32")] public static extern uint In32(ushort port);
 
     // ==========================================================
     // [VŨ KHÍ MỚI] Ổ KHÓA GIAO TIẾP PCI (PCI BUS MUTEX)

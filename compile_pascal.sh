@@ -10,10 +10,17 @@ mkdir -p build
 # [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
 # ==========================================================================
 PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface)
+ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
     fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "src/${mod}.pas"
+done
+
+# Compile x86_64 architecture-specific modules
+for mod in "${ARCH_X86_64_MODULES[@]}"; do
+    echo "[Pascal] Compiling arch/x86_64/${mod}.pas for Win64 target..."
+    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "src/arch/x86_64/${mod}.pas"
 done
 
 echo "[Pascal] Stripping bogus type-0 (ABSOLUTE/placeholder) relocations from COFF object files..."
@@ -24,7 +31,7 @@ echo "[Pascal] Stripping bogus type-0 (ABSOLUTE/placeholder) relocations from CO
 # an absolute address at that offset, smashing the first bytes of function prologues and
 # causing #GP crashes at runtime. The correct fix is to just DELETE the relocation entries
 # (not touch any code/data bytes) so the linker never even sees them.
-python3 - "${PASCAL_MODULES[@]}" <<'EOF'
+python3 - "${PASCAL_MODULES[@]}" "${ARCH_X86_64_MODULES[@]}" <<'EOF'
 import struct
 import sys
 

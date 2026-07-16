@@ -142,6 +142,7 @@ public static unsafe class InterruptHandlers
         }
 
         // ==========================================================
+        // ==========================================================
         // [BỌC THÉP RING 3] KIỂM TRA NGUỒN GỐC LỖI!
         // Nếu App Ring 3 chia cho 0 → Giết App, KHÔNG ĐƯỢC sập Kernel!
         // ==========================================================
@@ -149,7 +150,7 @@ public static unsafe class InterruptHandlers
         {
             bool scrIrq = Terminal.ScreenLock.AcquireSafe();
             Terminal.SetColor(0x00FF0000);
-            fixed(char* m1 = "\n[!] MPU: DIVIDE BY ZERO IN RING 3 APP! Terminated!\n\0") Terminal.Print(m1);
+            fixed(char* m1 = "\n[!] MPU: DIVIDE BY ZERO IN RING 3 APP! Terminated!\n\0") Terminal.PrintUnsafe(m1);
             Terminal.SetColor(0x00FFFFFF);
             Terminal.ScreenLock.ReleaseSafe(scrIrq);
 
@@ -157,16 +158,16 @@ public static unsafe class InterruptHandlers
 
             int id = Scheduler.CurrentThreadId;
             uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
-            
+
             bool irq = Scheduler.AcquireSchedLockSafe();
-            
+
             if (Scheduler.ForegroundTask == id) {
                 Scheduler.ForegroundTask = Scheduler.Threads[id].ParentId;
             }
-            
-            Scheduler.Threads[id].UID = 9999; 
+
+            Scheduler.Threads[id].UID = 9999;
             IPC.ClearMailbox((uint)id);
-            
+
             Scheduler.Threads[id].Pml4 = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
 
@@ -253,7 +254,7 @@ public static unsafe class InterruptHandlers
         {
             bool scrIrq = Terminal.ScreenLock.AcquireSafe();
             Terminal.SetColor(0x00FF0000);
-            fixed(char* m1 = "\n[!] MPU: GENERAL PROTECTION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.Print(m1);
+            fixed(char* m1 = "\n[!] MPU: GENERAL PROTECTION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.PrintUnsafe(m1);
             Terminal.SetColor(0x00FFFFFF);
             Terminal.ScreenLock.ReleaseSafe(scrIrq);
 
@@ -263,17 +264,17 @@ public static unsafe class InterruptHandlers
             uint coreId = APIC.IsAwake ? (APIC.Read(0x020) >> 24) : 0;
 
             bool irq = Scheduler.AcquireSchedLockSafe();
-            
+
             if (Scheduler.ForegroundTask == id) {
                 Scheduler.ForegroundTask = Scheduler.Threads[id].ParentId;
             }
-            
-            Scheduler.Threads[id].UID = 9999; 
+
+            Scheduler.Threads[id].UID = 9999;
             IPC.ClearMailbox((uint)id);
-            
+
             Scheduler.Threads[id].Pml4 = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
-            
+
             Scheduler.Threads[id].Active = 4; // Biến thành ZOMBIE an toàn
 
             // [FIX] Đăng ký zombie để SwitchTask gọi DestroyUserSpace đúng chỗ
@@ -337,7 +338,7 @@ public static unsafe class InterruptHandlers
         {
             bool scrIrq = Terminal.ScreenLock.AcquireSafe();
             Terminal.SetColor(0x00FF0000);
-            fixed(char* m1 = "\n[!] MPU: SEGMENTATION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.Print(m1);
+            fixed(char* m1 = "\n[!] MPU: SEGMENTATION FAULT IN RING 3 APP! Terminated!\n\0") Terminal.PrintUnsafe(m1);
             Terminal.SetColor(0x00FFFFFF);
             Terminal.ScreenLock.ReleaseSafe(scrIrq);
 
@@ -385,17 +386,17 @@ public static unsafe class InterruptHandlers
     public static ulong TimerHandler(ulong currentRsp)
     {
         if (!APIC.IsAwake)
-        {    
-            fixed (ulong* p = &PIT.Ticks) AtomicAdd64(p, 1);
+        {
+            PIT.IncrementTicksHal();
             fixed (ulong* q = &Scheduler.SystemTicks) AtomicAdd64(q, 1);
-            PIC.SendEOI(); 
+            PIC.SendEOI();
             if (!Scheduler.Ready) return currentRsp;
             return Scheduler.SwitchTask(currentRsp);
         }
 
         uint coreId = APIC.Read(0x020) >> 24;
         if (coreId == 0) {
-            fixed (ulong* p = &PIT.Ticks) AtomicAdd64(p, 1);
+            PIT.IncrementTicksHal();
             fixed (ulong* q = &Scheduler.SystemTicks) AtomicAdd64(q, 1);
 
             // ==========================================================

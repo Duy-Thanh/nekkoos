@@ -50,8 +50,8 @@ var
   HeapStart: Pointer = nil;
   HeapTotalSize: QWord = 0;
 
-procedure CompilerFence; cdecl; external name 'CompilerFence';
-procedure StoreFence; cdecl; external name 'StoreFence';
+procedure Arch_CompilerFence; cdecl; external name 'Arch_CompilerFence';
+procedure Arch_StoreFence; cdecl; external name 'Arch_StoreFence';
 procedure MemSet_Pas(dest: PByte; val: Byte; count: Cardinal); cdecl; external name 'MemSet_Pas';
 
 { Helper: read QWord at block + offset }
@@ -134,7 +134,7 @@ begin
   current := Head;
   while current <> nil do
   begin
-    CompilerFence();
+    Arch_CompilerFence();
 
     magic := GetBlockCardinal(current, HEAP_BLOCK_MAGIC_OFFSET);
     if magic <> HEAP_MAGIC then
@@ -166,12 +166,12 @@ begin
         SetBlockQWord(newBlock, HEAP_BLOCK_EXACTSIZE_OFFSET, 0);
         SetBlockPointer(newBlock, HEAP_BLOCK_NEXT_OFFSET, GetBlockPointer(current, HEAP_BLOCK_NEXT_OFFSET));
 
-        CompilerFence();
+        Arch_CompilerFence();
 
         SetBlockQWord(current, HEAP_BLOCK_SIZE_OFFSET, requiredSize);
         SetBlockPointer(current, HEAP_BLOCK_NEXT_OFFSET, newBlock);
 
-        StoreFence();
+        Arch_StoreFence();
       end;
 
       SetBlockByte(current, HEAP_BLOCK_ISFREE_OFFSET, 0);
@@ -183,7 +183,7 @@ begin
       canaryPtr := PCardinal(PByte(userRam) + size);
       canaryPtr^ := HEAP_MAGIC;
 
-      StoreFence();
+      Arch_StoreFence();
 
       Heap_AllocBlock := HEAP_OK;
       Exit;
@@ -239,12 +239,12 @@ begin
   end;
 
   SetBlockByte(block, HEAP_BLOCK_ISFREE_OFFSET, 1);
-  StoreFence();
+  Arch_StoreFence();
 
   current := Head;
   while current <> nil do
   begin
-    CompilerFence();
+    Arch_CompilerFence();
 
     magic := GetBlockCardinal(current, HEAP_BLOCK_MAGIC_OFFSET);
     if magic <> HEAP_MAGIC then
@@ -281,7 +281,7 @@ begin
         SetBlockQWord(current, HEAP_BLOCK_SIZE_OFFSET, newSize);
         SetBlockPointer(current, HEAP_BLOCK_NEXT_OFFSET, GetBlockPointer(nextBlock, HEAP_BLOCK_NEXT_OFFSET));
 
-        StoreFence();
+        Arch_StoreFence();
       end
       else
         current := nextBlock;

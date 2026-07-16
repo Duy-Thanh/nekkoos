@@ -30,10 +30,10 @@ public static unsafe class Heap
     // ==========================================================
     // [MEMORY BARRIERS] Imported from Hardware.asm
     // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "LoadFence")] public static extern void LoadFence();
-    [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
+    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
+    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
+    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
+    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
 
     // ==========================================================
     // INTEROP: Gọi sang implementation bằng Pascal (src/heap.pas)

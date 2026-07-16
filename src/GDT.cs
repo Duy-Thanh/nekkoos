@@ -66,19 +66,19 @@ public struct TSSDescriptor
 
 public static unsafe class GDT
 {
-    [DllImport("*", EntryPoint = "LoadGDT")] 
+    [DllImport("*", EntryPoint = "Arch_LoadGDT")] 
     public static extern void LoadGDT(GDTDescriptor* gdtPtr);
     
-    [DllImport("*", EntryPoint = "LoadTSS")] 
+    [DllImport("*", EntryPoint = "Arch_LoadTSS")] 
     public static extern void LoadTSS(ushort tssSegment);
 
     // ==========================================================
     // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER
     // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "LoadFence")] public static extern void LoadFence();
-    [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "FullFence")] public static extern void FullFence();
+    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
+    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
+    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
+    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
 
     public static TSSEntry* Tss;
     public static GDTDescriptor gdt_struct;

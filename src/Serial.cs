@@ -10,8 +10,8 @@ namespace NekkoOS.Kernel
 {
     public static unsafe class Serial
     {
-        [DllImport("*", EntryPoint = "Out8")] static extern void Out8(ushort port, byte value);
-        [DllImport("*", EntryPoint = "In8")] static extern byte In8(ushort port);
+        [DllImport("*", EntryPoint = "Arch_WritePort8")] static extern void Out8(ushort port, byte value);
+        [DllImport("*", EntryPoint = "Arch_ReadPort8")] static extern byte In8(ushort port);
 
         const ushort COM1 = 0x3F8;
 

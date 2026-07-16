@@ -58,9 +58,9 @@ procedure IPC_ClearMailbox(queue: Pointer; maxMessages: Integer; threadId: Cardi
 implementation
 
 { External atomic primitives from Hardware.asm (x86_64 LOCK XCHG + fences) }
-function AtomicExchange(var location: Cardinal; newValue: Cardinal): Cardinal; cdecl; external name 'AtomicExchange';
-procedure StoreFence; cdecl; external name 'StoreFence';
-procedure FullFence; cdecl; external name 'FullFence';
+function Arch_AtomicExchange(var location: Cardinal; newValue: Cardinal): Cardinal; cdecl; external name 'Arch_AtomicExchange';
+procedure Arch_StoreFence; cdecl; external name 'Arch_StoreFence';
+procedure Arch_FullFence; cdecl; external name 'Arch_FullFence';
 
 { Helper: get pointer to message[i] }
 function GetMessage(queue: Pointer; index: Integer): PByte; inline;
@@ -98,7 +98,7 @@ var
   lockField: PCardinal;
 begin
   lockField := PCardinal(msg + MSG_ISLOCKED_OFFSET);
-  TryLockMessage := AtomicExchange(lockField^, 1) = 0;
+  TryLockMessage := Arch_AtomicExchange(lockField^, 1) = 0;
 end;
 
 { Helper: unlock message }
@@ -139,11 +139,11 @@ begin
           SetMsgCardinal(msg, MSG_RECEIVER_OFFSET, receiver);
           SetMsgQWord(msg, MSG_PAYLOAD_OFFSET, payload);
 
-          FullFence(); { Ensure all fields written before Type }
+          Arch_FullFence(); { Ensure all fields written before Type }
 
           SetMsgCardinal(msg, MSG_TYPE_OFFSET, msgType); { Commit message }
 
-          StoreFence();
+          Arch_StoreFence();
           UnlockMessage(msg);
 
           { Signal OS to wake receiver (C# will check Scheduler.Threads[receiver].Active) }
@@ -196,9 +196,9 @@ begin
           payload := GetMsgQWord(msg, MSG_PAYLOAD_OFFSET);
 
           { Clear message }
-          StoreFence();
+          Arch_StoreFence();
           SetMsgCardinal(msg, MSG_TYPE_OFFSET, 0);
-          StoreFence();
+          Arch_StoreFence();
           UnlockMessage(msg);
 
           IPC_ReceiveFor := 1;
@@ -241,9 +241,9 @@ begin
           receiver := GetMsgCardinal(msg, MSG_RECEIVER_OFFSET);
           payload := GetMsgQWord(msg, MSG_PAYLOAD_OFFSET);
 
-          StoreFence();
+          Arch_StoreFence();
           SetMsgCardinal(msg, MSG_TYPE_OFFSET, 0);
-          StoreFence();
+          Arch_StoreFence();
           UnlockMessage(msg);
 
           IPC_Receive := 1;
@@ -288,7 +288,7 @@ begin
               SetMsgCardinal(msg, MSG_SENDER_OFFSET, 0);
               SetMsgCardinal(msg, MSG_RECEIVER_OFFSET, 0);
               SetMsgQWord(msg, MSG_PAYLOAD_OFFSET, 0);
-              StoreFence();
+              Arch_StoreFence();
               SetMsgCardinal(msg, MSG_TYPE_OFFSET, 0);
             end;
           end;
