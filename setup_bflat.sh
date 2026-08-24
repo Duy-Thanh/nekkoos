@@ -8,7 +8,9 @@ INSTALL_DIR="$HOME/bflat"
 echo "Checking dependencies..."
 if ! command -v wget &> /dev/null; then
     echo "wget not found. Installing..."
-    if command -v pacman &> /dev/null; then
+    if command -v zypper &> /dev/null; then
+        sudo zypper --non-interactive install wget
+    elif command -v pacman &> /dev/null; then
         sudo pacman -S --noconfirm wget
     elif command -v apt &> /dev/null; then
         sudo apt update && sudo apt install -y wget
@@ -16,19 +18,39 @@ if ! command -v wget &> /dev/null; then
 fi
 
 mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR" || exit
 
-echo "Downloading bflat v${BFLAT_VERSION}..."
-wget -q --show-progress "$BFLAT_URL"
+if [ -x "$INSTALL_DIR/bflat" ]; then
+    echo "bflat v${BFLAT_VERSION} already installed in $INSTALL_DIR, skipping download."
+else
+    cd "$INSTALL_DIR" || exit
 
-echo "Extracting..."
-tar -xzf "$BFLAT_FILE"
-rm "$BFLAT_FILE"
+    echo "Downloading bflat v${BFLAT_VERSION}..."
+    wget -q --show-progress "$BFLAT_URL"
 
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo "Adding bflat to PATH in .bashrc..."
-    echo "export PATH=\$PATH:$INSTALL_DIR" >> ~/.bashrc
-    echo "Run 'source ~/.bashrc' to use bflat immediately."
+    echo "Extracting..."
+    tar -xzf "$BFLAT_FILE"
+    rm "$BFLAT_FILE"
+fi
+
+# Detect the login shell and pick the matching rc file (zsh, bash, ...)
+SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
+case "$SHELL_NAME" in
+    zsh)  RC_FILE="$HOME/.zshrc" ;;
+    fish) RC_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+    *)    RC_FILE="$HOME/.bashrc" ;;
+esac
+
+RC_LINE="export PATH=\"\$PATH:$INSTALL_DIR\""
+if [ "$SHELL_NAME" = "fish" ]; then
+    RC_LINE="fish_add_path $INSTALL_DIR"
+fi
+
+if [ -f "$RC_FILE" ] && grep -qF "$INSTALL_DIR" "$RC_FILE"; then
+    echo "PATH already configured in $RC_FILE."
+else
+    echo "Adding bflat to PATH in $RC_FILE..."
+    printf '\n%s\n' "$RC_LINE" >> "$RC_FILE"
+    echo "Run 'source $RC_FILE' to use bflat immediately."
 fi
 
 echo "Setup complete! Happy coding!"
