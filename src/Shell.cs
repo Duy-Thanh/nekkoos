@@ -125,7 +125,9 @@ public unsafe class Shell
             while (true) {
                 char c = (char)SyscallGetChar();
                 if (c == '\0') { SyscallWaitIPC(); continue; }
-                if (c == '\n') { fixed(char* nl = "\n\0") ShellPrint(nl); break; }
+                // [FIX] Chấp nhận cả '\r' làm kết thúc dòng - đồng bộ với ReadInput,
+                // tránh ký tự CR lọt vào nội dung hoặc bị rơi im lặng.
+                if (c == '\n' || c == '\r') { fixed(char* nl = "\n\0") ShellPrint(nl); break; }
                 else if (c == '\b' && lineLen > 0) { lineLen--; fixed(char* bs = "\b \b\0") ShellPrint(bs); }
                 else if (c >= 32 && c <= 126 && lineLen < 255) {
                     lineBuf[lineLen++] = c;

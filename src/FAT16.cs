@@ -88,6 +88,19 @@ public static unsafe class FAT16
         }
     }
 
+    // [FIX FREEZE] Bộ đếm dùng chung cho các vòng chờ daemon: vượt ngưỡng -> báo
+    // timeout thay vì treo hệ thống vĩnh viễn trong khi đang nắm VFS/ATA lock.
+    private static unsafe bool DaemonWaitTimedOut(ulong* spin)
+    {
+        if (++*spin > 2000000000UL) {
+            Terminal.SetColor(0x00FF0000);
+            fixed (char* err = "[!] VFS: FAT16 daemon not responding (timeout)!\n\0") Terminal.Print(err);
+            Terminal.SetColor(0x00FFFFFF);
+            return true;
+        }
+        return false;
+    }
+
     public static void AcquireVfs()
     {
         while (true)
@@ -356,6 +369,7 @@ public static unsafe class FAT16
                 ReleaseVfs(); return null;
             }
 
+            ulong dspinRf = 0;
             while (true) {
                 if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload)) {
                     if (rType == 31) {
@@ -405,7 +419,14 @@ public static unsafe class FAT16
                     }
                     else if (rType == 42) { ReleaseVfs(); return daemonFileBuffer; } 
                 }
-                Scheduler.Yield(); 
+if (DaemonWaitTimedOut(&dspinRf)) {
+                    Terminal.SetColor(0x00FF00FF);
+                    fixed (char* err = "[!] VFS: daemon timeout!\n\0") Terminal.Print(err);
+                    Terminal.SetColor(0x00FFFFFF);
+                    ReleaseVfs();
+                    return null;
+                }
+                                Scheduler.Yield(); 
             }
         }
         
@@ -655,6 +676,7 @@ public static unsafe class FAT16
         uint rType = 0, rSender = 0; ulong rPayload = 0;
         byte* dataChunk = (byte*)shared->FatResponseData;
 
+        ulong dspinWf = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload)) {
                 if (rType == 33) {
@@ -668,7 +690,14 @@ public static unsafe class FAT16
                 }
                 else if (rType == 35) { ReleaseVfs(); return (int)rPayload; }
             }
-            Scheduler.Yield();
+if (DaemonWaitTimedOut(&dspinWf)) {
+                Terminal.SetColor(0x00FF00FF);
+                fixed (char* err = "[!] VFS: daemon timeout!\n\0") Terminal.Print(err);
+                Terminal.SetColor(0x00FFFFFF);
+                ReleaseVfs();
+                return 0;
+            }
+                        Scheduler.Yield();
         }
     }
 
@@ -710,6 +739,7 @@ public static unsafe class FAT16
 
             // [ĐÃ DỌN DẸP] Thay Message Struct bằng Raw Variables
             uint rType = 0, rSender = 0; ulong rPayload = 0;
+            ulong dspinWf2 = 0;
             byte* dataChunk = (byte*)shared->FatResponseData;
 
             while (true) {
@@ -739,6 +769,13 @@ public static unsafe class FAT16
                         }
                         ReleaseVfs(); return; 
                     }
+                }
+                if (DaemonWaitTimedOut(&dspinWf2)) {
+                    Terminal.SetColor(0x00FF00FF);
+                    fixed (char* err = "[!] VFS: daemon timeout!\n\0") Terminal.Print(err);
+                    Terminal.SetColor(0x00FFFFFF);
+                    ReleaseVfs();
+                    return;
                 }
                 Scheduler.Yield(); 
             }
@@ -880,6 +917,7 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspinLs = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 41) {
                 char* listing = (char*)shared->FatResponseData;
@@ -890,7 +928,14 @@ public static unsafe class FAT16
                 ReleaseVfs();
                 return true;
             }
-            Scheduler.Yield();
+if (DaemonWaitTimedOut(&dspinLs)) {
+                Terminal.SetColor(0x00FF00FF);
+                fixed (char* err = "[!] VFS: daemon timeout!\n\0") Terminal.Print(err);
+                Terminal.SetColor(0x00FFFFFF);
+                ReleaseVfs();
+                return false;
+            }
+                        Scheduler.Yield();
         }
     }
 
@@ -912,8 +957,10 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspin45 = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 45) { ReleaseVfs(); return (int)rPayload; }
+            if (DaemonWaitTimedOut(&dspin45)) { ReleaseVfs(); return 0; }
             Scheduler.Yield();
         }
     }
@@ -936,8 +983,10 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspin47 = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 47) { ReleaseVfs(); return (int)rPayload; }
+            if (DaemonWaitTimedOut(&dspin47)) { ReleaseVfs(); return 0; }
             Scheduler.Yield();
         }
     }
@@ -960,8 +1009,10 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspin49 = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 49) { ReleaseVfs(); return (int)rPayload; }
+            if (DaemonWaitTimedOut(&dspin49)) { ReleaseVfs(); return 0; }
             Scheduler.Yield();
         }
     }
@@ -993,8 +1044,10 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspin59 = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 59) { ReleaseVfs(); return (int)rPayload; }
+            if (DaemonWaitTimedOut(&dspin59)) { ReleaseVfs(); return 0; }
             Scheduler.Yield();
         }
     }
@@ -1019,8 +1072,10 @@ public static unsafe class FAT16
         WakeDaemon();
 
         uint rType = 0, rSender = 0; ulong rPayload = 0;
+        ulong dspin61 = 0;
         while (true) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 61) { ReleaseVfs(); return (int)rPayload; }
+            if (DaemonWaitTimedOut(&dspin61)) { ReleaseVfs(); return 0; }
             Scheduler.Yield();
         }
     }
@@ -1065,12 +1120,21 @@ public static unsafe class FAT16
 
             // [ĐÃ DỌN DẸP] Thay Message Struct bằng Raw Variables
             uint rType = 0, rSender = 0; ulong rPayload = 0;
+            // [FIX FREEZE] Vòng chờ CÓ GIỚI HẠN: nếu mất wakeup/deadlock daemon thì
+            // thoát bằng lỗi thay vì treo hệ thống vĩnh viễn trong khi đang giữ VFS lock.
+            ulong cdSpin = 0;
             while(true) {
                 if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 37) {
                     if (rPayload == 0) {
                         Terminal.SetColor(0x00FF0000);
                         fixed (char* err = "[!] Thu muc khong ton tai hoac day la File!\n\0") Terminal.Print(err);
                     }
+                    ReleaseVfs(); return; 
+                }
+                if (++cdSpin > 2000000000UL) {
+                    Terminal.SetColor(0x00FF0000);
+                    fixed (char* err = "[!] VFS: FAT16 daemon timeout (Cd)!\n\0") Terminal.Print(err);
+                    Terminal.SetColor(0x00FFFFFF);
                     ReleaseVfs(); return; 
                 }
                 Scheduler.Yield(); 
@@ -1099,9 +1163,19 @@ public static unsafe class FAT16
             if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
 
             Terminal.SetColor(0x00FFFFFF);
-            for (int j = 0; j < 11; j++) {
+            // [FIX #5] In đúng định dạng 8.3: BASE.EXT có dấu chấm phân cách
+            for (int j = 0; j < 8; j++) {
                 char c = (char)entries[i].Name[j];
+                if (c == ' ' || c == 0) break;
                 Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' ');
+            }
+            if (entries[i].Name[8] != ' ' && entries[i].Name[8] != 0) {
+                Terminal.DrawChar('.');
+                for (int j = 8; j < 11; j++) {
+                    char c = (char)entries[i].Name[j];
+                    if (c == ' ' || c == 0) break;
+                    Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' ');
+                }
             }
             
             fixed (char* sep1 = " | \0") Terminal.Print(sep1);
@@ -1130,6 +1204,7 @@ public static unsafe class FAT16
 
             // [ĐÃ DỌN DẸP] Thay Message Struct bằng Raw Variables
             uint rType = 0, rSender = 0; ulong rPayload = 0;
+            ulong dspinLs2 = 0;
             while(true) {
                 if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 41) {
                     Terminal.SetColor(0x00FFFF00);
@@ -1149,6 +1224,7 @@ public static unsafe class FAT16
                     Syscall.SharedMemLock.ReleaseSafe(sm_irq4);
                     ReleaseVfs(); return; 
                 }
+                if (DaemonWaitTimedOut(&dspinLs2)) { ReleaseVfs(); return; }
                 Scheduler.Yield(); 
             }
         }

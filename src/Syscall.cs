@@ -37,6 +37,16 @@ public static unsafe class Syscall
     public static Spinlock SharedMemLock;
     private static ulong SyscallLogCounter = 0;
 
+    // [SUDO-DBG] Stage mirror của syscall 94 (sudo) tại PA cố định 0x8000 - nằm trong
+    // vùng "SMP Memory Land" (0x8000-0x9FFF) mà trampoline không dùng lại sau boot.
+    // Mục đích: chẩn đoán hậu kỳ khi hệ thống treo - đọc giá trị bằng QEMU monitor
+    // (socat -> unix socket monitor -> `xp /1wx 0x8000`) để biết sudo đang kẹt ở
+    // giai đoạn nào mà KHÔNG cần I/O (không phá vỡ timing như debug qua COM1).
+    // Bit mã hóa: 1=enter, 2=đọc PASSWD xong, 3=match account, 4=salt/pass prep,
+    // 5|0x100=so hash đúng (5|0x000=sai), 6=sai pass đã free, 7=bắt đầu đọc SUDOERS,
+    // 9=vào nhánh builtin, 10=ListDir gọi, 11=ListDir xong, 12=trước free cuối,
+    // 13=hoàn tất sạch.
+
     // Mặt nạ địa chỉ vật lý chuẩn x86_64 (bit 12->51), giống hệt VMM.cs's PHYS_ADDR_MASK.
     private const ulong PHYS_ADDR_MASK = 0x000FFFFFFFFFF000UL;
 
@@ -893,6 +903,7 @@ public static unsafe class Syscall
 
                 int callerThreadForSudo = id;
                 uint callerUidForSudo = Scheduler.Threads[id].UID;
+                *(uint*)0x8000UL = 1;
                 IO.EnableInterrupts();
 
                 char* lineUser = stackalloc char[32];
@@ -921,6 +932,7 @@ public static unsafe class Syscall
                     // chat (vd 600) se khoa luon ca chuc nang sudo cua chinh no.
                     byte* passBuf = FAT16.ReadFile(passFileName, &passSize, 0);
                     FAT16.Cd(dirRoot, 0);
+                    *(uint*)0x8000UL = 2;
 
                     if (passBuf != null && passSize > 0) {
                         int i = 0;
@@ -943,10 +955,12 @@ public static unsafe class Syscall
                             for (int k = 0; lineUID[k] != '\0'; k++) { if (lineUID[k] >= '0' && lineUID[k] <= '9') lineUidVal = lineUidVal * 10 + (uint)(lineUID[k] - '0'); else break; }
 
                             if (u > 0 && lineUidVal == callerUidForSudo) {
+                                *(uint*)0x8000UL = 3;
                                 int mm = 0; while (lineUser[mm] != '\0' && mm < 31) { matchedUser[mm] = lineUser[mm]; mm++; } matchedUser[mm] = '\0';
 
                                 int saltLen = KernHexUtil.HexToBytes(lineSalt, saltBytes, 32);
                                 int passLen = 0; while (inputPass[passLen] != '\0') passLen++;
+                                *(uint*)0x8000UL = 4;
                                 int hashInputLen = 0;
                                 for (int k = 0; k < saltLen; k++) hashInputBuf[hashInputLen++] = saltBytes[k];
                                 for (int k = 0; k < passLen; k++) hashInputBuf[hashInputLen++] = (byte)inputPass[k];
@@ -956,16 +970,22 @@ public static unsafe class Syscall
 
                                 foundAccount = true;
                                 bool passOk = KernHexUtil.ConstantTimeEq(computedHashHex, lineHash, 64);
+                                *(uint*)0x8000UL = (uint)(5 | (passOk ? 0x100 : 0));
 
                                 KernHexUtil.ZeroMemChar(lineSalt, 64); KernHexUtil.ZeroMemChar(lineHash, 80);
                                 KernHexUtil.ZeroMemByte(saltBytes, 32); KernHexUtil.ZeroMemByte(hashInputBuf, 64);
                                 KernHexUtil.ZeroMemByte(computedHash, 32); KernHexUtil.ZeroMemChar(computedHashHex, 80);
 
-                                if (!passOk) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 0; break; }
+                                if (!passOk) {
+                                    NekkoOS.Kernel.Heap.Free(passBuf);
+                                    *(uint*)0x8000UL = 6;
+                                    ctx->Rax = 0; break;
+                                }
 
                                 // Kiểm tra /ETC/SUDOERS: username đọc được từ chính PASSWD (không
                                 // phải do Ring3 tự khai) có nằm trong danh sách cho phép không.
                                 bool inSudoers = false;
+                                *(uint*)0x8000UL = 7;
                                 fixed (char* sudoersFile = "SUDOERS\0") {
                                     FAT16.Cd(dirEtc, 0);
                                     uint sudoSize = 0;
@@ -1012,13 +1032,17 @@ public static unsafe class Syscall
                                                       LibC.StrCmp(appName, vLs) || LibC.StrCmp(appName, vLl) ||
                                                       LibC.StrStartsWith(appName, vCd) || LibC.StrStartsWith(appName, vWrite);
                                     if (isBuiltin) {
+                                        *(uint*)0x8000UL = 9;
                                         uint sudoOrigUid = Scheduler.Threads[id].UID;
                                         uint sudoOrigGid = Scheduler.Threads[id].GID;
                                         Scheduler.Threads[id].UID = 0; Scheduler.Threads[id].GID = 0;
 
                                         if (LibC.StrCmp(appName, vLs) || LibC.StrCmp(appName, vLl)) {
                                             char* listBuf = stackalloc char[2048];
-                                            if (FAT16.ListDir(listBuf, 2048, callerThreadForSudo)) {
+                                            *(uint*)0x8000UL = 10;
+                                            bool listOk = FAT16.ListDir(listBuf, 2048, callerThreadForSudo);
+                                            *(uint*)0x8000UL = 11;
+                                            if (listOk) {
                                                 Terminal.SetColor(0x00FFFFFF);
                                                 Terminal.Print(listBuf);
                                             } else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] sudo ls: Failed to list directory.\n\0") Terminal.Print(e); }
@@ -1130,7 +1154,9 @@ public static unsafe class Syscall
 
                                         Scheduler.Threads[id].UID = sudoOrigUid; Scheduler.Threads[id].GID = sudoOrigGid;
                                         Terminal.SetColor(0x00FFFFFF);
+                                        *(uint*)0x8000UL = 12;
                                         NekkoOS.Kernel.Heap.Free(passBuf);
+                                        *(uint*)0x8000UL = 13;
                                         ctx->Rax = 1; break;
                                     }
                                 }
