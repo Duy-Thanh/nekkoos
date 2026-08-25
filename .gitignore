@@ -42,3 +42,4 @@ sudoers
 *.o
 *.s
 src/arch/hal/README.md
+kilo.sh
