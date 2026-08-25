@@ -263,28 +263,10 @@ public unsafe class Program
         WriteSectorIPC(fatSector + CachedBPB.FATSize16, fatBuf); 
     }
 
-    public static void FormatFATName(char* input, byte* output)
-    {
-        // Kiểm tra xem các con trỏ có null không
-        if (input == null || output == null) {
-            fixed(char* err = "[!] FATAL: Null pointer in FormatFATName!\n\0") SyscallPrint(err);
-            return;
-        }
-
-        for (int i = 0; i < 11; i++) output[i] = (byte)' ';
-        int idx = 0;
-        while (input[idx] != '.' && input[idx] != '\0' && idx < 8) {
-            char c = input[idx]; if (c >= 'a' && c <= 'z') c = (char)(c - 32); 
-            output[idx] = (byte)c; idx++;
-        }
-        if (input[idx] == '.') {
-            idx++; int extIdx = 8;
-            while (input[idx] != '\0' && extIdx < 11) {
-                char c = input[idx]; if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-                output[extIdx] = (byte)c; idx++; extIdx++;
-            }
-        }
-    }
+    // [PASCAL PORT] Logic chuyển sang src/libc.pas (FormatFATName_Pas) - code dùng chung
+    // độc lập kiến trúc CPU, C# chỉ giữ shim mỏng theo recipe trong ARCHITECTURE.md §3.
+    [DllImport("*", EntryPoint = "FormatFATName_Pas")]
+    public static extern void FormatFATName(char* input, byte* output);
 
     // ==========================================================
     // [FIX CHÍ MẠNG] SAN PHẲNG HÀM CỤC BỘ (FLATTENING)

@@ -7,19 +7,10 @@ using System.Runtime.InteropServices;
 
 namespace NekkoOS.Kernel;
 
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public struct RegisterContext
-{
-    public ulong R15; public ulong R14; public ulong R13; public ulong R12;
-    public ulong R11; public ulong R10; public ulong R9;  public ulong R8;
-    public ulong Rdi; public ulong Rsi; public ulong Rbp; public ulong Rbx;
-    public ulong Rdx; public ulong Rcx; public ulong Rax;
-    
-    public ulong ErrorCode; // <-- THÊM THẰNG NÀY VÀO ĐỂ HẤP THỤ 8 BYTES CỦA CPU!
-    
-    public ulong Rip; public ulong Cs;  public ulong Rflags;
-    public ulong Rsp; public ulong Ss;
-}
+// [ARCH] RegisterContext (layout frame x86_64) đã tách sang
+// src/arch/x86_64/ContextLayout.cs - kernel generic không định nghĩa
+// layout thanh ghi. TODO nợ: thay 125 lượt truy cập ctx->Rax…Rip trực
+// tiếp bằng accessor per-arch (Arch_GetCtxReg/SetCtxReg) khi port.
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public unsafe struct ProcessInfo
