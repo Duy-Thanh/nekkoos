@@ -9,8 +9,8 @@ namespace NekkoOS.Kernel;
 
 // [ARCH] RegisterContext (layout frame x86_64) đã tách sang
 // src/arch/x86_64/ContextLayout.cs - kernel generic không định nghĩa
-// layout thanh ghi. TODO nợ: thay 125 lượt truy cập ctx->Rax…Rip trực
-// tiếp bằng accessor per-arch (Arch_GetCtxReg/SetCtxReg) khi port.
+// layout thanh ghi. [ARCH ABI] Đã migrate: mọi truy cập qua ArchCtx
+// (GetNumber/GetArg/SetRet/SetRet2) - port arch chỉ cần sửa ContextLayout.cs.
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public unsafe struct ProcessInfo
@@ -140,7 +140,7 @@ public static unsafe class Syscall
 
         if (currentRsp == 0 || currentRsp < 0x1000) return currentRsp;
 
-        ulong syscallId = ctx->Rax;
+        ulong syscallId = ArchCtx.GetNumber(ctx);
         int id = Scheduler.CurrentThreadId;
 
         // [FIX CVE-2026-009] DISABLED: Serial logging leaks CR3/TID to QEMU monitor
@@ -162,7 +162,7 @@ public static unsafe class Syscall
 
         // Validate scheduler/thread table before touching it
         if (Scheduler.Threads == null || id < 0 || id >= Scheduler.ThreadCount) {
-            ctx->Rax = 0; return currentRsp;
+            ArchCtx.SetRet(ctx, 0); return currentRsp;
         }
 
         bool isKing = (Scheduler.Threads[id].UID == 0);
@@ -170,15 +170,15 @@ public static unsafe class Syscall
         if (Scheduler.Threads[id].IsJailed == 1 && Scheduler.Threads[id].IsPhantomDead == 1)
         {
             if (syscallId == 0) { Scheduler.TerminateCurrentTask(); return currentRsp; }
-            if (syscallId == 6 || syscallId == 99) { ctx->Rax = (0x0000DEADBEEF0000 | 0x0000FEEBDEAD0000); return currentRsp; }
-            ctx->Rax = 1; 
+            if (syscallId == 6 || syscallId == 99) { ArchCtx.SetRet(ctx, (0x0000DEADBEEF0000 | 0x0000FEEBDEAD0000)); return currentRsp; }
+            ArchCtx.SetRet(ctx, 1); 
             return Scheduler.SwitchTask(currentRsp);
         }
 
         if (Scheduler.Threads[id].IsJailed == 1)
         {
-            if (syscallId == 7 || syscallId == 91 || syscallId == 93) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; return currentRsp; }
-            if (syscallId == 6 && ctx->Rcx > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = (0x0000DEADBEEF0000 & 0x0000FEEBDEAD0000); return currentRsp; }
+            if (syscallId == 7 || syscallId == 91 || syscallId == 93) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 1); return currentRsp; }
+            if (syscallId == 6 && ArchCtx.GetArg(ctx, 1) > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, (0x0000DEADBEEF0000 & 0x0000FEEBDEAD0000)); return currentRsp; }
         }
 
         ulong currentTicks = Scheduler.SystemTicks;
@@ -191,8 +191,8 @@ public static unsafe class Syscall
             // [SYSCALL 1]: IN CHUỖI RA MÀN HÌNH (Print)
             case 1:
             {
-                if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx)) { ctx->Rax = 0; break; }
-                char* str = (char*)ctx->Rcx;
+                if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, 0); break; }
+                char* str = (char*)ArchCtx.GetArg(ctx, 1);
 
                 // [MITIGATION CVE-2026-003] TOCTOU hardening:
                 // Không fix hoàn toàn (gây crash/hang), nhưng validate định kỳ mỗi 256 chars
@@ -233,12 +233,12 @@ public static unsafe class Syscall
                 // tiến trình đang active, cùng gốc rễ với bug tranh chấp bàn phím đã vá ở Syscall 4.
                 int fgTaskDraw = Scheduler.ForegroundTask;
                 bool fgValidDraw = fgTaskDraw >= 0 && fgTaskDraw < Scheduler.ThreadCount && Scheduler.Threads[fgTaskDraw].Active != 0;
-                if (fgValidDraw && fgTaskDraw != id) { ctx->Rax = 0; break; }
+                if (fgValidDraw && fgTaskDraw != id) { ArchCtx.SetRet(ctx, 0); break; }
 
-                uint x = (uint)ctx->Rcx; uint y = (uint)ctx->Rdx; uint color = (uint)ctx->R8;
+                uint x = (uint)ArchCtx.GetArg(ctx, 1); uint y = (uint)ArchCtx.GetArg(ctx, 2); uint color = (uint)ArchCtx.GetArg(ctx, 3);
 
                 // [SECURITY] Prevent kernel memory overwrite by validating framebuffer coordinates
-                if (x >= Terminal.width || y >= Terminal.height) { ctx->Rax = 0; break; }
+                if (x >= Terminal.width || y >= Terminal.height) { ArchCtx.SetRet(ctx, 0); break; }
 
                 Terminal.fb[y * Terminal.scanLine + x] = color;
                 break;
@@ -251,9 +251,9 @@ public static unsafe class Syscall
                 // nền tự ý xóa sạch màn hình của tiến trình đang active.
                 int fgTaskClear = Scheduler.ForegroundTask;
                 bool fgValidClear = fgTaskClear >= 0 && fgTaskClear < Scheduler.ThreadCount && Scheduler.Threads[fgTaskClear].Active != 0;
-                if (fgValidClear && fgTaskClear != id) { ctx->Rax = 0; break; }
+                if (fgValidClear && fgTaskClear != id) { ArchCtx.SetRet(ctx, 0); break; }
 
-                uint bgColor = (uint)ctx->Rcx; Terminal.Clear(bgColor); break;
+                uint bgColor = (uint)ArchCtx.GetArg(ctx, 1); Terminal.Clear(bgColor); break;
             }
 
             // [SYSCALL 4]: ĐỌC BÀN PHÍM (GLOBAL INTERCEPT HACK)
@@ -317,7 +317,7 @@ public static unsafe class Syscall
                 }
 
                 if (found) {
-                    if (c != '\0') { ctx->Rax = (ulong)c; } else { ctx->Rax = 0; }
+                    if (c != '\0') { ArchCtx.SetRet(ctx, (ulong)c); } else { ArchCtx.SetRet(ctx, 0); }
                     break;
                 }
                 
@@ -329,18 +329,18 @@ public static unsafe class Syscall
                 
                 // Gọi SwitchTask trực tiếp — IsrSyscall dùng mov rsp,rax để
                 // nhảy sang thread mới ngay lập tức, không spin CPU vô tận.
-                ctx->Rax = 0; 
+                ArchCtx.SetRet(ctx, 0); 
                 return Scheduler.SwitchTask(currentRsp);
             }
             
             // [SYSCALL 5]: GỬI TIN NHẮN IPC (Send IPC)
             case 5:
             {
-                uint receiverId = (uint)ctx->Rcx;
-                uint msgType = (uint)ctx->Rdx;
-                if (receiverId >= Scheduler.ThreadCount || Scheduler.Threads[receiverId].Active == 0) { ctx->Rax = 0; break; }
+                uint receiverId = (uint)ArchCtx.GetArg(ctx, 1);
+                uint msgType = (uint)ArchCtx.GetArg(ctx, 2);
+                if (receiverId >= Scheduler.ThreadCount || Scheduler.Threads[receiverId].Active == 0) { ArchCtx.SetRet(ctx, 0); break; }
                 if (Scheduler.Threads[id].IsJailed == 1 && (receiverId == 0 || receiverId == 1)) {
-                    Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; break;
+                    Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 1); break;
                 }
 
                 // [FIX BẢO MẬT - CRITICAL] Type "quyền lực sinh tử" (SIGTERM daemon,
@@ -349,7 +349,7 @@ public static unsafe class Syscall
                 // để tắt máy/reboot/kill daemon, bỏ qua hoàn toàn kiểm tra isKing ở case 88.
                 bool isPrivilegedType = (msgType == 0xDEAD || msgType == 0xBEEF);
                 if (isPrivilegedType && Scheduler.Threads[id].UID != 0) {
-                    ctx->Rax = 0; break;
+                    ArchCtx.SetRet(ctx, 0); break;
                 }
 
                 // [FIX BẢO MẬT - CRITICAL] ATA Daemon thao tác theo SECTOR vật lý,
@@ -379,12 +379,12 @@ public static unsafe class Syscall
                 // không phải dữ liệu người dùng cung cấp, nên không thể bị giả mạo.
                 if (Driver.ATA.DaemonId != 0 && receiverId == Driver.ATA.DaemonId) {
                     bool isFat16Daemon = Driver.FAT16.TrustedThreadId >= 0 && Driver.FAT16.TrustedThreadId == id;
-                    if (!isFat16Daemon) { ctx->Rax = 0; break; }
+                    if (!isFat16Daemon) { ArchCtx.SetRet(ctx, 0); break; }
                 }
 
                 // Gọi Send của cấu trúc Lock-Free mới
                 // [FIX CVE-2026-002] BẮT RETURN VALUE để caller biết send có thành công không!
-                bool sendSuccess = IPC.Send(msgType, (uint)id, receiverId, ctx->R8);
+                bool sendSuccess = IPC.Send(msgType, (uint)id, receiverId, ArchCtx.GetArg(ctx, 3));
 
                 if (sendSuccess)
                 {
@@ -396,11 +396,11 @@ public static unsafe class Syscall
                     Scheduler.Threads[receiverId].VRuntime = Scheduler.Threads[id].VRuntime;
                     Scheduler.ReleaseSchedLockSafe(irq);
 
-                    ctx->Rax = 1;  // Success
+                    ArchCtx.SetRet(ctx, 1);  // Success
                 }
                 else
                 {
-                    ctx->Rax = 0;  // Failed - queue full, caller nên retry!
+                    ArchCtx.SetRet(ctx, 0);  // Failed - queue full, caller nên retry!
                 }
 
                 // [SCHEDULER] Do not yield inside the interrupt frame - context switch is handled by the timer IRQ
@@ -410,15 +410,15 @@ public static unsafe class Syscall
             // [SYSCALL 6]: XIN THÊM RAM ẢO (Allocate Heap Memory)
             case 6: 
             {
-                ulong numPages = ctx->Rcx;
-                if (numPages == 0) { ctx->Rax = Scheduler.Threads[id].AppHeapBase; break; }
-                if (!isKing && numPages > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 0; break; }
-                if (numPages > 1024) { ctx->Rax = 0; break; }
+                ulong numPages = ArchCtx.GetArg(ctx, 1);
+                if (numPages == 0) { ArchCtx.SetRet(ctx, Scheduler.Threads[id].AppHeapBase); break; }
+                if (!isKing && numPages > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
+                if (numPages > 1024) { ArchCtx.SetRet(ctx, 0); break; }
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
                 ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
-                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
 
                 ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
                 
@@ -429,10 +429,10 @@ public static unsafe class Syscall
                 // Ensure caller maps into the currently active PML4 (CR3) to avoid dereferencing other PML4s
                 ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                 if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) {
-                    Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                    Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Only allow mapping when the caller's PML4 matches the currently loaded CR3.
                 ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) { VMM.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
                 VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
 
@@ -442,15 +442,15 @@ public static unsafe class Syscall
                 
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                ctx->Rax = virtAddr;
+                ArchCtx.SetRet(ctx, virtAddr);
                 break;
             }
 
             // [SYSCALL 7]: XIN QUYỀN TRUY CẬP CỔNG PHẦN CỨNG (Grant I/O Port)
             case 7: 
             {
-                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 1; break; }
-                ushort port = (ushort)ctx->Rcx; GDT.GrantPortAccess(port); ctx->Rax = 1; break;
+                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 1); break; }
+                ushort port = (ushort)ArchCtx.GetArg(ctx, 1); GDT.GrantPortAccess(port); ArchCtx.SetRet(ctx, 1); break;
             }
 
             // ==========================================================
@@ -458,11 +458,11 @@ public static unsafe class Syscall
             // ==========================================================
             case 8: 
             {
-                if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx)) { ctx->Rax = 0; break; }
+                if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, 0); break; }
                 
                 // Mặc dù User Space (App Ring 3) vẫn dùng struct Message
                 // Nhưng Kernel (Ring 0) sẽ hứng qua ReceiveRaw rồi đắp data vào con trỏ đó!
-                Message* outMsg = (Message*)ctx->Rcx;
+                Message* outMsg = (Message*)ArchCtx.GetArg(ctx, 1);
                 
                 uint rType = 0, rSender = 0; ulong rPayload = 0;
                 
@@ -472,11 +472,11 @@ public static unsafe class Syscall
                     outMsg->Sender = rSender;
                     outMsg->Receiver = (uint)id;
                     outMsg->Payload = rPayload;
-                    ctx->Rax = 1; 
+                    ArchCtx.SetRet(ctx, 1); 
                 } 
                 else 
                 { 
-                    ctx->Rax = 0; 
+                    ArchCtx.SetRet(ctx, 0); 
                 }
                 break;
             }
@@ -484,8 +484,8 @@ public static unsafe class Syscall
             // [SYSCALL 10]: ĐIỀU TRA LÝ LỊCH (Get Process Info)
             case 10: 
             {
-                uint targetId = (uint)ctx->Rcx; ulong outPtr = ctx->Rdx;
-                if (!IsValidUserPtr(outPtr) || targetId >= Scheduler.ThreadCount) { ctx->Rax = 0; break; }
+                uint targetId = (uint)ArchCtx.GetArg(ctx, 1); ulong outPtr = ArchCtx.GetArg(ctx, 2);
+                if (!IsValidUserPtr(outPtr) || targetId >= Scheduler.ThreadCount) { ArchCtx.SetRet(ctx, 0); break; }
 
                 ProcessInfo* pInfo = (ProcessInfo*)outPtr;
                 pInfo->ID = targetId;
@@ -506,18 +506,18 @@ public static unsafe class Syscall
                 for (int i = 0; i < 16; i++) { pInfo->Name[i] = Scheduler.Threads[targetId].Name[i]; } 
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                ctx->Rax = 1; break;
+                ArchCtx.SetRet(ctx, 1); break;
             }
 
             // [SYSCALL 11]: LẤY ĐỊA CHỈ ACPI RSDP
-            case 11: { ctx->Rax = Program.GlobalBootInfo->AcpiRsdp; break; }
+            case 11: { ArchCtx.SetRet(ctx, Program.GlobalBootInfo->AcpiRsdp); break; }
 
             // [SYSCALL 12]: MƯỢN ĐẤT PHẦN CỨNG (Map Physical Memory)
             case 12: 
             {
-                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 0; break; }
-                ulong physAddr = ctx->Rcx; ulong numPages = ctx->Rdx;
-                if (numPages == 0 || numPages > 256) { ctx->Rax = 0; break; }
+                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
+                ulong physAddr = ArchCtx.GetArg(ctx, 1); ulong numPages = ArchCtx.GetArg(ctx, 2);
+                if (numPages == 0 || numPages > 256) { ArchCtx.SetRet(ctx, 0); break; }
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
@@ -526,36 +526,36 @@ public static unsafe class Syscall
                 
                 // [PAGING] Use the thread's own PML4 and validate the pointer first
                 ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Ensure the syscall is running under the thread's PML4 before mapping.
                 ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) { VMM.MapPage(alignedPhys + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
                 VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
 
                 Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                ctx->Rax = virtAddr + offset; break;
+                ArchCtx.SetRet(ctx, virtAddr + offset); break;
             }
 
             // [SYSCALL 13]: KHAI BÁO PHẦN CỨNG BẬC CAO (Hardware Report)
             case 13: 
             {
-                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ctx->Rax = 0; break; }
-                uint hwType = (uint)ctx->Rcx; ulong payload = ctx->Rdx;
-                if (hwType == 1) { APIC.Init(payload); ctx->Rax = 1; }
-                else if (hwType == 2) { APIC.CoreCount = (uint)payload; ctx->Rax = 1; }
-                else if (hwType == 3) { APIC.IOApicBase = payload; ctx->Rax = 1; }
-                else { ctx->Rax = 0; }
+                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
+                uint hwType = (uint)ArchCtx.GetArg(ctx, 1); ulong payload = ArchCtx.GetArg(ctx, 2);
+                if (hwType == 1) { APIC.Init(payload); ArchCtx.SetRet(ctx, 1); }
+                else if (hwType == 2) { APIC.CoreCount = (uint)payload; ArchCtx.SetRet(ctx, 1); }
+                else if (hwType == 3) { APIC.IOApicBase = payload; ArchCtx.SetRet(ctx, 1); }
+                else { ArchCtx.SetRet(ctx, 0); }
                 break;
             }
 
             // [SYSCALL 14]: TÌM NGƯỜI THÂN (Get PID By Name)
             case 14: 
             {
-                if (!IsValidUserPtr(ctx->Rcx)) { ctx->Rax = unchecked((ulong)-1); break; }
-                char* targetName = (char*)ctx->Rcx; long foundId = -1; 
+                if (!IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, unchecked((ulong)-1)); break; }
+                char* targetName = (char*)ArchCtx.GetArg(ctx, 1); long foundId = -1; 
 
                 bool irq = Scheduler.AcquireSchedLockSafe(); 
                 for (int i = 1; i < Scheduler.ThreadCount; i++) {
@@ -570,7 +570,7 @@ public static unsafe class Syscall
                 }
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                ctx->Rax = (ulong)foundId; break;
+                ArchCtx.SetRet(ctx, (ulong)foundId); break;
             }
 
             // [SYSCALL 50] YÊU CẦU QUYỀN SỞ HỮU MÀN HÌNH (MAP FRAMEBUFFER)
@@ -578,7 +578,7 @@ public static unsafe class Syscall
             {
                 if (!isKing) { 
                     Scheduler.Threads[id].IsPhantomDead = 1; 
-                    ctx->Rax = 0; 
+                    ArchCtx.SetRet(ctx, 0); 
                     break; 
                 }
 
@@ -590,13 +590,13 @@ public static unsafe class Syscall
                 ulong numPages = (fbSize + 4095) / 4096;
                 ulong pml4 = Scheduler.Threads[id].Pml4;
 
-                if (pml4 == 0 || pml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(pml4)) { ctx->Rax = 0; break; }
+                if (pml4 == 0 || pml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(pml4)) { ArchCtx.SetRet(ctx, 0); break; }
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
                 // Map only when current CR3 equals the thread's PML4.
                 ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)pml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if ((ulong*)pml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
                     VMM.MapPage(fbPhys + (p * 4096), vAddr + (p * 4096), 0x07, currentPml4);
                 }
@@ -606,22 +606,22 @@ public static unsafe class Syscall
                 
                 Scheduler.ReleaseSchedLockSafe(irq);
 
-                ctx->Rax = vAddr; 
+                ArchCtx.SetRet(ctx, vAddr); 
                 break;
             }
 
             // [SYSCALL 51]
             case 51:
             {
-                ulong* ptrWidth = (ulong*)ctx->Rcx;
-                ulong* ptrHeight = (ulong*)ctx->Rdx;
-                ulong* ptrScanLine = (ulong*)ctx->R8;
+                ulong* ptrWidth = (ulong*)ArchCtx.GetArg(ctx, 1);
+                ulong* ptrHeight = (ulong*)ArchCtx.GetArg(ctx, 2);
+                ulong* ptrScanLine = (ulong*)ArchCtx.GetArg(ctx, 3);
 
                 if (ptrWidth != null && IsValidUserPtr((ulong)ptrWidth)) *ptrWidth = Terminal.width;
                 if (ptrHeight != null && IsValidUserPtr((ulong)ptrHeight)) *ptrHeight = Terminal.height;
                 if (ptrScanLine != null && IsValidUserPtr((ulong)ptrScanLine)) *ptrScanLine = Terminal.scanLine;
 
-                ctx->Rax = 1; 
+                ArchCtx.SetRet(ctx, 1); 
                 break;
             }
 
@@ -633,20 +633,20 @@ public static unsafe class Syscall
                 // trước đây bất kỳ process nào (kể cả jailed) cũng chiếm được nó.
                 if (!isKing) {
                     Scheduler.Threads[id].IsPhantomDead = 1;
-                    ctx->Rax = 0;
+                    ArchCtx.SetRet(ctx, 0);
                     break;
                 }
 
-                ulong newFb = ctx->Rcx;
-                uint w = (uint)ctx->Rdx;
-                uint h = (uint)ctx->R8;
-                uint sl = (uint)ctx->R9;
+                ulong newFb = ArchCtx.GetArg(ctx, 1);
+                uint w = (uint)ArchCtx.GetArg(ctx, 2);
+                uint h = (uint)ArchCtx.GetArg(ctx, 3);
+                uint sl = (uint)ArchCtx.GetArg(ctx, 4);
 
                 if (IsValidUserPtr(newFb)) {
                     Terminal.RedirectOutput((uint*)newFb, w, h, sl);
-                    ctx->Rax = 1;
+                    ArchCtx.SetRet(ctx, 1);
                 } else {
-                    ctx->Rax = 0;
+                    ArchCtx.SetRet(ctx, 0);
                 }
                 break;
             }
@@ -654,11 +654,11 @@ public static unsafe class Syscall
             // [SYSCALL 88]: BỘ ĐÀM TỔNG TƯ LỆNH (Internal Shell / Run Daemon)
             case 88: 
             {
-                if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx)) { ctx->Rax = 0; break; }
-                char* cmdStr = (char*)ctx->Rcx;
+                if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, 0); break; }
+                char* cmdStr = (char*)ArchCtx.GetArg(ctx, 1);
 
                 // Lấy địa chỉ cửa sổ ảo do CMD.EXE truyền vào qua RDX
-                ulong targetFb = ctx->Rdx; 
+                ulong targetFb = ArchCtx.GetArg(ctx, 2); 
 
                 // [BỌC THÉP] LƯU LẠI MÀN HÌNH GỐC CỦA KERNEL!
                 uint* oldFb = Terminal.fb;
@@ -732,11 +732,11 @@ public static unsafe class Syscall
                             Terminal.SetColor(0x00FF0000); 
                             fixed(char* e = "[!] Permission Denied: Only Root can spawn Daemons!\n\0") Terminal.Print(e);
                             Terminal.SetColor(0x00FFFFFF);
-                            ctx->Rax = 0; break; 
+                            ArchCtx.SetRet(ctx, 0); break; 
                         }
 
                         char* appName = isDaemon ? cmdStr + 7 : cmdStr + 4;
-                        if (*appName == '\0') { ctx->Rax = 0; break; }
+                        if (*appName == '\0') { ArchCtx.SetRet(ctx, 0); break; }
 
                         // [FIX BẢO MẬT] Chốt sẵn ID luồng gọi TRƯỚC khi bật ngắt cục bộ, tránh
                         // timer IRQ đổi luồng đang chạy trên core này giữa chừng khiến FAT16.ReadFile
@@ -749,7 +749,7 @@ public static unsafe class Syscall
                             if (rawData[0] != 'M' || rawData[1] != 'Z') {
                                 Terminal.SetColor(0x00FF0000);
                                 fixed (char* err = "[!] Kernel FATAL: Corrupted PE Header!\n\0") Terminal.Print(err);
-                                NekkoOS.Kernel.Heap.Free(rawData); ctx->Rax = 0; break; 
+                                NekkoOS.Kernel.Heap.Free(rawData); ArchCtx.SetRet(ctx, 0); break; 
                             }
                             
                             Terminal.SetColor(0x00FFFF00);
@@ -811,26 +811,26 @@ public static unsafe class Syscall
                     }
                 }
                 
-                Terminal.SetColor(0x00FFFFFF); ctx->Rax = 1; break;
+                Terminal.SetColor(0x00FFFFFF); ArchCtx.SetRet(ctx, 1); break;
             }
 
             // [SYSCALL 89]: XEM CHỨNG MINH THƯ (Get Current UID)
-            case 89: { ctx->Rax = Scheduler.Threads[id].UID; break; }
+            case 89: { ArchCtx.SetRet(ctx, Scheduler.Threads[id].UID); break; }
 
             // [SYSCALL 90]: ĐIỀU TRA CHỨNG MINH THƯ KẺ KHÁC (Get Target UID)
             case 90: 
             {
-                uint targetThread = (uint)ctx->Rbx;
-                if (targetThread < Scheduler.ThreadCount) { ctx->Rax = Scheduler.Threads[targetThread].UID; } 
-                else { ctx->Rax = 9999; }
+                uint targetThread = (uint)ArchCtx.GetArg(ctx, 0);
+                if (targetThread < Scheduler.ThreadCount) { ArchCtx.SetRet(ctx, Scheduler.Threads[targetThread].UID); } 
+                else { ArchCtx.SetRet(ctx, 9999); }
                 break;
             }
 
             // [SYSCALL 91]: TỰ RỚT ĐÀI (Set UID - Drop Privilege)
             case 91: 
             {
-                uint targetUID = (uint)ctx->Rbx; uint currentUID = Scheduler.Threads[id].UID;
-                if (currentUID == 0 || targetUID == currentUID) { Scheduler.Threads[id].UID = targetUID; ctx->Rax = 1; } 
+                uint targetUID = (uint)ArchCtx.GetArg(ctx, 0); uint currentUID = Scheduler.Threads[id].UID;
+                if (currentUID == 0 || targetUID == currentUID) { Scheduler.Threads[id].UID = targetUID; ArchCtx.SetRet(ctx, 1); } 
                 else {
                     if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
                     if (Scheduler.Threads[id].SharedMemVirt != 0) {
@@ -839,7 +839,7 @@ public static unsafe class Syscall
                             VMM.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
                         }
                     }
-                    ctx->Rax = 0; 
+                    ArchCtx.SetRet(ctx, 0); 
                 }
                 break;
             }
@@ -847,16 +847,16 @@ public static unsafe class Syscall
             // [SYSCALL 92 & 93]: ĐIỀU TRA & XÉT DUYỆT GROUP ID (Get/Set GID)
             case 92: 
             {
-                uint targetThreadForGID = (uint)ctx->Rbx;
-                if (targetThreadForGID < Scheduler.ThreadCount) { ctx->Rax = Scheduler.Threads[targetThreadForGID].GID; } 
-                else { ctx->Rax = 9999; }
+                uint targetThreadForGID = (uint)ArchCtx.GetArg(ctx, 0);
+                if (targetThreadForGID < Scheduler.ThreadCount) { ArchCtx.SetRet(ctx, Scheduler.Threads[targetThreadForGID].GID); } 
+                else { ArchCtx.SetRet(ctx, 9999); }
                 break;
             }
 
             case 93: 
             {
-                uint targetGID = (uint)ctx->Rbx; uint currentGID = Scheduler.Threads[id].GID;
-                if (currentGID == 0 || Scheduler.Threads[id].UID == 0 || targetGID == currentGID) { Scheduler.Threads[id].GID = targetGID; ctx->Rax = 1; } 
+                uint targetGID = (uint)ArchCtx.GetArg(ctx, 0); uint currentGID = Scheduler.Threads[id].GID;
+                if (currentGID == 0 || Scheduler.Threads[id].UID == 0 || targetGID == currentGID) { Scheduler.Threads[id].GID = targetGID; ArchCtx.SetRet(ctx, 1); } 
                 else {
                     if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
                     if (Scheduler.Threads[id].SharedMemVirt != 0) {
@@ -865,7 +865,7 @@ public static unsafe class Syscall
                             VMM.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
                         }
                     }
-                    ctx->Rax = 0; 
+                    ArchCtx.SetRet(ctx, 0); 
                 }
                 break;
             }
@@ -876,21 +876,21 @@ public static unsafe class Syscall
             // kiểm tra /ETC/SUDOERS, rồi nếu đúng: nạp app với forceRoot:true.
             // Thread gọi (Shell.exe) KHÔNG hề bị đổi UID/GID - chỉ tiến trình MỚI
             // sinh ra mang UID/GID root, đúng phạm vi "một lệnh" đã chốt trong kế hoạch.
-            // ctx->Rax trả về: 0=sai mật khẩu/không có tài khoản, 1=thành công,
+            // SetRet: 0=sai mật khẩu/không có tài khoản, 1=thành công,
             // 2=không nằm trong sudoers, 3=không tìm thấy app cần chạy.
             case 94:
             {
-                if (ctx->Rcx == 0 || !IsValidUserPtr(ctx->Rcx) || ctx->Rdx == 0 || !IsValidUserPtr(ctx->Rdx)) { ctx->Rax = 0; break; }
-                char* appName = (char*)ctx->Rcx;
-                char* inputPass = (char*)ctx->Rdx;
+                if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1)) || ArchCtx.GetArg(ctx, 2) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 2))) { ArchCtx.SetRet(ctx, 0); break; }
+                char* appName = (char*)ArchCtx.GetArg(ctx, 1);
+                char* inputPass = (char*)ArchCtx.GetArg(ctx, 2);
 
                 // [SUDO WRITE] R8 = con tro Ring3 toi noi dung "write" da duoc Shell.cs
                 // tu doc tu ban phim SAN (0/null neu app khong phai "write <path>"),
                 // R9 = do dai byte. Validate y het appName/inputPass truoc khi doc thang
                 // tu Ring0 - KHONG dung shared memory de tranh dung do voi AtaRawBuffer/
                 // FatResponseData dang duoc cac thao tac disk khac dung song song.
-                byte* sudoWriteContent = (ctx->R8 != 0 && IsValidUserPtr(ctx->R8)) ? (byte*)ctx->R8 : null;
-                uint sudoWriteContentLen = (uint)ctx->R9;
+                byte* sudoWriteContent = (ArchCtx.GetArg(ctx, 3) != 0 && IsValidUserPtr(ArchCtx.GetArg(ctx, 3))) ? (byte*)ArchCtx.GetArg(ctx, 3) : null;
+                uint sudoWriteContentLen = (uint)ArchCtx.GetArg(ctx, 4);
 
                 int callerThreadForSudo = id;
                 uint callerUidForSudo = Scheduler.Threads[id].UID;
@@ -970,7 +970,7 @@ public static unsafe class Syscall
                                 if (!passOk) {
                                     NekkoOS.Kernel.Heap.Free(passBuf);
                                     *(uint*)0x8000UL = 6;
-                                    ctx->Rax = 0; break;
+                                    ArchCtx.SetRet(ctx, 0); break;
                                 }
 
                                 // Kiểm tra /ETC/SUDOERS: username đọc được từ chính PASSWD (không
@@ -999,7 +999,7 @@ public static unsafe class Syscall
                                     }
                                 }
 
-                                if (!inSudoers) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 2; break; }
+                                if (!inSudoers) { NekkoOS.Kernel.Heap.Free(passBuf); ArchCtx.SetRet(ctx, 2); break; }
 
                                 // ==========================================================
                                 // [SUDO BUILTIN - Ve root tam thoi qua IPC] KHONG tu lam logic
@@ -1148,7 +1148,7 @@ public static unsafe class Syscall
                                         *(uint*)0x8000UL = 12;
                                         NekkoOS.Kernel.Heap.Free(passBuf);
                                         *(uint*)0x8000UL = 13;
-                                        ctx->Rax = 1; break;
+                                        ArchCtx.SetRet(ctx, 1); break;
                                     }
                                 }
 
@@ -1156,34 +1156,34 @@ public static unsafe class Syscall
                                 byte* rawData = FAT16.ReadFile(appName, &appFileSize, callerThreadForSudo);
                                 if (rawData == null || rawData[0] != 'M' || rawData[1] != 'Z') {
                                     if (rawData != null) NekkoOS.Kernel.Heap.Free(rawData);
-                                    NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 3; break;
+                                    NekkoOS.Kernel.Heap.Free(passBuf); ArchCtx.SetRet(ctx, 3); break;
                                 }
 
                                 PELoader.LoadAndRun(rawData, false, false, true, appName, 1);
                                 NekkoOS.Kernel.Heap.Free(passBuf);
-                                ctx->Rax = 1; break;
+                                ArchCtx.SetRet(ctx, 1); break;
                             }
                             while (i < (int)passSize && (passBuf[i] == '\n' || passBuf[i] == '\r')) i++;
                         }
-                        if (!foundAccount) { NekkoOS.Kernel.Heap.Free(passBuf); ctx->Rax = 0; }
-                    } else { ctx->Rax = 0; }
+                        if (!foundAccount) { NekkoOS.Kernel.Heap.Free(passBuf); ArchCtx.SetRet(ctx, 0); }
+                    } else { ArchCtx.SetRet(ctx, 0); }
                 }
                 break;
             }
 
             // [SYSCALL 96]: XEM GIỜ (Get RTC Seconds)
-            case 96: { ctx->Rax = RTC.GetSeconds(); break; }
+            case 96: { ArchCtx.SetRet(ctx, RTC.GetSeconds()); break; }
 
             // [SYSCALL 97]: NGỦ ĐÔNG CÓ HẸN GIỜ (Sleep ms)
             case 97: 
             {
-                ulong sleepMs = ctx->Rcx; ulong ticksToSleep = (sleepMs / 10) + 1; 
+                ulong sleepMs = ArchCtx.GetArg(ctx, 1); ulong ticksToSleep = (sleepMs / 10) + 1; 
                 bool irq = Scheduler.AcquireSchedLockSafe();
                 Scheduler.Threads[id].WakeUpTick = currentTicks + ticksToSleep;
                 Scheduler.Threads[id].Active = 2; 
                 Scheduler.ReleaseSchedLockSafe(irq);
                 // Context switch ngay — không spin CPU đợi timer.
-                ctx->Rax = 1;
+                ArchCtx.SetRet(ctx, 1);
                 return Scheduler.SwitchTask(currentRsp);
             }
 
@@ -1194,7 +1194,7 @@ public static unsafe class Syscall
                 Scheduler.Threads[id].VRuntime += 1000; // Đẩy VRuntime để không bị chọn lại ngay
                 Scheduler.ReleaseSchedLockSafe(irq);
                 // Context switch ngay — thread tiếp tục khi được lên lịch lại.
-                ctx->Rax = 1;
+                ArchCtx.SetRet(ctx, 1);
                 return Scheduler.SwitchTask(currentRsp);
             }
 
@@ -1209,7 +1209,7 @@ public static unsafe class Syscall
                         GlobalSharedRAM_Phys = allocPhys; 
                     } else {
                         Scheduler.ReleaseSchedLockSafe(irq); 
-                        ctx->Rax = 0; 
+                        ArchCtx.SetRet(ctx, 0); 
                         break; 
                     }
                 }
@@ -1218,7 +1218,7 @@ public static unsafe class Syscall
                     ulong allocPage = (ulong)PMM.AllocatePage();
                     if (allocPage == 0) { 
                         Scheduler.ReleaseSchedLockSafe(irq); 
-                        ctx->Rax = 0; 
+                        ArchCtx.SetRet(ctx, 0); 
                         break; 
                     }
 
@@ -1229,10 +1229,10 @@ public static unsafe class Syscall
                     
                     // [PAGING] Use the thread's own PML4 pointer. Validate PML4 and GlobalSharedRAM_Phys
                     ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                    if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
-                    if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                    if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                    if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
-                    if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                    if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     VMM.MapPage(allocPage, Scheduler.Threads[id].SharedMemVirt, 0x07, currentPml4); 
                     for (ulong p = 1; p < 5; p++) {
                         ulong cand = GlobalSharedRAM_Phys + (p * 4096);
@@ -1246,7 +1246,7 @@ public static unsafe class Syscall
                 ulong resultVirt = Scheduler.Threads[id].SharedMemVirt;
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
-                ctx->Rax = resultVirt; 
+                ArchCtx.SetRet(ctx, resultVirt); 
                 break;
             }
             
@@ -1273,7 +1273,7 @@ public static unsafe class Syscall
                 {
                     // Thỏ vào chuồng! Quay lại bốc thư cày tiếp kịch tốc độ
                     Scheduler.ReleaseSchedLockSafe(irq);
-                    ctx->Rax = 1; 
+                    ArchCtx.SetRet(ctx, 1); 
                     break;
                 }
 
@@ -1286,18 +1286,18 @@ public static unsafe class Syscall
                 Scheduler.ReleaseSchedLockSafe(irq);
 
                 // Context switch ngay — không spin CPU vô tận chờ IPC.
-                ctx->Rax = 1;
+                ArchCtx.SetRet(ctx, 1);
                 return Scheduler.SwitchTask(currentRsp);
             }
 
             // [SYSCALL 101] CẦU ÁNH SÁNG (SECURE SHARED MEMORY PIPELINE)
             case 101:
             {
-                uint targetPid = (uint)ctx->Rcx;
-                ulong numPages = ctx->Rdx;
+                uint targetPid = (uint)ArchCtx.GetArg(ctx, 1);
+                ulong numPages = ArchCtx.GetArg(ctx, 2);
 
-                if (targetPid >= Scheduler.ThreadCount || Scheduler.Threads[targetPid].Active == 0) { ctx->Rax = 0; break; }
-                if (numPages == 0 || numPages > 4096) { ctx->Rax = 0; break; } 
+                if (targetPid >= Scheduler.ThreadCount || Scheduler.Threads[targetPid].Active == 0) { ArchCtx.SetRet(ctx, 0); break; }
+                if (numPages == 0 || numPages > 4096) { ArchCtx.SetRet(ctx, 0); break; } 
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
@@ -1306,15 +1306,15 @@ public static unsafe class Syscall
                 ulong targetPml4 = Scheduler.Threads[targetPid].Pml4;
                 // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
                 ulong* myPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
-                if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
 
                 ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
-                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
 
                 // Require current CR3 to match caller's PML4 before mapping into caller space.
                 ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ctx->Rax = 0; break; }
+                if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
                     VMM.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4); 
                     // Only map into target PML4 if it matches current CR3 (otherwise skip to avoid unsafe deref)
@@ -1339,11 +1339,11 @@ public static unsafe class Syscall
                     VMM.LoadPML4_ASM((void*)myPml4);
                 } else {
                     // Unsafe to load other PML4 — fail the syscall rather than risk instability.
-                    ctx->Rax = 0; ctx->Rbx = 0; return currentRsp;
+                    ArchCtx.SetRet(ctx, 0); ArchCtx.SetRet2(ctx, 0); return currentRsp;
                 }
 
-                ctx->Rax = myVAddr; 
-                ctx->Rbx = targetVAddr; 
+                ArchCtx.SetRet(ctx, myVAddr); 
+                ArchCtx.SetRet2(ctx, targetVAddr); 
                 break;
             }
 
@@ -1359,7 +1359,7 @@ public static unsafe class Syscall
             case 60:
             {
                 Driver.ATA.AtaHardwareLock.Acquire();
-                ctx->Rax = 1;
+                ArchCtx.SetRet(ctx, 1);
                 break;
             }
 
@@ -1367,7 +1367,7 @@ public static unsafe class Syscall
             case 61:
             {
                 Driver.ATA.AtaHardwareLock.Release();
-                ctx->Rax = 1;
+                ArchCtx.SetRet(ctx, 1);
                 break;
             }
 
@@ -1379,7 +1379,7 @@ public static unsafe class Syscall
                 Terminal.CursorY = 0;
                 Terminal.ScreenLock.ReleaseSafe(irq);
                 
-                ctx->Rax = 1; 
+                ArchCtx.SetRet(ctx, 1); 
                 break;
             }
 
