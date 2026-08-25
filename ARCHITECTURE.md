@@ -53,15 +53,24 @@ Pascal khai báo trong `src/arch_interface.pas`).
 3) link vào Kernel qua `--ldflags` trong build.sh
 4) C# giữ lại shim mỏng để Ring3/kernel gọi cùng symbol
 
-## 4. Nợ kiến trúc đã biết (việc tiếp theo)
+## 4. Nợ kiến trúc (trạng thái cập nhật)
 
-- `Syscall.cs`/`Thread.cs`: đọc `ctx->Rax…Rip` trực tiếp → cần
-  `Arch_GetCtxReg(ctx, idx)` hoặc sinh struct từ per-arch header
-- `VMM.cs`: walk PML4 hardcode → HAL đã có `mmu_impl.pas`, cần đưa
-  toàn bộ map/unmap/protect qua interface đó
-- `Boot.cs`: nhúng pubkey + KASLR theo PE x64 → tách "boot contract"
-- `Keyboard/Mouse/PCI/Serial`: gắn ISA legacy vào kernel list thay vì
-  optional driver registry
+- ~~`Syscall.cs`/`Thread.cs`: đọc `ctx->Rax…Rip` trực tiếp~~ → **layout đã
+  tách** sang `arch/x86_64/ContextLayout.cs`. Còn lại: ~125 lượt truy cập
+  `ctx->` cần thay bằng accessor per-arch (`Arch_GetCtxReg/SetCtxReg`)
+  trước khi port ARM64
+- `VMM.cs`: CR3/TLB đã đi qua HAL (`HAL_GetCurrentPageTable`,
+  `HAL_FlushTLBAddress`). VMM.cs hiện ĐÚNG vị trí trong arch/x86_64/
+  với tư cách implementation mmu của x86_64; việc migrate toàn bộ walk
+  PML4 sang Pascal (mmu_impl.pas) là tối ưu hóa, không còn là nợ chặn port
+- ~~PS/2/Serial/PIT wiring rải trong Kernel.cs~~ → **tập trung** vào
+  `arch/x86_64/PlatformBootstrap.cs`; kernel generic chỉ gọi 3 method.
+  Bước kế tiếp: driver registry runtime (bật/tắt qua boot flag) thay vì
+  compile-time wiring
+- ~~Boot contract nhân bản ở Boot.cs + Kernel.cs~~ → **tách** thành
+  `src/BootContract.cs` (NekkoBootInfo duy nhất, cả 2 phía tham chiếu).
+  Việc còn lại: thêm version field + checksum cho contract khi thêm
+  field mới
 
 ## 5. Checklist port sang kiến trúc mới (vd ARM64)
 

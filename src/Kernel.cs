@@ -8,19 +8,8 @@ using System.Runtime.InteropServices;
 
 namespace NekkoOS.Kernel;
 
-[StructLayout(LayoutKind.Sequential)]
-public unsafe struct NekkoBootInfo
-{
-    public ulong FrameBufferBase;
-    public ulong FrameBufferSize;
-    public uint HorizontalResolution;
-    public uint VerticalResolution;
-    public uint PixelsPerScanLine;
-    public void* MemoryMap;
-    public ulong MemoryMapSize;
-    public ulong DescriptorSize;
-    public ulong AcpiRsdp;
-}
+// [BOOT CONTRACT] NekkoBootInfo đã tách sang src/BootContract.cs (ABI dùng
+// chung với bootloader src/Boot.cs) - không định nghĩa lại ở đây.
 
 [StructLayout(LayoutKind.Sequential)]
 public struct EFI_MEMORY_DESCRIPTOR
@@ -163,7 +152,7 @@ public static unsafe class Program
             fixed (char* dbg2 = "[DBG] KM: after SharedMemLock init\n\0") Serial.WriteString(dbg2);
         }
 
-        Serial.Init();
+        PlatformBootstrap.EarlySerial();
         
         if (NekkoInt.isDebug) {
             fixed (char* dbg3 = "[DBG] KM: after Serial.Init\n\0") Serial.WriteString(dbg3);
@@ -245,8 +234,7 @@ public static unsafe class Program
         [DllImport("*", EntryPoint = "Arch_GetIsrGPF")] static extern void* GetIsrGPF();
         [DllImport("*", EntryPoint = "Arch_GetIsrPageFault")] static extern void* GetIsrPageFault();
         [DllImport("*", EntryPoint = "Arch_GetIsrTimer")] static extern void* GetIsrTimer();
-        [DllImport("*", EntryPoint = "Arch_GetIsrKeyboard")] static extern void* GetIsrKeyboard();
-        [DllImport("*", EntryPoint = "Arch_GetIsrMouse")] static extern void* GetIsrMouse();
+        // GetIsrKeyboard/GetIsrMouse đã chuyển vào PlatformBootstrap (arch/x86_64)
         [DllImport("*", EntryPoint = "Arch_GetIsrSyscall")] static extern void* GetIsrSyscall();
         [DllImport("*", EntryPoint = "Arch_GetIsrYield")] static extern void* GetIsrYield();
 
@@ -272,8 +260,7 @@ public static unsafe class Program
         IDTManager.SetGate(13, GetIsrGPF());
         IDTManager.SetGate(14, GetIsrPageFault());
         IDTManager.SetGate(32, GetIsrTimer());
-        IDTManager.SetGate(33, GetIsrKeyboard());
-        IDTManager.SetGate(44, GetIsrMouse());
+        PlatformBootstrap.HookPs2IsrGates();
         IDTManager.SetGate(129, dummyIsr);
 
         PIC.Remap();
@@ -334,7 +321,7 @@ public static unsafe class Program
         // =====================================================================
         // PHASE 4: KHỞI ĐỘNG ĐỘNG CƠ CỐT LÕI (SCHEDULER, IPC)
         // =====================================================================
-        PIT.Init(250);
+        PlatformBootstrap.InitLegacyTimer(250);
         
         IPC.Init(); 
         PRNG.Init();

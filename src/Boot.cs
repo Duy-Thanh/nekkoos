@@ -66,8 +66,7 @@ namespace NekkoOS
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct EFI_RNG_PROTOCOL { public delegate* unmanaged<EFI_RNG_PROTOCOL*, ulong*, EFI_GUID*, ulong> GetInfo; public delegate* unmanaged<EFI_RNG_PROTOCOL*, EFI_GUID*, ulong, byte*, ulong> GetRNG; }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe struct NekkoBootInfo { public ulong FrameBufferBase; public ulong FrameBufferSize; public uint HorizontalResolution; public uint VerticalResolution; public uint PixelsPerScanLine; public void* MemoryMap; public ulong MemoryMapSize; public ulong DescriptorSize; public ulong AcpiRsdp; }
+    // [BOOT CONTRACT] NekkoBootInfo chuyen sang src/BootContract.cs (ABI chung).
 
     // ==========================================================
     // KHỐI STRUCT GIẢI MÃ ACPI VÀ BGRT LOGO
