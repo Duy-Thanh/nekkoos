@@ -9,12 +9,20 @@ mkdir -p build
 # ==========================================================================
 # [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
 # ==========================================================================
+# Đường dẫn nguồn theo module (arch_interface sống ở src/arch/, còn lại ở src/kernel/pas/)
+mod_src() {
+    case "$1" in
+        arch_interface) echo "src/arch/$1.pas" ;;
+        *)              echo "src/kernel/pas/$1.pas" ;;
+    esac
+}
+
 PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc)
 ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
-    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "src/${mod}.pas"
+    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "$(mod_src "${mod}")"
 done
 
 # Compile x86_64 architecture-specific modules
@@ -90,7 +98,7 @@ if [ "$all_ok" -eq 1 ]; then
     echo "[Pascal] Generating assembly listing (.s) files in build/asm/ for inspection..."
     mkdir -p build/asm
     for mod in "${PASCAL_MODULES[@]}"; do
-        fpc -Twin64 -O1 -CX -Ur -g- -Si -al -s -FEbuild/asm/ @.fpc/fpc.cfg -FUbuild/ "src/${mod}.pas" >/dev/null 2>&1 || true
+        fpc -Twin64 -O1 -CX -Ur -g- -Si -al -s -FEbuild/asm/ @.fpc/fpc.cfg -FUbuild/ "$(mod_src "${mod}")" >/dev/null 2>&1 || true
     done
     for mod in "${ARCH_X86_64_MODULES[@]}"; do
         fpc -Twin64 -O1 -CX -Ur -g- -Si -al -s -FEbuild/asm/ @.fpc/fpc.cfg -FUbuild/ "src/arch/x86_64/${mod}.pas" >/dev/null 2>&1 || true

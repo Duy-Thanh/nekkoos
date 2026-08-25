@@ -1,5 +1,23 @@
 # NekkoOS Architecture & Porting Guide
 
+## 0. Bố cục mã nguồn
+
+```
+src/
+  boot/          Bootloader EFI (Boot.cs), hợp đồng bàn giao (BootContract.cs),
+                 boot_io.asm
+  kernel/        Lõi kernel arch-neutral (C#): Syscall, Thread, IPC,
+                 FAT16/ATA protocol, PELoader, vDSO... + shim C# gọi _Pas
+    pas/         9 unit Pascal dùng chung (heap ipc kerncrypto libc pmm prng
+                 rtc strandscheduler terminal) - build bởi compile_pascal.sh
+  apps/          Userland Ring 3: Shell, Login, daemons (acpi ata fat16 mouse
+                 dsrv), top, explorer, stresstest + API.cs vDSO surface
+  arch/          AAL contract (arch_interface.pas) + HAL interfaces (hal/)
+                 + per-arch implementation (x86_64/: Hardware.asm, GDT IDT ISR
+                 InterruptHandlers PIC PIT APIC IOAPIC SMP VMM smp trampoline,
+                 PlatformBootstrap, ContextLayout)
+```
+
 ## 1. Nguyên tắc phân lớp
 
 ```

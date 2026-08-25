@@ -15,8 +15,8 @@ echo "[1.2/4] Dang build Pascal modules..."
 echo "[1.5/4] Dang build Kernel (Vi vua) & Apps Ring 3 truoc..."
 
 nasm -f win64 src/arch/x86_64/Hardware.asm -o Hardware.obj
-nasm -f win64 src/boot_io.asm -o boot_io.obj
-nasm -f win64 src/stresstest_asm.asm -o stresstest_asm.obj
+nasm -f win64 src/boot/boot_io.asm -o boot_io.obj
+nasm -f win64 src/apps/stresstest_asm.asm -o stresstest_asm.obj
 # nasm -f bin src/app.asm -o app.bin
 nasm -f bin src/arch/x86_64/smp_x86.asm -o smp.bin
 # nasm -f win64 src/app_syscall.asm -o app_syscall.obj
@@ -24,20 +24,20 @@ nasm -f bin src/arch/x86_64/smp_x86.asm -o smp.bin
 BF="bflat"
 
 # Build Kernel + apps (no-pie, deterministic, map files)
-$BF build src/Kernel.cs src/Syscall.cs src/arch/x86_64/IDT.cs src/arch/x86_64/ISR.cs src/RTC.cs src/PCI.cs src/Heap.cs src/Thread.cs src/IPC.cs src/KeyboardDriver.cs src/LibC.cs src/arch/x86_64/VMM.cs src/arch/x86_64/ContextLayout.cs src/BootContract.cs src/arch/x86_64/PlatformBootstrap.cs src/Terminal.cs src/PMM.cs src/IO.cs src/arch/x86_64/PIC.cs src/arch/x86_64/PIT.cs src/arch/x86_64/InterruptHandlers.cs src/ATA.cs src/FAT16.cs src/GlobalUsings.cs src/System.Runtime.InteropServices.cs src/System.Runtime.CompilerServices.cs src/PELoader.cs src/StrandScheduler.cs src/arch/x86_64/GDT.cs src/PRNG.cs src/Power.cs src/arch/x86_64/APIC.cs src/arch/x86_64/SMP.cs src/Spinlock.cs src/arch/x86_64/IOAPIC.cs src/vDSO.cs src/Serial.cs src/MouseDriver.cs src/NekkoInt.cs src/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o"
+$BF build src/kernel/Kernel.cs src/kernel/Syscall.cs src/arch/x86_64/IDT.cs src/arch/x86_64/ISR.cs src/kernel/RTC.cs src/kernel/PCI.cs src/kernel/Heap.cs src/kernel/Thread.cs src/kernel/IPC.cs src/kernel/KeyboardDriver.cs src/kernel/LibC.cs src/arch/x86_64/VMM.cs src/arch/x86_64/ContextLayout.cs src/boot/BootContract.cs src/arch/x86_64/PlatformBootstrap.cs src/kernel/Terminal.cs src/kernel/PMM.cs src/kernel/IO.cs src/arch/x86_64/PIC.cs src/arch/x86_64/PIT.cs src/arch/x86_64/InterruptHandlers.cs src/kernel/ATA.cs src/kernel/FAT16.cs src/kernel/GlobalUsings.cs src/kernel/System.Runtime.InteropServices.cs src/kernel/System.Runtime.CompilerServices.cs src/kernel/PELoader.cs src/kernel/StrandScheduler.cs src/arch/x86_64/GDT.cs src/kernel/PRNG.cs src/kernel/Power.cs src/arch/x86_64/APIC.cs src/arch/x86_64/SMP.cs src/kernel/Spinlock.cs src/arch/x86_64/IOAPIC.cs src/kernel/vDSO.cs src/kernel/Serial.cs src/kernel/MouseDriver.cs src/kernel/NekkoInt.cs src/kernel/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o"
 
-$BF build src/ATA_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
-$BF build src/FAT16_Driver.cs src/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o"
-$BF build src/acpi.cs src/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain"
-$BF build src/Shell.cs src/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain"
-$BF build src/Login.cs src/Crypto.cs src/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain build/kerncrypto.o"
-$BF build src/top.cs src/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain"
-$BF build src/stresstest.cs src/API.cs src/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj"
+$BF build src/apps/ATA_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
+$BF build src/apps/FAT16_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o"
+$BF build src/apps/acpi.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain"
+$BF build src/apps/Shell.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain"
+$BF build src/apps/Login.cs src/apps/Crypto.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain build/kerncrypto.o"
+$BF build src/apps/top.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain"
+$BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj"
 
 # Additional userland apps from build.bat
-$BF build src/dsrv.cs src/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain"
-$BF build src/Mouse.cs src/API.cs -Ot --no-pie --deterministic --map maps/Mouse.map --os windows --arch x64 --stdlib zero -o Mouse.exe --ldflags "-export:AppMain"
-$BF build src/explorer.cs src/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain"
+$BF build src/apps/dsrv.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain"
+$BF build src/apps/Mouse.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Mouse.map --os windows --arch x64 --stdlib zero -o Mouse.exe --ldflags "-export:AppMain"
+$BF build src/apps/explorer.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain"
 
 echo "[*] Waiting for FS to flush..."
 sync
@@ -81,7 +81,7 @@ openssl rsa -in private.pem -modulus -noout | cut -d'=' -f2 | xxd -r -p > pubkey
 # Sign Kernel
 openssl dgst -sha256 -sign private.pem -out Kernel.exe.mui Kernel.exe
 
-# Inject 256-byte public key into src/Boot.cs (must contain marker /* INJECT_PUBKEY */)
+# Inject 256-byte public key into src/boot/Boot.cs (must contain marker /* INJECT_PUBKEY */)
 python3 - <<'PY'
 import sys, re
 try:
@@ -94,20 +94,20 @@ if len(b) < 256:
 b = b[-256:]
 fmt = ', '.join('0x{:02X}'.format(x) for x in b)
 new = f"byte* publicKeyN = stackalloc byte[256] {{ {fmt} }}; /* INJECT_PUBKEY */"
-s = open('src/Boot.cs','r',encoding='utf-8').read()
+s = open('src/boot/Boot.cs','r',encoding='utf-8').read()
 
 # Use a more flexible regex to match existing declaration + marker (handles whitespace / large initializer)
 pattern = r'byte\*\s*publicKeyN\s*=\s*stackalloc\s*byte\s*\[\s*256\s*\][\s\S]*?/\*\s*INJECT_PUBKEY\s*\*/'
 s2, n = re.subn(pattern, new, s, flags=re.S)
 if n == 0:
-    print("Failed to inject public key: pattern not found in src/Boot.cs", file=sys.stderr); sys.exit(1)
-open('src/Boot.cs','w',encoding='utf-8').write(s2)
+    print("Failed to inject public key: pattern not found in src/boot/Boot.cs", file=sys.stderr); sys.exit(1)
+open('src/boot/Boot.cs','w',encoding='utf-8').write(s2)
 print("[+] Public Key injected successfully into Bootloader Source!")
 PY
 
 # Build Bootloader (stub)
 echo "[2/4] Dang build Loader (Stub)..."
-$BF build src/Boot.cs src/BootContract.cs -Os --map maps/bootx64.map --os uefi --stdlib zero -o "efi/boot/bootx64.efi" --ldflags "-entry:NekkoBoot boot_io.obj"
+$BF build src/boot/Boot.cs src/boot/BootContract.cs -Os --map maps/bootx64.map --os uefi --stdlib zero -o "efi/boot/bootx64.efi" --ldflags "-entry:NekkoBoot boot_io.obj"
 
 # Create disk image and populate (as in build.bat)
 echo "[3/4] Dang che tao o cung Vat Ly Ao (hdd.img) ..."
