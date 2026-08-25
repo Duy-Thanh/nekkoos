@@ -15,6 +15,7 @@ public static unsafe class PCI
 {
     [DllImport("*", EntryPoint = "Arch_WritePort32")] public static extern void Out32(ushort port, uint value);
     [DllImport("*", EntryPoint = "Arch_ReadPort32")] public static extern uint In32(ushort port);
+    [DllImport("*", EntryPoint = "Arch_FullFence")] private static extern void FullFence();
 
     // ==========================================================
     // [VŨ KHÍ MỚI] Ổ KHÓA GIAO TIẾP PCI (PCI BUS MUTEX)
@@ -152,5 +153,48 @@ public static unsafe class PCI
         fixed (char* mf = "[+] Total PCI devices found: \0") Terminal.Print(mf);
         Terminal.PrintHex((ulong)count);
         fixed (char* nlf = "\n\0") Terminal.Print(nlf);
+    }
+
+    // [ARCH x86_64 PLATFORM] Quét toàn bộ PCI và tắt bit Bus-Master (bit 2 của
+    // Command register) trên mọi thiết bị không phải bridge/display - chặn DMA
+    // ngầm trong lúc boot ("Nuclear DMA Purge"). Trước đây nằm lõm trong
+    // Kernel.cs với cổng 0xCF8/0xCFC hardcode; giờ về đúng nhà: PCI driver.
+    public static void DisableAllBusMastering()
+    {
+        for (ushort bus = 0; bus < 256; bus++) {
+            for (ushort slot = 0; slot < 32; slot++) {
+                uint addrF0 = (uint)((bus << 16) | (slot << 11) | (0 << 8) | 0x80000000);
+                Out32(0xCF8, addrF0);
+                FullFence();
+
+                if ((In32(0xCFC) & 0xFFFF) == 0xFFFF) continue;
+
+                for (ushort func = 0; func < 8; func++) {
+                    uint address = (uint)((bus << 16) | (slot << 11) | (func << 8) | 0x80000000);
+                    Out32(0xCF8, address);
+                    FullFence();
+
+                    if ((In32(0xCFC) & 0xFFFF) != 0xFFFF) {
+                        Out32(0xCF8, address | 0x08);
+                        FullFence();
+                        uint classInfo = In32(0xCFC);
+                        uint baseClass = (classInfo >> 24) & 0xFF;
+
+                        if (baseClass != 0x06 && baseClass != 0x03) {
+                            Out32(0xCF8, address | 0x04);
+                            FullFence();
+                            uint cmd = In32(0xCFC);
+
+                            if ((cmd & 0x00000004u) != 0) {
+                                cmd &= ~0x00000004u;
+                                Out32(0xCF8, address | 0x04);
+                                FullFence();
+                                Out32(0xCFC, cmd);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

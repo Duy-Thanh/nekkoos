@@ -264,56 +264,11 @@ public static unsafe class Program
         IDTManager.SetGate(129, dummyIsr);
 
         PIC.Remap();
+        PCI.DisableAllBusMastering();
 
-        Terminal.SetColor(0x00FF00FF);
-        fixed (char* dmaMsg = "[*] Nuclear DMA Purge: Snipping ALL Rogue PCI Streams...\n\0") Terminal.Print(dmaMsg);
+        PlatformBootstrap.DrainPs2Buffers();
+        PIC.MaskAllIrqs();
 
-        // ==========================================================
-        // [BỌC THÉP PCI I/O] CẤM CPU ĐẢO LỆNH GIỮA CỔNG ADDRESS VÀ DATA!
-        // ==========================================================
-        for (ushort bus = 0; bus < 256; bus++) {
-            for (ushort slot = 0; slot < 32; slot++) {
-                uint addrF0 = (uint)((bus << 16) | (slot << 11) | (0 << 8) | 0x80000000);
-                Out32(0xCF8, addrF0);
-                FullFence(); 
-                
-                if ((In32(0xCFC) & 0xFFFF) == 0xFFFF) continue; 
-
-                for (ushort func = 0; func < 8; func++) {
-                    uint address = (uint)((bus << 16) | (slot << 11) | (func << 8) | 0x80000000);
-                    Out32(0xCF8, address);
-                    FullFence(); 
-                    
-                    if ((In32(0xCFC) & 0xFFFF) != 0xFFFF) {
-                        Out32(0xCF8, address | 0x08); 
-                        FullFence(); 
-                        uint classInfo = In32(0xCFC);
-                        uint baseClass = (classInfo >> 24) & 0xFF;
-                        
-                        if (baseClass != 0x06 && baseClass != 0x03) {
-                            Out32(0xCF8, address | 0x04); 
-                            FullFence(); 
-                            uint cmd = In32(0xCFC);
-                            
-                            if ((cmd & 0x00000004u) != 0) { 
-                                cmd &= ~0x00000004u; 
-                                Out32(0xCF8, address | 0x04);
-                                FullFence(); 
-                                Out32(0xCFC, cmd); 
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        while ((IO.In8(0x64) & 1) != 0) { 
-            CompilerFence(); 
-            IO.In8(0x60); 
-        }
-
-        IO.Out8(0x21, 0xFE); 
-        IO.Out8(0xA1, 0xFF); 
 
         Terminal.SetColor(0x0000FF00);
         fixed (char* okMsg = "[+] IDT Shield & Nuclear DMA Purge Active! Boot Sequence Proceeding...\n\0") Terminal.Print(okMsg);
@@ -336,7 +291,7 @@ public static unsafe class Program
 
         IO.EnableInterrupts(); 
 
-        LibC.CheckHardwareError();
+        HardwareChecks.CheckHardwareError();
 
         // Print runtime Kernel text address and an inferred Map Base for crash mapping (KASLR)
         if (NekkoInt.isDebug)

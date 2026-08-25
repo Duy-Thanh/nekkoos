@@ -73,22 +73,26 @@ Pascal khai báo trong `src/arch_interface.pas`).
 
 ## 4. Nợ kiến trúc (trạng thái cập nhật)
 
-- ~~`Syscall.cs`/`Thread.cs`: đọc `ctx->Rax…Rip` trực tiếp~~ → **layout đã
-  tách** sang `arch/x86_64/ContextLayout.cs`. Còn lại: ~125 lượt truy cập
-  `ctx->` cần thay bằng accessor per-arch (`Arch_GetCtxReg/SetCtxReg`)
-  trước khi port ARM64
-- `VMM.cs`: CR3/TLB đã đi qua HAL (`HAL_GetCurrentPageTable`,
-  `HAL_FlushTLBAddress`). VMM.cs hiện ĐÚNG vị trí trong arch/x86_64/
-  với tư cách implementation mmu của x86_64; việc migrate toàn bộ walk
-  PML4 sang Pascal (mmu_impl.pas) là tối ưu hóa, không còn là nợ chặn port
-- ~~PS/2/Serial/PIT wiring rải trong Kernel.cs~~ → **tập trung** vào
-  `arch/x86_64/PlatformBootstrap.cs`; kernel generic chỉ gọi 3 method.
-  Bước kế tiếp: driver registry runtime (bật/tắt qua boot flag) thay vì
-  compile-time wiring
-- ~~Boot contract nhân bản ở Boot.cs + Kernel.cs~~ → **tách** thành
-  `src/BootContract.cs` (NekkoBootInfo duy nhất, cả 2 phía tham chiếu).
-  Việc còn lại: thêm version field + checksum cho contract khi thêm
-  field mới
+- ~~`Syscall.cs`/`Thread.cs`: đọc `ctx->Rax…Rip` trực tiếp~~ → **XONG**:
+  `ArchCtx` (GetNumber/GetArg/SetRet/SetRet2) trong
+  `arch/x86_64/ContextLayout.cs`; kernel generic không còn đụng tên thanh ghi
+- ~~`VMM.cs`~~ → **đúng vị trí**: CR3/TLB qua HAL; PML4 walk là impl x86_64 chính đáng
+- ~~PS/2/Serial/PIT wiring~~ → `PlatformBootstrap.cs`; DMA purge →
+  `PCI.DisableAllBusMastering()`; mask 8259 → `PIC.MaskAllIrqs()`;
+  xả buffer 8042 → `PlatformBootstrap.DrainPs2Buffers()`;
+  anti-tamper/CheckHardwareError → `arch/x86_64/HardwareChecks.cs`;
+  vDSO stub `int 0x80` → `arch/x86_64/vDSO.cs`
+- ~~Boot contract nhân bản~~ → `src/BootContract.cs`
+
+### Coupling platform còn lại (chấp nhận có chủ ý, KHÔNG phải CPU-arch)
+- `apps/Mouse.cs`: daemon Ring3 điều khiển thẳng 8042 qua cổng được
+  vDSO cấp quyền — mô hình microkernel chủ đích; ARM64 sẽ thay bằng
+  USB-HID daemon tương ứng
+- `boot/Boot.cs`: in debug ra COM1 — thuộc boot contract, arch mới tự
+  chọn UART của nó
+- `kernel/LibC.cs` → `HardwareChecks.GetFwCfgSelector`: fw_cfg là
+  interface thiết bị ảo QEMU (không phụ thuộc CPU); giữ lại làm chuẩn
+  phát hiện máy ảo
 
 ## 5. Checklist port sang kiến trúc mới (vd ARM64)
 

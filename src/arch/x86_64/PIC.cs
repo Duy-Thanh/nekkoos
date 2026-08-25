@@ -33,4 +33,12 @@ public static unsafe class PIC
         Terminal.SetColor(0x00FF00FF);
         fixed (char* m = "[-] Legacy 8259 PIC has been completely silenced & disabled.\n\0") Terminal.Print(m);
     }
+
+    // [ISA LEGACY] Cắm cờ mask TẤT CẢ IRQ của 2 chip 8259 (0xFE/0xFF) - dùng lúc
+    // boot sau khi IOAPIC đã tiếp quản, để PIC không còn phát ngắt nào nữa.
+    public static void MaskAllIrqs()
+    {
+        IO.Out8(0x21, 0xFE); // master: chỉ giữ đường cascade 2
+        IO.Out8(0xA1, 0xFF); // slave: mute toàn bộ
+    }
 }

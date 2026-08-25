@@ -35,4 +35,13 @@ public static unsafe class PlatformBootstrap
 
     /// Legacy PIT (i8253/8254) làm nguồn tick scheduler trước khi APIC timer tiếp quản.
     public static void InitLegacyTimer(uint targetFrequencyHz) => PIT.Init(targetFrequencyHz);
+
+    /// Xả sạch output buffer 8042 (bỏ qua phím gõ rác trong lúc boot).
+    public static void DrainPs2Buffers()
+    {
+        while ((IO.In8(0x64) & 1) != 0) {
+            LibC.CompilerFence();
+            IO.In8(0x60);
+        }
+    }
 }
