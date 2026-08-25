@@ -17,13 +17,13 @@ echo [1.5/4] Dang build Kernel (Vi vua) ^& Apps Ring 3 truoc...
 nasm -f win64 src\Hardware.asm -o Hardware.obj
 nasm -f win64 src\boot_io.asm -o boot_io.obj
 nasm -f bin src\app.asm -o app.bin
-nasm -f bin src\smp_x86.asm -o smp.bin
+nasm -f bin src\arch\x86_64\smp_x86.asm -o smp.bin
 nasm -f win64 src\app_syscall.asm -o app_syscall.obj
 
 :: ==========================================================
 :: [BỌC THÉP 2] KHÔNG PIE, CHẠY DETERMINISTIC VÀ XUẤT MAP FILE!
 :: ==========================================================
-"D:\bflat\bflat" build src\Kernel.cs src\Syscall.cs src\IDT.cs src\ISR.cs src\RTC.cs src\PCI.cs src\Heap.cs src\Thread.cs src\IPC.cs src\KeyboardDriver.cs src\LibC.cs src\VMM.cs src\Terminal.cs src\PMM.cs src\IO.cs src\PIC.cs src\PIT.cs src\InterruptHandlers.cs src\ATA.cs src\FAT16.cs src\GlobalUsings.cs src\System.Runtime.InteropServices.cs src\System.Runtime.CompilerServices.cs src\PELoader.cs src\StrandScheduler.cs src\GDT.cs src\PRNG.cs src\Power.cs src\APIC.cs src\SMP.cs src\Spinlock.cs src\IOAPIC.cs src\vDSO.cs src\Serial.cs src\MouseDriver.cs --no-pie --deterministic --map maps\Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj"
+"D:\bflat\bflat" build src\Kernel.cs src\Syscall.cs src\arch\x86_64\IDT.cs src\arch\x86_64\ISR.cs src\RTC.cs src\PCI.cs src\Heap.cs src\Thread.cs src\IPC.cs src\KeyboardDriver.cs src\LibC.cs src\arch\x86_64\VMM.cs src\Terminal.cs src\PMM.cs src\IO.cs src\arch\x86_64\PIC.cs src\arch\x86_64\PIT.cs src\arch\x86_64\InterruptHandlers.cs src\ATA.cs src\FAT16.cs src\GlobalUsings.cs src\System.Runtime.InteropServices.cs src\System.Runtime.CompilerServices.cs src\PELoader.cs src\StrandScheduler.cs src\arch\x86_64\GDT.cs src\PRNG.cs src\Power.cs src\arch\x86_64\APIC.cs src\arch\x86_64\SMP.cs src\Spinlock.cs src\arch\x86_64\IOAPIC.cs src\vDSO.cs src\Serial.cs src\MouseDriver.cs --no-pie --deterministic --map maps\Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj"
 
 "D:\bflat\bflat" build src\ATA_Driver.cs src\API.cs --no-pie --deterministic --map maps\ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
 "D:\bflat\bflat" build src\FAT16_Driver.cs src\API.cs --no-pie --deterministic --map maps\FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain"
