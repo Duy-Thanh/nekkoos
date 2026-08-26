@@ -52,14 +52,16 @@ public unsafe class Shell
         }
     }
 
-    public static bool StrCmp(char* a, char* b) {
-        int i = 0; while(a[i] != '\0' && b[i] != '\0') { if (a[i] != b[i]) return false; i++; }
-        return a[i] == b[i];
-    }
-    public static bool StrStartsWith(char* a, char* b) {
-        int i = 0; while (b[i] != '\0') { if (a[i] != b[i]) return false; i++; }
-        return true;
-    }
+    // [PASCAL PORT] Delegation sang libc.pas StrCmp_Pas / StrStartsWith_Pas -
+    // dung chung implementation voi Kernel.exe, case-insensitive nhu FAT16.
+    [DllImport("*", EntryPoint = "StrCmp_Pas")]
+    private static extern byte StrCmp_Pas(char* a, char* b);
+
+    [DllImport("*", EntryPoint = "StrStartsWith_Pas")]
+    private static extern byte StrStartsWith_Pas(char* a, char* b);
+
+    public static bool StrCmp(char* a, char* b) => StrCmp_Pas(a, b) != 0;
+    public static bool StrStartsWith(char* a, char* b) => StrStartsWith_Pas(a, b) != 0;
 
     // [PASCAL PORT] Delegation sang libc.pas MemSet_Pas (dung chung moi arch).
     // [FIX ABI] MemSet_Pas co 3 tham so (dest, val, count) - ban truoc khai 2

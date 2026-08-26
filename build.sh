@@ -47,7 +47,7 @@ $BF build src/apps/ATA_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --
 $BF build src/apps/FAT16_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o"
 $BF build src/apps/acpi.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain"
 $BF build src/apps/Shell.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain build/libc.o"
-$BF build src/apps/Login.cs src/apps/Crypto.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain build/kerncrypto.o"
+$BF build src/apps/Login.cs src/apps/Crypto.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain build/kerncrypto.o build/libc.o"
 $BF build src/apps/top.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain"
 $BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj"
 

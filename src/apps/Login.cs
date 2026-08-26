@@ -24,7 +24,14 @@ public unsafe class Login
     public static uint FAT16_PID = 0;
     
     public static void SyscallYieldApp() { SyscallYield(); }
-    public static bool StrCmp(char* a, char* b) { int i = 0; while(a[i] != '\0' && b[i] != '\0') { if (a[i] != b[i]) return false; i++; } return a[i] == b[i]; }
+
+    // [PASCAL PORT] So khop username chuyen sang libc.pas StrCmp_Pas - mot
+    // implementation duy nhat dung chung voi Kernel.exe/Shell.exe (case-
+    // insensitive, thong nhat voi FAT16; mat khau van so khop exact qua
+    // ConstantTimeEq tren hex nen khong anh huong).
+    [DllImport("*", EntryPoint = "StrCmp_Pas")]
+    private static extern byte StrCmp_Pas(char* a, char* b);
+    public static bool StrCmp(char* a, char* b) { return StrCmp_Pas(a, b) != 0; }
     public static void StringToSharedBuffer(char* source, char* dest) { int i = 0; while (source[i] != '\0') { dest[i] = source[i]; i++; } dest[i] = '\0'; }
     public static uint Atoi(char* str) { uint res = 0; for (int i = 0; str[i] != '\0'; ++i) { if (str[i] >= '0' && str[i] <= '9') res = res * 10 + (uint)(str[i] - '0'); else break; } return res; }
 
