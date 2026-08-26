@@ -61,9 +61,9 @@ public unsafe class Shell
         return true;
     }
 
-    public static void ClearBuffer(byte* ptr, int sizeBytes) {
-        for(int i = 0; i < sizeBytes; i++) ptr[i] = 0;
-    }
+    // [PASCAL PORT] Delegation sang libc.pas MemSet_Pas (dung chung moi arch)
+    [DllImport("*", EntryPoint = "MemSet_Pas")]
+    public static extern void ClearBuffer(byte* ptr, int sizeBytes);
 
     public static void SweepMailbox() {
         Message trash = default;
