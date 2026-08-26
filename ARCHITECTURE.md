@@ -58,8 +58,10 @@ Pascal khai báo trong `src/arch_interface.pas`).
   `SMP.cs`, `VMM.cs` (4-level paging PML4)
 
 ### Legacy-ISA (x86 nhưng không bắt buộc arch khác phải có)
-- Toan bo o src/arch/x86_64/: KeyboardDriver, Serial, MouseDriver, PCI,
-  Power (+ acpi.cs/ATA_Driver.cs/Mouse.exe la platform daemon userland,
+- Device drivers x86-legacy: src/drivers/x86-legacy/ (KeyboardDriver,
+  Serial, MouseDriver, PCI, Power) - la THIET BI khong phai CPU-arch;
+  port sang may moi = them drivers/<board-moi>/ chon luc build
+  (+ acpi.cs/ATA_Driver.cs/Mouse.exe la platform daemon userland,
   thay nguyen bo khi port; Boot.cs giu COM1 debug theo boot contract)
 - ATA controller pair (kernel/ATA.cs raw-path + apps/ATA_Driver.cs):
   driver thiet bi platform, keo ca giao thuc di cung - debt cuoi cung
