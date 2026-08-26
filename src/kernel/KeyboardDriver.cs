@@ -17,7 +17,7 @@ public static class KeyboardDriver
     // ==========================================================
     // KHAI BÁO RÀO CHẮN TRÌNH BIÊN DỊCH
     // ==========================================================
-    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
+    public static void CompilerFence() => Arch.CompilerFence();
 
     public static bool LeftShift = false;
     public static bool RightShift = false;

@@ -8,18 +8,16 @@ namespace NekkoOS.Kernel;
 
 public static unsafe class IO
 {
-    [DllImport("*", EntryPoint = "Arch_WritePort8")] public static extern void Out8(ushort port, byte value);
-    [DllImport("*", EntryPoint = "Arch_ReadPort8")]  public static extern byte In8(ushort port);
-    [DllImport("*", EntryPoint = "Arch_EnableInterrupts")] public static extern void EnableInterrupts();
+    public static void Out8(ushort port, byte value) => Arch.WritePort8(port, value);
+    public static byte In8(ushort port) => Arch.ReadPort8(port);
+    public static void EnableInterrupts() => Arch.EnableInterrupts();
     // GỌI LỆNH HLT TỪ NASM VÀO ĐÂY!
-    [DllImport("*", EntryPoint = "Arch_Halt")] public static extern void Hlt();
-    [DllImport("*", EntryPoint = "Arch_WritePort16")]
-    public static extern void Out16(ushort port, ushort value);
+    public static void Hlt() => Arch.Halt();
+    public static void Out16(ushort port, ushort value) => Arch.WritePort16(port, value);
 
-    [DllImport("*", EntryPoint = "Arch_ReadPort16")]
-    public static extern ushort In16(ushort port);
-    [DllImport("*", EntryPoint = "Arch_DisableInterrupts")] public static extern void DisableInterrupts();
-    [DllImport("*", EntryPoint = "Arch_DisableInterrupts")] public static extern void Cli();
-    [DllImport("*", EntryPoint = "Arch_EnableInterrupts")] public static extern void Sti();
+    public static ushort In16(ushort port) => Arch.ReadPort16(port);
+    public static void DisableInterrupts() => Arch.DisableInterrupts();
+    public static void Cli() => Arch.DisableInterrupts();
+    public static void Sti() => Arch.EnableInterrupts();
     public static void Wait() => Out8(0x80, 0); 
 }

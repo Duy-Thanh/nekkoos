@@ -9,6 +9,18 @@ rm -f *.exe *.efi *.obj *.bin *.map hdd.img Kernel.exe.mui pubkey.bin
 rm -rf efi/boot *.pdb *.lib
 mkdir -p efi/boot
 
+# =========================================================================
+# [ARCH LINT] Ranh giới AAL: cấm khai báo Arch_* rải rác ngoài src/arch/.
+# Kernel/apps chỉ được gọi qua src/arch/Arch.cs - port arch mới = cung cấp
+# Hardware asm export đúng symbol + các file trong src/arch/<arch>/.
+# =========================================================================
+ARCH_VIOLATIONS=$(grep -rl 'EntryPoint = "Arch_' src/kernel src/apps src/boot --include='*.cs' 2>/dev/null || true)
+if [ -n "$ARCH_VIOLATIONS" ]; then
+    echo "[ARCH LINT] VIOLATION: Arch_* DllImport found outside src/arch/:"
+    echo "$ARCH_VIOLATIONS"
+    exit 1
+fi
+
 echo "[1.2/4] Dang build Pascal modules..."
 ./compile_pascal.sh
 
@@ -24,7 +36,7 @@ nasm -f bin src/arch/x86_64/smp_x86.asm -o smp.bin
 BF="bflat"
 
 # Build Kernel + apps (no-pie, deterministic, map files)
-$BF build src/kernel/Kernel.cs src/kernel/Syscall.cs src/arch/x86_64/IDT.cs src/arch/x86_64/ISR.cs src/kernel/RTC.cs src/kernel/PCI.cs src/kernel/Heap.cs src/kernel/Thread.cs src/kernel/IPC.cs src/kernel/KeyboardDriver.cs src/kernel/LibC.cs src/arch/x86_64/VMM.cs src/arch/x86_64/ContextLayout.cs src/boot/BootContract.cs src/arch/x86_64/PlatformBootstrap.cs src/kernel/Terminal.cs src/kernel/PMM.cs src/kernel/IO.cs src/arch/x86_64/PIC.cs src/arch/x86_64/PIT.cs src/arch/x86_64/InterruptHandlers.cs src/kernel/ATA.cs src/kernel/FAT16.cs src/kernel/GlobalUsings.cs src/kernel/System.Runtime.InteropServices.cs src/kernel/System.Runtime.CompilerServices.cs src/kernel/PELoader.cs src/kernel/StrandScheduler.cs src/arch/x86_64/GDT.cs src/kernel/PRNG.cs src/kernel/Power.cs src/arch/x86_64/APIC.cs src/arch/x86_64/SMP.cs src/kernel/Spinlock.cs src/arch/x86_64/IOAPIC.cs src/arch/x86_64/vDSO.cs src/arch/x86_64/HardwareChecks.cs src/kernel/Serial.cs src/kernel/MouseDriver.cs src/kernel/NekkoInt.cs src/kernel/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o"
+$BF build src/kernel/Kernel.cs src/kernel/Syscall.cs src/arch/Arch.cs src/arch/x86_64/IDT.cs src/arch/x86_64/ISR.cs src/kernel/RTC.cs src/kernel/PCI.cs src/kernel/Heap.cs src/kernel/Thread.cs src/kernel/IPC.cs src/kernel/KeyboardDriver.cs src/kernel/LibC.cs src/arch/x86_64/VMM.cs src/arch/x86_64/ContextLayout.cs src/boot/BootContract.cs src/arch/x86_64/PlatformBootstrap.cs src/kernel/Terminal.cs src/kernel/PMM.cs src/kernel/IO.cs src/arch/x86_64/PIC.cs src/arch/x86_64/PIT.cs src/arch/x86_64/InterruptHandlers.cs src/kernel/ATA.cs src/kernel/FAT16.cs src/kernel/GlobalUsings.cs src/kernel/System.Runtime.InteropServices.cs src/kernel/System.Runtime.CompilerServices.cs src/kernel/PELoader.cs src/kernel/StrandScheduler.cs src/arch/x86_64/GDT.cs src/kernel/PRNG.cs src/kernel/Power.cs src/arch/x86_64/APIC.cs src/arch/x86_64/SMP.cs src/kernel/Spinlock.cs src/arch/x86_64/IOAPIC.cs src/arch/x86_64/vDSO.cs src/arch/x86_64/HardwareChecks.cs src/kernel/Serial.cs src/kernel/MouseDriver.cs src/kernel/NekkoInt.cs src/kernel/KernCrypto.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o"
 
 $BF build src/apps/ATA_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
 $BF build src/apps/FAT16_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o"

@@ -35,14 +35,13 @@ public static unsafe class IPC
     // Định nghĩa hằng số ulong.MaxValue vì nó không có sẵn trong --stdlib zero
     public const ulong ULongMaxValue = 0xFFFFFFFFFFFFFFFF;
 
-    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
-    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
+    public static void CompilerFence() => Arch.CompilerFence();
+    public static void StoreFence() => Arch.StoreFence();
+    public static void FullFence() => Arch.FullFence();
+    public static void LoadFence() => Arch.LoadFence();
 
     // [VŨ KHÍ MỚI] GỌI THẲNG LỆNH XCHG TỪ ASSEMBLY!
-    [DllImport("*", EntryPoint = "Arch_AtomicExchange")]
-    public static extern uint AtomicExchange(ref uint location, uint newValue);
+    public static uint AtomicExchange(ref uint location, uint newValue) => Arch.AtomicExchange(ref location, newValue);
 
     // ==========================================================
     // INTEROP: Gọi sang Pascal MPMC queue algorithms

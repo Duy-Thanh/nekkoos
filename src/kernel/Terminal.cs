@@ -14,7 +14,7 @@ namespace NekkoOS.Kernel;
 
 public static unsafe class Terminal
 {
-    [DllImport("*", EntryPoint = "Arch_GetFlags")] public static extern ulong GetRflags();
+    public static ulong GetRflags() => Arch.GetFlags();
 
     // ==========================================================
     // INTEROP: Pascal render engine

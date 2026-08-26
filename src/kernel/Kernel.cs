@@ -26,14 +26,14 @@ public static unsafe class Program
     // ==========================================================
     // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER
     // ==========================================================
-    [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "Arch_LoadFence")] public static extern void LoadFence();
-    [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
-    [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
+    public static void CompilerFence() => Arch.CompilerFence();
+    public static void LoadFence() => Arch.LoadFence();
+    public static void StoreFence() => Arch.StoreFence();
+    public static void FullFence() => Arch.FullFence();
 
-    [DllImport("*", EntryPoint = "Arch_WritePort32")] static extern void Out32(ushort port, uint value);
-    [DllImport("*", EntryPoint = "Arch_ReadPort32")] static extern uint In32(ushort port);
-    [DllImport("*", EntryPoint = "Arch_UnlockScheduler")] static extern void UnlockScheduler_ASM();
+    static void Out32(ushort port, uint value) => Arch.WritePort32(port, value);
+    static uint In32(ushort port) => Arch.ReadPort32(port);
+    static void UnlockScheduler_ASM() => Arch.UnlockScheduler();
 
     public static int spinner_frame = 0;
     public static ulong last_spinner_tick = 0;
@@ -230,13 +230,13 @@ public static unsafe class Program
         // =====================================================================
         // PHASE 3: THIẾT LẬP NGẮT (IDT) & LÁ CHẮN PHẦN CỨNG
         // =====================================================================
-        [DllImport("*", EntryPoint = "Arch_GetIsrDiv0")] static extern void* GetIsrDiv0();
-        [DllImport("*", EntryPoint = "Arch_GetIsrGPF")] static extern void* GetIsrGPF();
-        [DllImport("*", EntryPoint = "Arch_GetIsrPageFault")] static extern void* GetIsrPageFault();
-        [DllImport("*", EntryPoint = "Arch_GetIsrTimer")] static extern void* GetIsrTimer();
+        static void* GetIsrDiv0() => Arch.GetIsrDiv0();
+        static void* GetIsrGPF() => Arch.GetIsrGPF();
+        static void* GetIsrPageFault() => Arch.GetIsrPageFault();
+        static void* GetIsrTimer() => Arch.GetIsrTimer();
         // GetIsrKeyboard/GetIsrMouse đã chuyển vào PlatformBootstrap (arch/x86_64)
-        [DllImport("*", EntryPoint = "Arch_GetIsrSyscall")] static extern void* GetIsrSyscall();
-        [DllImport("*", EntryPoint = "Arch_GetIsrYield")] static extern void* GetIsrYield();
+        static void* GetIsrSyscall() => Arch.GetIsrSyscall();
+        static void* GetIsrYield() => Arch.GetIsrYield();
 
         GDT.Init();
 

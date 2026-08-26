@@ -94,15 +94,30 @@ Pascal khai báo trong `src/arch_interface.pas`).
   interface thiết bị ảo QEMU (không phụ thuộc CPU); giữ lại làm chuẩn
   phát hiện máy ảo
 
-## 5. Checklist port sang kiến trúc mới (vd ARM64)
+## 5. Port kit — checklist port sang kiến trúc mới (vd ARM64)
 
-1. Tạo `src/arch/arm64/Hardware.asm` (hoặc .S) cài đặt đủ ~50 symbol
-   `Arch_*` theo `src/arch_interface.pas`
-2. Thay thế: GDT/IDT/TSS → hệ thống tương đương; PIC/PIT/APIC/IOAPIC →
-   GIC + arch timer; VMM PML4 → bảng trang 4-level ARM
-3. Port exception/syscall frame layout trong
-   `arch/arm64/InterruptHandlers.cs` + ISR glue
-4. Boot: EFI stub ARM64 cho `Boot.cs` + bootloader asm riêng
-5. Giữ nguyên toàn bộ kernel generic + userland (chỉ recompile
-   `--arch arm64`)
-6. Chạy bộ verify: boot → login → sudo → FAT16 CRUD → SMP 2 core
+**Bề mặt hợp đồng C#**: `src/arch/Arch.cs` — class tĩnh duy nhất chứa toàn
+bộ extern `Arch_*` (~30 primitive: ports, MMIO, fences, atomics, GDT/IDT/
+TSS load, ISR addresses, timestamp). **Lint gate trong build.sh CHẶN cứng**
+mọi `[DllImport("Arch_…")]` ngoài `src/arch/` — vi phạm = build fail.
+
+Việc cần làm khi port, theo thứ tự:
+
+1. Tạo `src/arch/<arch>/Hardware.asm` (hoặc .S) export đúng các symbol
+   `Arch_*` (danh mục tham chiếu: `src/arch/arch_interface.pas`)
+2. Thay thế bộ implementation file trong `src/arch/<arch>/`:
+   - `ContextLayout.cs` — frame layout + mapping vai trò `ArchCtx`
+     (GetNumber/GetArg/SetRet/SetRet2)
+   - `PlatformBootstrap.cs` — early serial, hook ngắt input, legacy timer
+   - `GDT/IDT/ISR/InterruptHandlers.cs` — descriptor table + exception glue
+   - `PIC/PIT/APIC/IOAPIC/SMP.cs` — interrupt controller + SMP bring-up
+     (ARM64: GIC + arch timer)
+   - `VMM.cs` — paging impl (ARM64: bảng trang 4-level AA64)
+   - `vDSO.cs` — blob mã máy syscall entry (ARM64: `svc #0`)
+   - `HardwareChecks.cs` — anti-tamper boot check
+3. Bootloader: EFI stub cho arch đó (`src/boot/Boot.cs` build với
+   `--arch <new>`) + `boot_io.asm` thay bằng helper tương ứng
+4. **Không sửa gì cả**: `src/kernel/*`, `src/kernel/pas/*`, `src/apps/*`
+   — chỉ thêm dòng build mới vào build.sh
+5. Chạy bộ verify: build sạch → QEMU boot → login → sudo → FAT16 CRUD →
+   SMP N cores
