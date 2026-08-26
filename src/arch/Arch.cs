@@ -49,4 +49,13 @@ public static unsafe class Arch
         [DllImport("*", EntryPoint = "Arch_WritePort16")] public static extern void WritePort16(ushort port, ushort value);
         [DllImport("*", EntryPoint = "Arch_WritePort32")] public static extern void WritePort32(ushort port, uint value);
         [DllImport("*", EntryPoint = "Arch_WritePort8")] public static extern void WritePort8(ushort port, byte value);
+
+    // ---- I/O Wait ----
+        [DllImport("*", EntryPoint = "Arch_IoWait")] public static extern void IoWait();
+
+    // ---- Paging / TLB / NX ----
+        [DllImport("*", EntryPoint = "Arch_LoadPageTable")] public static extern void LoadPageTable(ulong physAddr);
+        [DllImport("*", EntryPoint = "Arch_ReadPageTable")] public static extern ulong ReadPageTable();
+        [DllImport("*", EntryPoint = "Arch_FlushTLB")] public static extern void FlushTlbAll();
+        [DllImport("*", EntryPoint = "Arch_EnableNX")] public static extern void EnableNx();
 }

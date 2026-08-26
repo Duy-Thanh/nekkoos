@@ -19,5 +19,5 @@ public static unsafe class IO
     public static void DisableInterrupts() => Arch.DisableInterrupts();
     public static void Cli() => Arch.DisableInterrupts();
     public static void Sti() => Arch.EnableInterrupts();
-    public static void Wait() => Out8(0x80, 0); 
+    public static void Wait() => Arch.IoWait(); 
 }

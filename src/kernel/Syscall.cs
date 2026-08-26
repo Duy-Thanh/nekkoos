@@ -149,7 +149,7 @@ public static unsafe class Syscall
         /*
         SyscallLogCounter++;
         if ((SyscallLogCounter & 0xFF) == 0) {
-            ulong cr3 = VMM.ReadCR3() & 0x000FFFFFFFFFF000UL;
+            ulong cr3 = Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL;
             fixed (char* s1 = "[SYSCALL] ID: \0") Serial.WriteString(s1);
             Serial.WriteHex(syscallId);
             fixed (char* s2 = " TID: \0") Serial.WriteString(s2);
@@ -431,7 +431,7 @@ public static unsafe class Syscall
                 if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) {
                     Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Only allow mapping when the caller's PML4 matches the currently loaded CR3.
-                ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) { VMM.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
                 VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
@@ -528,7 +528,7 @@ public static unsafe class Syscall
                 ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                 if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Ensure the syscall is running under the thread's PML4 before mapping.
-                ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) { VMM.MapPage(alignedPhys + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
                 VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
@@ -595,7 +595,7 @@ public static unsafe class Syscall
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
                 // Map only when current CR3 equals the thread's PML4.
-                ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)pml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
                     VMM.MapPage(fbPhys + (p * 4096), vAddr + (p * 4096), 0x07, currentPml4);
@@ -1231,7 +1231,7 @@ public static unsafe class Syscall
                     ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
                     if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                    ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                    ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                     if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     VMM.MapPage(allocPage, Scheduler.Threads[id].SharedMemVirt, 0x07, currentPml4); 
                     for (ulong p = 1; p < 5; p++) {
@@ -1313,7 +1313,7 @@ public static unsafe class Syscall
                 if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
 
                 // Require current CR3 to match caller's PML4 before mapping into caller space.
-                ulong* currentPml4 = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
                     VMM.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4); 
@@ -1334,9 +1334,9 @@ public static unsafe class Syscall
 
                 // [PAGING] Only load PML4 if it matches current CR3 to avoid loading
                 // an attacker-controlled or stale PML4 (hard-block unsafe loads).
-                ulong* currentPml4_after = (ulong*)(VMM.ReadCR3() & 0x000FFFFFFFFFF000UL);
+                ulong* currentPml4_after = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)myPml4 == currentPml4_after) {
-                    VMM.LoadPML4_ASM((void*)myPml4);
+                    Arch.LoadPageTable((ulong)myPml4);
                 } else {
                     // Unsafe to load other PML4 — fail the syscall rather than risk instability.
                     ArchCtx.SetRet(ctx, 0); ArchCtx.SetRet2(ctx, 0); return currentRsp;

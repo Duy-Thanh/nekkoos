@@ -395,7 +395,7 @@ public static unsafe class Scheduler
             nextPml4 = (ulong)VMM.PML4;
             Threads[bestId].Pml4 = (ulong)VMM.PML4;
         }
-        VMM.LoadPML4_ASM((void*)nextPml4);
+        Arch.LoadPageTable((ulong)nextPml4);
 
         // No per-thread deferred mappings to process here.
 
@@ -670,7 +670,7 @@ public static unsafe class Scheduler
         if (Threads[id].Pml4 != 0 && Threads[id].Pml4 != (ulong)VMM.PML4) {
             dyingPml4 = Threads[id].Pml4;
             Threads[id].Pml4 = 0;
-            if (isSelf) VMM.LoadPML4_ASM((void*)VMM.PML4);
+            if (isSelf) Arch.LoadPageTable((ulong)VMM.PML4);
         }
 
         if (isSelf) {
