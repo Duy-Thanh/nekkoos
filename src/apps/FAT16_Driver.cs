@@ -393,12 +393,14 @@ public unsafe class Program
         for (int i = 0; i < 16; i++) {
             if (entries[i].Name[0] == 0x00) return;
             if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
-            // [FIX #5] In đúng định dạng 8.3: BASE.EXT có dấu chấm phân cách
-            for (int j = 0; j < 8; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); }
+            // [FIX #5 + ALIGN] In 8.3 có dấu chấm + pad cột tên cố định 12 ký tự
+            int printed = 0;
+            for (int j = 0; j < 8; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); printed++; }
             if (entries[i].Name[8] != (byte)' ' && entries[i].Name[8] != 0) {
-                AppendChar('.', outStr, ref outIdx, maxChars);
-                for (int j = 8; j < 11; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); }
+                AppendChar('.', outStr, ref outIdx, maxChars); printed++;
+                for (int j = 8; j < 11; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); printed++; }
             }
+            while (printed < 12) { AppendChar(' ', outStr, ref outIdx, maxChars); printed++; }
             fixed(char* sep1 = " | \0") AppendStr(sep1, outStr, ref outIdx, maxChars);
             AppendNumPadded(entries[i].FileSize, outStr, ref outIdx, maxChars);
             fixed(char* sep2 = " bytes | \0") AppendStr(sep2, outStr, ref outIdx, maxChars);

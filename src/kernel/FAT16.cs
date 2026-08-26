@@ -1163,20 +1163,22 @@ if (DaemonWaitTimedOut(&dspinLs)) {
             if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
 
             Terminal.SetColor(0x00FFFFFF);
-            // [FIX #5] In đúng định dạng 8.3: BASE.EXT có dấu chấm phân cách
+            // [FIX #5 + ALIGN] In 8.3 có dấu chấm + pad cột tên cố định 12 ký tự
+            int printed = 0;
             for (int j = 0; j < 8; j++) {
                 char c = (char)entries[i].Name[j];
                 if (c == ' ' || c == 0) break;
-                Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' ');
+                Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' '); printed++;
             }
             if (entries[i].Name[8] != ' ' && entries[i].Name[8] != 0) {
-                Terminal.DrawChar('.');
+                Terminal.DrawChar('.'); printed++;
                 for (int j = 8; j < 11; j++) {
                     char c = (char)entries[i].Name[j];
                     if (c == ' ' || c == 0) break;
-                    Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' ');
+                    Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' '); printed++;
                 }
             }
+            for (int s2 = printed; s2 < 12; s2++) Terminal.DrawChar(' ');
             
             fixed (char* sep1 = " | \0") Terminal.Print(sep1);
             Terminal.SetColor(0x0000FF00);
