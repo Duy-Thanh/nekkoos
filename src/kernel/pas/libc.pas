@@ -28,6 +28,8 @@ function StrCmp(str1: PWord; str2: PWord): Byte; cdecl; public name 'StrCmp_Pas'
 function StrStartsWith(str: PWord; prefix: PWord): Byte; cdecl; public name 'StrStartsWith_Pas';
 procedure FormatFATName(input: PWord; output: PByte); cdecl; public name 'FormatFATName_Pas';
 function FatNameValid(input: PWord): Cardinal; cdecl; public name 'FatNameValid_Pas';
+function OctalStrToUInt(str: PWord): Cardinal; cdecl; public name 'OctalStrToUInt_Pas';
+function SplitTwoArgs(rest: PWord; outFirst: PWord; firstCap: Integer; outSecond: PWord; secondCap: Integer): Byte; cdecl; public name 'SplitTwoArgs_Pas';
 
 implementation
 
@@ -216,6 +218,50 @@ begin
   end;
 
   if (mb <= 8) and (me <= 3) then FatNameValid := 1;
+end;
+
+
+{ OctalStrToUInt: doc chuoi so he 8 ("755") thanh gia tri Cardinal. Dung lai
+  o dau khong phai chu so thi dung va tra ket qua tich luy den do. }
+function OctalStrToUInt(str: PWord): Cardinal; cdecl;
+var
+  i: Integer;
+begin
+  OctalStrToUInt := 0;
+  if str = nil then Exit;
+  i := 0;
+  while str[i] <> 0 do
+  begin
+    if (str[i] < Ord('0')) or (str[i] > Ord('7')) then Break;
+    OctalStrToUInt := OctalStrToUInt * 8 + Cardinal(str[i]) - Ord('0');
+    Inc(i);
+  end;
+end;
+
+{ SplitTwoArgs: tach token dau tien (den khoang trang) vao outFirst,
+  phan con lai (co the chua khoang trang) vao outSecond.
+  Tra ve 1 khi du 2 token, 0 neu thieu. }
+function SplitTwoArgs(rest: PWord; outFirst: PWord; firstCap: Integer; outSecond: PWord; secondCap: Integer): Byte; cdecl;
+var
+  i, f, sec: Integer;
+begin
+  SplitTwoArgs := 0;
+  if (rest = nil) or (outFirst = nil) or (outSecond = nil) then Exit;
+
+  i := 0; f := 0;
+  while (rest[i] <> 0) and (rest[i] <> Ord(' ')) and (f < firstCap - 1) do
+  begin outFirst[f] := rest[i]; Inc(f); Inc(i); end;
+  outFirst[f] := 0;
+  if f = 0 then Exit;
+
+  while rest[i] = Ord(' ') do Inc(i);
+  if rest[i] = 0 then Exit;
+
+  sec := 0;
+  while (rest[i] <> 0) and (sec < secondCap - 1) do
+  begin outSecond[sec] := rest[i]; Inc(sec); Inc(i); end;
+  outSecond[sec] := 0;
+  SplitTwoArgs := 1;
 end;
 
 end.

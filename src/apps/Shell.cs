@@ -73,29 +73,18 @@ public unsafe class Shell
     // [CHMOD/CHOWN] Tach dong lenh (sau tien to, vd sau "chmod ") thanh 2 token
     // cach nhau boi khoang trang: token dau (mode hoac uid:gid) va phan con lai
     // (path, co the chua khoang trang nen lay tron phan sau token dau).
-    public static bool SplitTwoArgs(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap) {
-        int i = 0; int f = 0;
-        while (rest[i] != '\0' && rest[i] != ' ' && f < firstCap - 1) outFirst[f++] = rest[i++];
-        outFirst[f] = '\0';
-        if (f == 0) return false;
-        while (rest[i] == ' ') i++;
-        if (rest[i] == '\0') return false;
-        int s = 0; while (rest[i] != '\0' && s < secondCap - 1) outSecond[s++] = rest[i++];
-        outSecond[s] = '\0';
-        return true;
-    }
+    // [PASCAL PORT] Logic da chuyen sang libc.pas (dung chung moi arch)
+    [DllImport("*", EntryPoint = "SplitTwoArgs_Pas")]
+    private static extern byte SplitTwoArgs_Pas(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap);
+    public static bool SplitTwoArgs(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap)
+        => SplitTwoArgs_Pas(rest, outFirst, firstCap, outSecond, secondCap) == 1;
 
     // [CHMOD] Chuyen chuoi so nguoi dung go (vd "755") - hieu la OCTAL giong UNIX
     // chmod that su - thanh gia tri Permissions dang so thap phan luu tren dia
     // (vd 0755 octal = 493 decimal).
-    public static uint OctalStrToUInt(char* str) {
-        uint res = 0;
-        for (int i = 0; str[i] != '\0'; i++) {
-            if (str[i] < '0' || str[i] > '7') break;
-            res = res * 8 + (uint)(str[i] - '0');
-        }
-        return res;
-    }
+    // [PASCAL PORT] Logic da chuyen sang libc.pas (dung chung moi arch)
+    [DllImport("*", EntryPoint = "OctalStrToUInt_Pas")]
+    public static extern uint OctalStrToUInt(char* str);
 
     // [STACK ISOLATION] Tach ra ham rieng de tranh stack overflow trong Main.
     // bflat AOT allocate TẤT CẢ stackalloc cua 1 ham upfront - neu de inline trong
