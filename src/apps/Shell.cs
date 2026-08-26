@@ -61,9 +61,12 @@ public unsafe class Shell
         return true;
     }
 
-    // [PASCAL PORT] Delegation sang libc.pas MemSet_Pas (dung chung moi arch)
+    // [PASCAL PORT] Delegation sang libc.pas MemSet_Pas (dung chung moi arch).
+    // [FIX ABI] MemSet_Pas co 3 tham so (dest, val, count) - ban truoc khai 2
+    // tham so nen count doc rac tu thanh ghi, memset tran bo nho (crash khi ls).
     [DllImport("*", EntryPoint = "MemSet_Pas")]
-    public static extern void ClearBuffer(byte* ptr, int sizeBytes);
+    private static extern void MemSet_Pas(byte* ptr, byte val, int sizeBytes);
+    public static void ClearBuffer(byte* ptr, int sizeBytes) => MemSet_Pas(ptr, 0, sizeBytes);
 
     public static void SweepMailbox() {
         Message trash = default;
