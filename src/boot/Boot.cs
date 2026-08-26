@@ -323,32 +323,32 @@ namespace NekkoOS
         // ==========================================================
         // KHỐI I/O PORT GIAO TIẾP VỚI COM1
         // ==========================================================
-        [DllImport("*", EntryPoint = "Out8")] static extern void Out8(ushort port, byte value);
-        [DllImport("*", EntryPoint = "In8")] static extern byte In8(ushort port);
+        [DllImport("*", EntryPoint = "Out8")] public static extern void WritePort8(ushort port, byte value); // symbol từ boot_io.obj (bootloader tự chứa)
+        [DllImport("*", EntryPoint = "In8")] public static extern byte ReadPort8(ushort port); // symbol từ boot_io.obj
 
         const ushort COM1 = 0x3F8;
 
         public static void InitSerial() {
-            Out8(COM1 + 1, 0x00); Out8(COM1 + 3, 0x80); Out8(COM1 + 0, 0x03);
-            Out8(COM1 + 1, 0x00); Out8(COM1 + 3, 0x03); Out8(COM1 + 2, 0xC7); Out8(COM1 + 4, 0x0B);
+            WritePort8(COM1 + 1, 0x00); WritePort8(COM1 + 3, 0x80); WritePort8(COM1 + 0, 0x03);
+            WritePort8(COM1 + 1, 0x00); WritePort8(COM1 + 3, 0x03); WritePort8(COM1 + 2, 0xC7); WritePort8(COM1 + 4, 0x0B);
         }
 
         public static void SerialWriteChar(char c) {
             if (c == '\n') {
-                while ((In8(COM1 + 5) & 0x20) == 0) { }
-                Out8(COM1, (byte)'\r');
+                while ((ReadPort8(COM1 + 5) & 0x20) == 0) { }
+                WritePort8(COM1, (byte)'\r');
             }
-            while ((In8(COM1 + 5) & 0x20) == 0) { }
-            Out8(COM1, (byte)c);
+            while ((ReadPort8(COM1 + 5) & 0x20) == 0) { }
+            WritePort8(COM1, (byte)c);
         }
 
         public static bool SerialReceived() {
-            return (In8(COM1 + 5) & 1) != 0;
+            return (ReadPort8(COM1 + 5) & 1) != 0;
         }
 
         public static char SerialReadChar() {
             while (!SerialReceived()) { } // Đóng băng vòng lặp chờ gõ phím!
-            return (char)In8(COM1);
+            return (char)ReadPort8(COM1);
         }
 
         // ==========================================================
@@ -358,7 +358,7 @@ namespace NekkoOS
             ulong elapsed = 0;
             while (elapsed < timeoutMs) {
                 if (SerialReceived()) {
-                    return (char)In8(COM1); // Character received
+                    return (char)ReadPort8(COM1); // Character received
                 }
                 // Kiểm tra xem bs có null không
                 if (bs == null) return '\0';
@@ -1134,7 +1134,7 @@ namespace NekkoOS
                         case 'I': case 'i':
                             fixed (char* msgI = "Enter I/O Port (Hex): 0x\0") Print(systemTable->ConOut, msgI);
                             ushort port = (ushort)SerialReadHex();
-                            byte val = In8(port);
+                            byte val = ReadPort8(port);
                             
                             fixed (char* msgI2 = "[DEBUG] Port 0x\0") Print(systemTable->ConOut, msgI2);
                             PrintHex(systemTable->ConOut, (ulong)port);
@@ -1148,9 +1148,9 @@ namespace NekkoOS
                         // Verifies I/O port read/write functionality
                         // ==========================================================
                         case 'T': case 't':
-                            Out8(0x70, 0x04); byte hrs = In8(0x71);
-                            Out8(0x70, 0x02); byte mins = In8(0x71);
-                            Out8(0x70, 0x00); byte secs = In8(0x71);
+                            WritePort8(0x70, 0x04); byte hrs = ReadPort8(0x71);
+                            WritePort8(0x70, 0x02); byte mins = ReadPort8(0x71);
+                            WritePort8(0x70, 0x00); byte secs = ReadPort8(0x71);
                             
                             fixed (char* msgT = "[DEBUG] Raw RTC Time (BCD): \0") Print(systemTable->ConOut, msgT);
                             fixed (char* space = "  \0")

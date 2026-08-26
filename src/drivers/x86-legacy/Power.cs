@@ -9,11 +9,9 @@ namespace NekkoOS.Kernel;
 
 public static unsafe class Power
 {
-    [DllImport("*", EntryPoint = "HAL_Reboot")]
-    public static extern void HAL_Reboot();
-
-    [DllImport("*", EntryPoint = "HAL_Shutdown")]
-    public static extern void HAL_Shutdown();
+    // [AAL] Đi qua Arch.* - driver không tự khai báo DllImport (lint build.sh)
+    public static void HAL_Reboot() => Arch.Reboot();
+    public static void HAL_Shutdown() => Arch.Shutdown();
     // ==========================================================
     // [VŨ KHÍ TỐI THƯỢNG] CÚ HACK INIT IPI XUYÊN PHẦN CỨNG!
     // ==========================================================

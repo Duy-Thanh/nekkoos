@@ -51,15 +51,15 @@ public unsafe struct Thread
 
 public static unsafe class Scheduler
 {
-    [DllImport("*", EntryPoint = "GetCS")] public static extern ushort GetCS();
-    [DllImport("*", EntryPoint = "GetSS")] public static extern ushort GetSS();
-    [DllImport("*", EntryPoint = "ForceYield")] public static extern void Yield();
-    [DllImport("*", EntryPoint = "SaveFPU")] public static extern void SaveFPU(void* buffer);
-    [DllImport("*", EntryPoint = "RestoreFPU")] public static extern void RestoreFPU(void* buffer);
-    [DllImport("*", EntryPoint = "GetRflags")] public static extern ulong GetRflags();
+    public static ushort GetCS() => Arch.GetCs();
+    public static ushort GetSS() => Arch.GetSs();
+    public static void Yield() => Arch.ForceYield();
+    public static void SaveFPU(void* buffer) => Arch.SaveFpu(buffer);
+    public static void RestoreFPU(void* buffer) => Arch.RestoreFpu(buffer);
+    public static ulong GetRflags() => Arch.GetFlags();
 
-    [DllImport("*", EntryPoint = "LockScheduler")] public static extern void LockScheduler();
-    [DllImport("*", EntryPoint = "UnlockScheduler")] public static extern void UnlockScheduler();
+    public static void LockScheduler() => Arch.LockScheduler();
+    public static void UnlockScheduler() => Arch.UnlockScheduler();
 
     public static bool AcquireSchedLockSafe() {
         bool irq = (GetRflags() & 0x200) != 0; 

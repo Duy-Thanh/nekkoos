@@ -8,20 +8,12 @@ namespace NekkoOS.Kernel;
 
 public unsafe struct Spinlock
 {
-    [DllImport("*", EntryPoint = "AsmSpinlockAcquire")]
-    private static extern void AsmSpinlockAcquire(uint* lockVar);
-
-    [DllImport("*", EntryPoint = "AsmSpinlockRelease")]
-    private static extern void AsmSpinlockRelease(uint* lockVar);
-
-    [DllImport("*", EntryPoint = "GetRflags")]
-    public static extern ulong GetRflags();
-
-    // ==========================================================
-    // [BARRIERS] Import memory barrier functions from assembly
-    // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
-    [DllImport("*", EntryPoint = "StoreFence")] public static extern void StoreFence();
+    // [AAL] Mọi primitive khóa/fence đi qua Arch.* - không tự khai báo DllImport
+    private static void AsmSpinlockAcquire(uint* lockVar) => Arch.SpinlockAcquire(lockVar);
+    private static void AsmSpinlockRelease(uint* lockVar) => Arch.SpinlockRelease(lockVar);
+    public static ulong GetRflags() => Arch.GetFlags();
+    public static void CompilerFence() => Arch.CompilerFence();
+    public static void StoreFence() => Arch.StoreFence();
 
     private uint _lockStatus;
 

@@ -23,6 +23,9 @@ public static unsafe class Arch
         [DllImport("*", EntryPoint = "Arch_CompilerFence")] public static extern void CompilerFence();
         [DllImport("*", EntryPoint = "Arch_DisableInterrupts")] public static extern void DisableInterrupts();
         [DllImport("*", EntryPoint = "Arch_EnableInterrupts")] public static extern void EnableInterrupts();
+        // Nguồn: platform_impl.pas (HAL_Reboot/HAL_Shutdown) - hợp đồng reboot/shutdown
+        [DllImport("*", EntryPoint = "HAL_Reboot")] public static extern void Reboot();
+        [DllImport("*", EntryPoint = "HAL_Shutdown")] public static extern void Shutdown();
         [DllImport("*", EntryPoint = "Arch_FullFence")] public static extern void FullFence();
         [DllImport("*", EntryPoint = "Arch_GetFlags")] public static extern ulong GetFlags();
         [DllImport("*", EntryPoint = "Arch_GetIsrDiv0")] public static extern void* GetIsrDiv0();
@@ -45,6 +48,10 @@ public static unsafe class Arch
         [DllImport("*", EntryPoint = "Arch_ReadTimestamp")] public static extern ulong ReadTimestamp();
         [DllImport("*", EntryPoint = "Arch_StoreFence")] public static extern void StoreFence();
         [DllImport("*", EntryPoint = "Arch_UnlockScheduler")] public static extern void UnlockScheduler();
+        [DllImport("*", EntryPoint = "Arch_LockScheduler")] public static extern void LockScheduler();
+        [DllImport("*", EntryPoint = "Arch_ForceYield")] public static extern void ForceYield();
+        [DllImport("*", EntryPoint = "Arch_GetCS")] public static extern ushort GetCs();
+        [DllImport("*", EntryPoint = "Arch_GetSS")] public static extern ushort GetSs();
         [DllImport("*", EntryPoint = "Arch_WriteMmio32")] public static extern void WriteMmio32(ulong address, uint value);
         [DllImport("*", EntryPoint = "Arch_WritePort16")] public static extern void WritePort16(ushort port, ushort value);
         [DllImport("*", EntryPoint = "Arch_WritePort32")] public static extern void WritePort32(ushort port, uint value);
@@ -52,6 +59,14 @@ public static unsafe class Arch
 
     // ---- I/O Wait ----
         [DllImport("*", EntryPoint = "Arch_IoWait")] public static extern void IoWait();
+
+    // ---- FPU State ----
+        [DllImport("*", EntryPoint = "Arch_SaveFPU")] public static extern void SaveFpu(void* buffer);
+        [DllImport("*", EntryPoint = "Arch_RestoreFPU")] public static extern void RestoreFpu(void* buffer);
+
+    // ---- Spinlock ----
+        [DllImport("*", EntryPoint = "Arch_SpinlockAcquire")] public static extern uint SpinlockAcquire(uint* lockVar);
+        [DllImport("*", EntryPoint = "Arch_SpinlockRelease")] public static extern void SpinlockRelease(uint* lockVar);
 
     // ---- Paging / TLB / NX ----
         [DllImport("*", EntryPoint = "Arch_LoadPageTable")] public static extern void LoadPageTable(ulong physAddr);

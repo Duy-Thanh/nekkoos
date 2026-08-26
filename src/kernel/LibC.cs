@@ -14,7 +14,7 @@ public static unsafe class LibC
     // ==========================================================
     // KHAI BÁO RÀO CHẮN TRÌNH BIÊN DỊCH
     // ==========================================================
-    [DllImport("*", EntryPoint = "CompilerFence")] public static extern void CompilerFence();
+    public static void CompilerFence() => Arch.CompilerFence();
 
     public static ulong HardwareTscOffset = 0;
     public static ulong RtcInterruptHandler_Ptr = 0;

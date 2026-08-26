@@ -14,9 +14,14 @@ mkdir -p efi/boot
 # Kernel/apps chỉ được gọi qua src/arch/Arch.cs - port arch mới = cung cấp
 # Hardware asm export đúng symbol + các file trong src/arch/<arch>/.
 # =========================================================================
-ARCH_VIOLATIONS=$(grep -rl 'EntryPoint = "Arch_' src/kernel src/apps src/boot --include='*.cs' 2>/dev/null || true)
+# Ngoai le: shim "_Pas" (interop unit Pascal dung chung - arch-neutral)
+ARCH_VIOLATIONS=$(grep -rn '\[DllImport(' src/kernel src/drivers src/apps --include='*.cs' 2>/dev/null \
+    | grep -vE '//\s*\[DllImport' \
+    | grep -v '_Pas' \
+    | grep -v 'AppMainAsm' \
+    | cut -d: -f1 | sort -u || true)
 if [ -n "$ARCH_VIOLATIONS" ]; then
-    echo "[ARCH LINT] VIOLATION: Arch_* DllImport found outside src/arch/:"
+    echo "[ARCH LINT] VIOLATION: non-_Pas DllImport outside src/arch/ (boot tu do: EFI standalone):"
     echo "$ARCH_VIOLATIONS"
     exit 1
 fi
