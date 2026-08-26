@@ -139,7 +139,7 @@ public static unsafe class Program
         spinner_frame = 0;
         LibC.RtcInterruptHandler_Ptr = 0; 
 
-        VMM.VmmLock = new Spinlock();
+        Mem.ResetLock();
         Heap.HeapLock = new Spinlock();
         IOAPIC.IoApicLock = new Spinlock();
         SMP.SmpLock = new Spinlock();
@@ -210,14 +210,14 @@ public static unsafe class Program
             fixed (char* dbg5 = "[DBG] KM: after PMM.Init\n\0") Serial.WriteString(dbg5);
         }
 
-        VMM.Init();
+        Mem.Init();
 
         if (NekkoInt.isDebug) {
-            fixed (char* dbg6 = "[DBG] KM: after VMM.Init\n\0") Serial.WriteString(dbg6);
+            fixed (char* dbg6 = "[DBG] KM: after Mem.Init\n\0") Serial.WriteString(dbg6);
         }
 
         for (ulong addr = 2097152UL; addr < maxPhysicalAddr; addr += 2097152UL) { 
-            VMM.MapHugePage(addr, addr);
+            Mem.MapHugePage(addr, addr);
         }
 
         Terminal.SetColor(0x00FF00FF);

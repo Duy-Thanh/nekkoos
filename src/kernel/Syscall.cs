@@ -56,7 +56,7 @@ public static unsafe class Syscall
     {
         if (threadId < 0 || threadId >= Scheduler.ThreadCount) return false;
 
-        ulong pml4Phys = Scheduler.Threads[threadId].Pml4;
+        ulong pml4Phys = Scheduler.Threads[threadId].AddrSpace;
         if (pml4Phys == 0 || pml4Phys >= PMM.TotalPages * 4096UL) return false;
         ulong* pml4 = (ulong*)pml4Phys;
 
@@ -427,14 +427,14 @@ public static unsafe class Syscall
                 // Validate the PML4 pointer thoroughly before mapping into it.
                 // ==========================================================
                 // Ensure caller maps into the currently active PML4 (CR3) to avoid dereferencing other PML4s
-                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) {
+                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
+                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) {
                     Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Only allow mapping when the caller's PML4 matches the currently loaded CR3.
                 ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) { VMM.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
-                VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
+                for(ulong p = 0; p < numPages; p++) { Mem.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
+                Mem.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
 
                 Scheduler.Threads[id].PhysPages += (uint)numPages;
                 Scheduler.Threads[id].VirtPages += (uint)numPages + 1;
@@ -525,13 +525,13 @@ public static unsafe class Syscall
                 ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
                 
                 // [PAGING] Use the thread's own PML4 and validate the pointer first
-                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
+                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 // Ensure the syscall is running under the thread's PML4 before mapping.
                 ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) { VMM.MapPage(alignedPhys + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
-                VMM.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
+                for(ulong p = 0; p < numPages; p++) { Mem.MapPage(alignedPhys + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
+                Mem.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
 
                 Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
                 Scheduler.ReleaseSchedLockSafe(irq);
@@ -588,9 +588,9 @@ public static unsafe class Syscall
                 ulong vAddr = Scheduler.Threads[id].AppHeapBase; 
 
                 ulong numPages = (fbSize + 4095) / 4096;
-                ulong pml4 = Scheduler.Threads[id].Pml4;
+                ulong pml4 = Scheduler.Threads[id].AddrSpace;
 
-                if (pml4 == 0 || pml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(pml4)) { ArchCtx.SetRet(ctx, 0); break; }
+                if (pml4 == 0 || pml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical(pml4)) { ArchCtx.SetRet(ctx, 0); break; }
 
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
@@ -598,7 +598,7 @@ public static unsafe class Syscall
                 ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)pml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
-                    VMM.MapPage(fbPhys + (p * 4096), vAddr + (p * 4096), 0x07, currentPml4);
+                    Mem.MapPage(fbPhys + (p * 4096), vAddr + (p * 4096), 0x07, currentPml4);
                 }
                 
                 Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
@@ -834,9 +834,9 @@ public static unsafe class Syscall
                 else {
                     if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
                     if (Scheduler.Threads[id].SharedMemVirt != 0) {
-                        ulong pml4tmp = Scheduler.Threads[id].Pml4;
-                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && VMM.IsCanonical(pml4tmp)) {
-                            VMM.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
+                        ulong pml4tmp = Scheduler.Threads[id].AddrSpace;
+                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
+                            Mem.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
                         }
                     }
                     ArchCtx.SetRet(ctx, 0); 
@@ -860,9 +860,9 @@ public static unsafe class Syscall
                 else {
                     if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
                     if (Scheduler.Threads[id].SharedMemVirt != 0) {
-                        ulong pml4tmp = Scheduler.Threads[id].Pml4;
-                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && VMM.IsCanonical(pml4tmp)) {
-                            VMM.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
+                        ulong pml4tmp = Scheduler.Threads[id].AddrSpace;
+                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
+                            Mem.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
                         }
                     }
                     ArchCtx.SetRet(ctx, 0); 
@@ -1228,16 +1228,16 @@ public static unsafe class Syscall
                     Scheduler.Threads[id].SharedMemVirt = Scheduler.Threads[id].AppHeapBase;
                     
                     // [PAGING] Use the thread's own PML4 pointer. Validate PML4 and GlobalSharedRAM_Phys
-                    ulong* threadPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                    if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                    ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
+                    if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                     ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                     if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                    VMM.MapPage(allocPage, Scheduler.Threads[id].SharedMemVirt, 0x07, currentPml4); 
+                    Mem.MapPage(allocPage, Scheduler.Threads[id].SharedMemVirt, 0x07, currentPml4); 
                     for (ulong p = 1; p < 5; p++) {
                         ulong cand = GlobalSharedRAM_Phys + (p * 4096);
                         if (cand >= PMM.TotalPages * 4096UL) break;
-                        VMM.MapPage(cand, Scheduler.Threads[id].SharedMemVirt + (p * 4096), 0x07, currentPml4);
+                        Mem.MapPage(cand, Scheduler.Threads[id].SharedMemVirt + (p * 4096), 0x07, currentPml4);
                     }
                     
                     Scheduler.Threads[id].AppHeapBase += (4096 * 5); 
@@ -1303,11 +1303,11 @@ public static unsafe class Syscall
 
                 ulong myVAddr = Scheduler.Threads[id].AppHeapBase;
                 ulong targetVAddr = Scheduler.Threads[targetPid].AppHeapBase;
-                ulong targetPml4 = Scheduler.Threads[targetPid].Pml4;
+                ulong targetPml4 = Scheduler.Threads[targetPid].AddrSpace;
                 // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
-                ulong* myPml4 = (ulong*)Scheduler.Threads[id].Pml4;
-                if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !VMM.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                ulong* myPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
+                if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
+                if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
 
                 ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
                 if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
@@ -1316,10 +1316,10 @@ public static unsafe class Syscall
                 ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
                 if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
                 for(ulong p = 0; p < numPages; p++) {
-                    VMM.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4); 
+                    Mem.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4); 
                     // Only map into target PML4 if it matches current CR3 (otherwise skip to avoid unsafe deref)
                     if ((ulong*)targetPml4 == currentPml4) {
-                        VMM.MapPage(physAddr + (p * 4096), targetVAddr + (p * 4096), 0x07, (ulong*)targetPml4);
+                        Mem.MapPage(physAddr + (p * 4096), targetVAddr + (p * 4096), 0x07, (ulong*)targetPml4);
                     }
                 }
 

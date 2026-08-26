@@ -168,7 +168,7 @@ public static unsafe class InterruptHandlers
             Scheduler.Threads[id].UID = 9999;
             IPC.ClearMailbox((uint)id);
 
-            Scheduler.Threads[id].Pml4 = 0;
+            Scheduler.Threads[id].AddrSpace = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
 
             // ==========================================================
@@ -272,7 +272,7 @@ public static unsafe class InterruptHandlers
             Scheduler.Threads[id].UID = 9999;
             IPC.ClearMailbox((uint)id);
 
-            Scheduler.Threads[id].Pml4 = 0;
+            Scheduler.Threads[id].AddrSpace = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
 
             Scheduler.Threads[id].Active = 4; // Biến thành ZOMBIE an toàn
@@ -350,7 +350,7 @@ public static unsafe class InterruptHandlers
             bool irq = Scheduler.AcquireSchedLockSafe();
 
             // [FIX] Load về kernel page table TRƯỚC khi access scheduler structures!
-            Scheduler.Threads[id].Pml4 = 0;
+            Scheduler.Threads[id].AddrSpace = 0;
             VMM.LoadPML4_ASM((void*)VMM.PML4);
 
             Scheduler.Threads[id].Active = 4;

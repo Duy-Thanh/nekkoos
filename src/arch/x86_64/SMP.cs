@@ -275,7 +275,7 @@ public static unsafe class SMP
                 Scheduler.IdleThreadIds[i] = id; Scheduler.CurrentThreadIds[i] = id;
                 Scheduler.Threads[id].Priority = 99; 
                 Scheduler.Threads[id].ExecutingOnCore = (int)i; 
-                Scheduler.Threads[id].Pml4 = (ulong)VMM.PML4;
+                Scheduler.Threads[id].AddrSpace = (ulong)VMM.PML4;
                 
                 // ==========================================================
                 // [MEMORY CONFIGURATION] Increase kernel stack size from 4KB to 16KB

@@ -46,7 +46,7 @@ public static unsafe class PELoader
         }
 
         ulong appVirtualBase = 0x0000400000000000; 
-        ulong* originalPml4 = VMM.PML4; 
+        ulong* originalPml4 = Mem.KernelRoot; 
         
         ulong* appPml4 = (ulong*)PMM.AllocatePage(); 
         if (appPml4 == null) {
@@ -313,7 +313,7 @@ public static unsafe class PELoader
         ulong localVdsoPhys = (ulong)PMM.AllocatePage();
         LibC.MemCpy((byte*)localVdsoPhys, (byte*)vDSO.PhysPage, 4096);
 
-        VMM.MapPage(localVdsoPhys, vdsoVirt, 0x07, appPml4);
+        Mem.MapPage(localVdsoPhys, vdsoVirt, 0x07, appPml4);
 
         // ==========================================================
         // [FIX CHÍ MẠNG VŨ TRỤ] QUÉT BYTE-BY-BYTE BRUTEFORCE!
@@ -343,7 +343,7 @@ public static unsafe class PELoader
 
         for (ulong i = 0; i < pages; i++)
         {
-            VMM.MapPage(physBase + (i * 4096), appVirtualBase + (i * 4096), 0x07, appPml4);
+            Mem.MapPage(physBase + (i * 4096), appVirtualBase + (i * 4096), 0x07, appPml4);
         }
 
         uint addressOfEntryPoint = 0;

@@ -160,9 +160,9 @@ public static unsafe class APIC
             }
 
             // Validate per-thread PML4 before attempting to use it for mapping.
-            if (Scheduler.Threads[i].Active != 0 && Scheduler.Threads[i].Pml4 != 0)
+            if (Scheduler.Threads[i].Active != 0 && Scheduler.Threads[i].AddrSpace != 0)
             {
-                ulong pml4 = Scheduler.Threads[i].Pml4;
+                ulong pml4 = Scheduler.Threads[i].AddrSpace;
                 // Ensure the stored PML4 value looks like a real physical/table pointer
                 if (VMM.IsCanonical(pml4) && pml4 < PMM.TotalPages * 4096UL)
                 {

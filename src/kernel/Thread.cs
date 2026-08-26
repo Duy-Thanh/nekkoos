@@ -29,7 +29,7 @@ public unsafe struct Thread
     
     public ulong AppHeapBase;   
     public ulong KernelStackTop;
-    public ulong Pml4;          
+    public ulong AddrSpace; // [ARCH] handle address-space mờ (x86_64: PML4 phys)          
     public uint UID;            
     public uint GID;            
     public ulong SharedMemPhys; 
@@ -146,7 +146,7 @@ public static unsafe class Scheduler
 
         Threads[0].Active = 1;
         Threads[0].KernelStackTop = GDT.Tss->Rsp0;
-        Threads[0].Pml4 = (ulong)VMM.PML4;
+        Threads[0].AddrSpace = (ulong)Mem.KernelRoot;
         Threads[0].UID = 0;
         Threads[0].GID = 0;
         Threads[0].TextColor = 0x00FFFFFF;
@@ -249,7 +249,7 @@ public static unsafe class Scheduler
         *(--kStackTop) = GetCS();
         // Validate KernelIdleLoop pointer before writing it to stack
         ulong idleAddr = (ulong)(delegate*<void>)&Program.KernelIdleLoop;
-        if (idleAddr < 4096 || !VMM.IsCanonical(idleAddr)) {
+        if (idleAddr < 4096 || !Mem.IsCanonical(idleAddr)) {
             Terminal.SetColor(0x00FF00);
             fixed(char* warn = "[WARN] KernelIdleLoop pointer invalid, using fallback\n\0") Terminal.Print(warn);
             *(--kStackTop) = idleAddr;
@@ -260,7 +260,7 @@ public static unsafe class Scheduler
         for (int j = 0; j < 15; j++) *(--kStackTop) = 0;
         
         Threads[id].Rsp = (ulong)kStackTop;
-        Threads[id].Pml4 = (ulong)VMM.PML4;
+        Threads[id].AddrSpace = (ulong)Mem.KernelRoot;
         
         IdleThreadIds[coreId] = id; // Giao sổ đỏ!
         ReleaseSchedLockSafe(irq);
@@ -290,13 +290,13 @@ public static unsafe class Scheduler
         
         if (DyingThreadPerCore[coreId] != -1) {
             int zombieId = DyingThreadPerCore[coreId];
-            ulong zombiePml4 = Threads[zombieId].Pml4;
+            ulong zombiePml4 = Threads[zombieId].AddrSpace;
             Threads[zombieId].Active = 0;
             DyingThreadPerCore[coreId] = -1;
 
-            if (zombiePml4 != 0 && zombiePml4 != (ulong)VMM.PML4) {
+            if (zombiePml4 != 0 && zombiePml4 != (ulong)Mem.KernelRoot) {
                 UnlockScheduler();
-                VMM.DestroyUserSpace(zombiePml4);
+                Mem.DestroyUserSpace(zombiePml4);
                 LockScheduler();
             }
         }
@@ -305,12 +305,12 @@ public static unsafe class Scheduler
         // Đảm bảo không leak resources ngay cả khi nhiều threads bị kill cùng lúc
         for (int i = 0; i < ThreadCount; i++) {
             if (Threads[i].Active == 4) {
-                ulong zombiePml4 = Threads[i].Pml4;
+                ulong zombiePml4 = Threads[i].AddrSpace;
                 Threads[i].Active = 0;
 
-                if (zombiePml4 != 0 && zombiePml4 != (ulong)VMM.PML4) {
+                if (zombiePml4 != 0 && zombiePml4 != (ulong)Mem.KernelRoot) {
                     UnlockScheduler();
-                    VMM.DestroyUserSpace(zombiePml4);
+                    Mem.DestroyUserSpace(zombiePml4);
                     LockScheduler();
                 }
             }
@@ -383,17 +383,17 @@ public static unsafe class Scheduler
 
         ulong nextRsp = Threads[bestId].Rsp;
         ulong nextKStack = Threads[bestId].KernelStackTop;
-        ulong nextPml4 = Threads[bestId].Pml4;
+        ulong nextPml4 = Threads[bestId].AddrSpace;
 
         if (nextKStack != 0) {
             if (coreId == 0) GDT.Tss->Rsp0 = nextKStack;
             else if (SMP.CoreTssList != null && SMP.CoreTssList[coreId] != null) SMP.CoreTssList[coreId]->Rsp0 = nextKStack;
         }
 
-        if (nextPml4 == 0 || !VMM.IsCanonical(nextPml4) || nextPml4 >= PMM.TotalPages * 4096UL)
+        if (nextPml4 == 0 || !Mem.IsCanonical(nextPml4) || nextPml4 >= PMM.TotalPages * 4096UL)
         {
-            nextPml4 = (ulong)VMM.PML4;
-            Threads[bestId].Pml4 = (ulong)VMM.PML4;
+            nextPml4 = (ulong)Mem.KernelRoot;
+            Threads[bestId].AddrSpace = (ulong)Mem.KernelRoot;
         }
         Arch.LoadPageTable((ulong)nextPml4);
 
@@ -471,7 +471,7 @@ public static unsafe class Scheduler
         *(--stackTop) = GetSS(); *(--stackTop) = originalTop; *(--stackTop) = 0x202; *(--stackTop) = GetCS();
         // Validate entryPoint before placing on stack
         ulong epAddr = (ulong)entryPoint;
-        if (entryPoint == null || epAddr < 4096 || !VMM.IsCanonical(epAddr)) {
+        if (entryPoint == null || epAddr < 4096 || !Mem.IsCanonical(epAddr)) {
             Terminal.SetColor(0x00FF00);
             fixed(char* warn = "[WARN] Invalid entryPoint in CreateTask, using KernelIdleLoop fallback\n\0") Terminal.Print(warn);
             *(--stackTop) = (ulong)(delegate*<void>)&Program.KernelIdleLoop;
@@ -481,7 +481,7 @@ public static unsafe class Scheduler
         for (int i = 0; i < 15; i++) *(--stackTop) = 0;
         
         Threads[id].Rsp = (ulong)stackTop; 
-        Threads[id].Pml4 = (ulong)VMM.PML4;
+        Threads[id].AddrSpace = (ulong)Mem.KernelRoot;
         Threads[id].ExecutingOnCore = -1; 
         
         Threads[id].Active = 1;
@@ -502,7 +502,7 @@ public static unsafe class Scheduler
     public static void CreateUserTask(delegate*<void> entryPoint, ulong appPml4, out int newThreadId, bool isForeground = true, bool isJailed = false, bool forceRoot = false, char* processName = null, uint imagePages = 0, byte priority = 1)
     {
         newThreadId = -1;
-        if (entryPoint == null || (ulong)entryPoint < 4096 || !VMM.IsCanonical((ulong)entryPoint)) {
+        if (entryPoint == null || (ulong)entryPoint < 4096 || !Mem.IsCanonical((ulong)entryPoint)) {
             Terminal.SetColor(0x00FF0000);
             fixed(char* err = "[!] Scheduler Blocked: Garbage PE EntryPoint! IPC/FAT16 Delivery Failed!\n\0") Terminal.Print(err);
             Terminal.SetColor(0x00FFFFFF);
@@ -575,7 +575,7 @@ public static unsafe class Scheduler
                 fixed (char* err = "[!] FATAL: Failed to allocate stack page in CreateUserTask!\n\0") Terminal.Print(err);
                 return;
             }
-            VMM.MapPage(physPage, stackVirtualBase + (i * 4096), 0x07, (ulong*)appPml4); 
+            Mem.MapPage(physPage, stackVirtualBase + (i * 4096), 0x07, (ulong*)appPml4); 
         }
         irq = AcquireSchedLockSafe(); 
         
@@ -596,7 +596,7 @@ public static unsafe class Scheduler
         for (int i = 0; i < 15; i++) *(--kStackTop) = 0;
 
         Threads[id].Rsp = (ulong)kStackTop; 
-        Threads[id].Pml4 = appPml4;
+        Threads[id].AddrSpace = appPml4;
         Threads[id].IsJailed = (byte)(isJailed ? 1 : 0);
         Threads[id].IsPhantomDead = 0; 
         Threads[id].CpuTicks = 0;
@@ -660,17 +660,17 @@ public static unsafe class Scheduler
         Threads[id].UID = 9999; Threads[id].GID = 9999; Threads[id].AppHeapBase = 0;
         IPC.ClearMailbox((uint)id);
 
-        // [CVE-2026-012 ANALYSIS] SharedMemPhys is already freed by VMM.DestroyUserSpace()
+        // [CVE-2026-012 ANALYSIS] SharedMemPhys is already freed by Mem.DestroyUserSpace()
         // when it walks the page tables. No explicit free needed here - it would be a double free!
         Threads[id].SharedMemPhys = 0; Threads[id].SharedMemVirt = 0;
 
         bool isSelf = (id == CurrentThreadIds[coreId]);
         ulong dyingPml4 = 0;
 
-        if (Threads[id].Pml4 != 0 && Threads[id].Pml4 != (ulong)VMM.PML4) {
-            dyingPml4 = Threads[id].Pml4;
-            Threads[id].Pml4 = 0;
-            if (isSelf) Arch.LoadPageTable((ulong)VMM.PML4);
+        if (Threads[id].AddrSpace != 0 && Threads[id].AddrSpace != (ulong)Mem.KernelRoot) {
+            dyingPml4 = Threads[id].AddrSpace;
+            Threads[id].AddrSpace = 0;
+            if (isSelf) Arch.LoadPageTable((ulong)Mem.KernelRoot);
         }
 
         if (isSelf) {
@@ -685,7 +685,7 @@ public static unsafe class Scheduler
             // Prevent preemption during physical memory free to avoid races
             // (matches pattern used in interrupt handlers).
             IO.DisableInterrupts();
-            VMM.DestroyUserSpace(dyingPml4);
+            Mem.DestroyUserSpace(dyingPml4);
             IO.EnableInterrupts();
         }
 
