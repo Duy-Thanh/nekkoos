@@ -33,18 +33,7 @@ public unsafe struct WindowHeader {
 
 public unsafe class Shell
 {
-    // [DllImport("*", EntryPoint = "ShellPrint")] public static extern void ShellPrint(char* msg);
-    // [DllImport("*", EntryPoint = "SyscallGetChar")] public static extern byte SyscallGetChar();
-    // [DllImport("*", EntryPoint = "SyscallGetSharedMem")] public static extern ulong SyscallGetSharedMem();
-    // [DllImport("*", EntryPoint = "SyscallRunCmd")] public static extern void SyscallRunCmd(char* cmdPtr);
-    // [DllImport("*", EntryPoint = "SyscallSendIPC")] public static extern void SyscallSendIPC(uint receiver, uint type, ulong payload);
-    // [DllImport("*", EntryPoint = "SyscallReceiveIPC")] public static extern int SyscallReceiveIPC(Message* outMsg);
-    // [DllImport("*", EntryPoint = "SyscallExit")] public static extern void SyscallExit();
-    // [DllImport("*", EntryPoint = "SyscallGetUID")] public static extern uint SyscallGetUID();
-    // [DllImport("*", EntryPoint = "SyscallYield")] public static extern void SyscallYield();
-    // [DllImport("*", EntryPoint = "SyscallWaitIPC")] public static extern void SyscallWaitIPC();
     
-    // [DllImport("*", EntryPoint = "SyscallGetPIDByName")] public static extern int SyscallGetPIDByName(char* name);
     
     public static uint FAT16_PID = 0; public static int DWM_PID = -1; public static ulong GuiVAddr = 0;
     
