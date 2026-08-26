@@ -27,6 +27,7 @@ function MemCmp(ptr1: Pointer; ptr2: Pointer; count: Cardinal): Integer; cdecl; 
 function StrCmp(str1: PWord; str2: PWord): Byte; cdecl; public name 'StrCmp_Pas';
 function StrStartsWith(str: PWord; prefix: PWord): Byte; cdecl; public name 'StrStartsWith_Pas';
 procedure FormatFATName(input: PWord; output: PByte); cdecl; public name 'FormatFATName_Pas';
+function FatNameValid(input: PWord): Cardinal; cdecl; public name 'FatNameValid_Pas';
 
 implementation
 
@@ -191,6 +192,30 @@ begin
       Inc(outPos);
     end;
   end;
+end;
+
+
+{ FatNameValid: kiem tra ten co nam trong gioi han FAT16 8.3 khong.
+  Tra ve 1 = hop le (base <= 8 ky tu, duoi <= 3 ky tu), 0 = qua dai. }
+function FatNameValid(input: PWord): Cardinal; cdecl;
+var
+  mb, me, k: Integer;
+begin
+  FatNameValid := 0;
+  if input = nil then Exit;
+
+  mb := 0;
+  while (input[mb] <> 0) and (input[mb] <> Ord('.')) do Inc(mb);
+
+  me := -1;
+  if input[mb] = Ord('.') then
+  begin
+    me := 0;
+    k := mb + 1;
+    while input[k] <> 0 do begin Inc(me); Inc(k); end;
+  end;
+
+  if (mb <= 8) and (me <= 3) then FatNameValid := 1;
 end;
 
 end.

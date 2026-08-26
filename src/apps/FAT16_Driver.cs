@@ -268,6 +268,9 @@ public unsafe class Program
     [DllImport("*", EntryPoint = "FormatFATName_Pas")]
     public static extern void FormatFATName(char* input, byte* output);
 
+    [DllImport("*", EntryPoint = "FatNameValid_Pas")]
+    private static extern uint FatNameValid(char* input);
+
     // ==========================================================
     // [FIX CHÍ MẠNG] SAN PHẲNG HÀM CỤC BỘ (FLATTENING)
     // Cấm dùng Closure Heap Allocation trên OS Zero-Stdlib!
@@ -474,11 +477,9 @@ public unsafe class Program
     }
 
     private static void DoMkdir(char* privateName, uint effectiveOwnerUID, uint effectiveOwnerGID, uint callerUID, uint callerGID, uint client, byte* sectorBuf, byte* fatBuf, byte* formattedName, uint responseType) {
-        // [FIX #4] Từ chối tên vượt giới hạn FAT16 8.3 thay vì cắt ngang im lặng
-        int mb = 0; while (privateName[mb] != '\0' && privateName[mb] != '.') mb++;
-        int me = -1;
-        if (privateName[mb] == '.') { me = 0; for (int k = mb + 1; privateName[k] != '\0'; k++) me++; }
-        if (mb > 8 || me > 3) {
+        // [FIX #4 + PASCAL PORT] Validate 8.3 đã chuyển sang libc.pas
+        // (FatNameValid_Pas) - logic dùng chung độc lập kiến trúc CPU.
+        if (FatNameValid(privateName) == 0) {
             fixed(char* err = "[!] Ten qua dai! FAT16 ho da 8 ky tu + duoi 3 ky tu (vi du: PROJECT.C)\n\0") SyscallPrint(err);
             SyscallSendIPC(client, responseType, 0); SyscallYieldApp(); return;
         }
