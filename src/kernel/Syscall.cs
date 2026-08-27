@@ -27,6 +27,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "IsValidUserPtr_Pas")]
     private static extern byte IsValidUserPtr_Pas(int threadId, ulong virtAddr, ulong pml4Phys, ulong totalPages);
 
+    // [PASCAL PORT] String splitting delegated to libc.SplitTwoArgs_Pas
+    [DllImport("*", EntryPoint = "SplitTwoArgs_Pas")]
+    private static extern byte SplitTwoArgs_Pas(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -58,19 +62,9 @@ public static unsafe class Syscall
         return IsValidUserPtr_Pas(tid, ptr, pml4Phys, PMM.TotalPages * 4096UL) != 0;
     }
 
-    // [SUDO BUILTIN] Tach "arg1 arg2..." thanh 2 phan (vd "755 /file" -> "755","/file"),
-    // dung y het logic Shell.cs's SplitTwoArgs (khong the tai su dung truc tiep vi
-    // Syscall.cs build rieng vao Kernel.exe, khong link chung voi Shell.cs).
+    // [PASCAL PORT] Delegates to libc.SplitTwoArgs_Pas for string tokenizing
     private static bool SplitTwoArgsSudo(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap) {
-        int i = 0; int f = 0;
-        while (rest[i] != '\0' && rest[i] != ' ' && f < firstCap - 1) outFirst[f++] = rest[i++];
-        outFirst[f] = '\0';
-        if (f == 0) return false;
-        while (rest[i] == ' ') i++;
-        if (rest[i] == '\0') return false;
-        int s = 0; while (rest[i] != '\0' && s < secondCap - 1) outSecond[s++] = rest[i++];
-        outSecond[s] = '\0';
-        return true;
+        return SplitTwoArgs_Pas(rest, outFirst, firstCap, outSecond, secondCap) != 0;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "SyscallHandler")]
