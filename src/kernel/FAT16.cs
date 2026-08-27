@@ -161,38 +161,20 @@ public static unsafe class FAT16
         fixed (char* msg = "[+] VFS FAT16 Initialized Successfully!\n\0") Terminal.Print(msg);
     }
 
+    // [PASCAL PORT] Core sector scan extracted to fat16.pas - one implementation
+    // shared with FAT16_Driver.exe (userland daemon). Kernel side ignores owner/
+    // perms fields (not needed at this privilege level); driver side reads all.
+    [DllImport("*", EntryPoint = "FAT16_CheckSector_Pas")]
+    private static extern byte CheckSector_Pas(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {
-        // Kiểm tra xem các con trỏ có null không
         if (buf == null || formattedName == null || outCluster == null || outSize == null || outAttr == null) {
             Terminal.SetColor(0x00FF0000);
             fixed (char* err = "[!] FATAL: Null pointer in CheckSectorInline!\n\0") Terminal.Print(err);
             return -1;
         }
-        
-        FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)buf;
-        for (int i = 0; i < 16; i++)
-        {
-            if (entries[i].Name[0] == 0x00) return 2; 
-            if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
-
-            bool match = true;
-            for (int j = 0; j < 11; j++) {
-                if (entries[i].Name[j] != formattedName[j]) { 
-                    match = false; 
-                    break; 
-                }
-            }
-                
-            if (match)
-            {
-                *outCluster = entries[i].FirstClusterLow;
-                *outSize = entries[i].FileSize;
-                *outAttr = entries[i].Attributes;
-                return 1; 
-            }
-        }
-        return 0; 
+        return CheckSector_Pas(buf, formattedName, outCluster, outSize, outAttr, null, null, null);
     }
 
     private static bool FindEntry(char* name, ushort* outCluster, uint* outSize, byte* outAttr)

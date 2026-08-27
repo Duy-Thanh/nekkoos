@@ -1,6 +1,6 @@
 # AGENTS.md — NekkoOS working notes for AI assistants
 
-## Trạng thái hiện tại (cập nhật 2026-08-26)
+## Trạng thái hiện tại (cập nhật 2026-08-27)
 - Toolchain x86_64 đã cài đủ trên openSUSE Tumbleweed: bflat v10 (~/bflat),
   fpc 3.2.2, mingw64-cross-binutils. Build: `./build.sh` (cần
   `export PATH="$HOME/bflat:/usr/sbin:$PATH"`).
@@ -11,9 +11,14 @@
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
   terminal (+ arch_interface + HAL impls). libc.pas mới thêm:
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
-  SplitTwoArgs_Pas, MemSet_Pas delegation.
+  SplitTwoArgs_Pas, MemSet_Pas delegation, StrCmp_Pas, StrStartsWith_Pas.
+- Login/Shell đã normalize hết helper chuỗi lên libc.pas (roadmap #1 XONG).
+  Lưu ý: bản ClearBuffer cũ có bug ABI 2 tham số vs 3 — đã fix trong phiên
+  2026-08-27 (commit 9ac1100).
 - AddressSpaces.cs (class Mem) = facade duy nhất scheduler/loader thao tác
   address space; TCB field là `AddrSpace` (handle mờ).
+- **Test tự động**: có `test/automation/smoke_test.py` chạy QEMU headless,
+  poll serial, gõ phím, verify pass/fail, dọn dẹp.
 
 ## Quy trình port C# → Pascal (ARCHITECTURE.md §3)
 1. Port logic sang unit .pas tương ứng, export cdecl tên `*_Pas`
@@ -29,9 +34,12 @@
 - `build/asm/ppas.sh` là artifact sinh ra mỗi build → luôn revert trước commit.
 - pkill qemu có thể để mồ côi: kiểm tra `pgrep -f qemu-system` + xoá
   `hdd.img.lock` trước khi chạy VM mới.
+- Shell.ClearBuffer có bug ABI 2 tham số vs 3 đối với `MemSet_Pas` —
+  đã fix ở commit 9ac1100. Mọi shim `_Pas` mới phải so khớp signature với
+  `*.pas` export (không thừa nhận/thiếu tham số).
 
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
-1. Chuẩn hóa helper chuỗi còn lại giữa Login/Shell về libc.pas
+1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell về libc.pas~~ ✅ XONG
 2. Tách protocol FAT16 daemon khỏi port-I/O raw path
 3. Terminal API vẽ bảng cho ls (đã align cột 12, có thể nâng cấp bảng đẹp hơn)
 4. ARM64 port theo checklist ARCHITECTURE.md §5 (khung đã đầy đủ)

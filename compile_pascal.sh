@@ -17,7 +17,7 @@ mod_src() {
     esac
 }
 
-PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc)
+PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16)
 ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl)
 
 for mod in "${PASCAL_MODULES[@]}"; do

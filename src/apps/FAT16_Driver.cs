@@ -275,20 +275,14 @@ public unsafe class Program
     // [FIX CHÍ MẠNG] SAN PHẲNG HÀM CỤC BỘ (FLATTENING)
     // Cấm dùng Closure Heap Allocation trên OS Zero-Stdlib!
     // ==========================================================
+    // [PASCAL PORT] Core sector scan extracted to fat16.pas - one implementation
+    // shared with kernel FAT16.cs. Driver side reads all fields including owner
+    // UID/GID and permissions for access control.
+    [DllImport("*", EntryPoint = "FAT16_CheckSector_Pas")]
+    private static extern byte CheckSector_Pas(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms) {
-        FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)buf;
-        for (int i = 0; i < 16; i++) {
-            if (entries[i].Name[0] == 0x00) return 2; // 2 = ABORT
-            if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
-            bool match = true;
-            for (int j = 0; j < 11; j++) if (entries[i].Name[j] != formattedName[j]) { match = false; break; }
-            if (match) { 
-                *outCluster = entries[i].FirstClusterLow; *outSize = entries[i].FileSize; *outAttr = entries[i].Attributes; 
-                *outOwnerUID = entries[i].OwnerUID; *outOwnerGID = entries[i].OwnerGID; *outPerms = entries[i].Permissions;
-                return 1; // 1 = FOUND
-            }
-        }
-        return 0; // 0 = CONTINUE
+        return CheckSector_Pas(buf, formattedName, outCluster, outSize, outAttr, outOwnerUID, outOwnerGID, outPerms);
     }
 
     private static bool FindEntry(char* name, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms, byte* sectorBuf, byte* fatBuf, byte* formattedName)
