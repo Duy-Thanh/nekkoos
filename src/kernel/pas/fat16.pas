@@ -36,6 +36,14 @@ function FAT16_FindFreeCluster_Pas(cluster: Word; fatBuf: Pointer; fatSectorOffs
 
 function FAT16_IsValidCluster_Pas(cluster: Word): Byte; cdecl; public name 'FAT16_IsValidCluster_Pas';
 
+{ Get next cluster in FAT chain: extracts the FAT entry for `cluster` from
+  a FAT sector buffer (512 bytes). Pure logic — no I/O. }
+function FAT16_GetNextCluster_Pas(fatBuf: Pointer; cluster: Word): Word; cdecl; public name 'FAT16_GetNextCluster_Pas';
+
+{ Get offset within FAT sector buffer for a cluster's FAT entry.
+  In FAT16, each entry is 2 bytes: offset = (cluster * 2) mod 512. }
+function FAT16_FatEntryOffset_Pas(cluster: Word): Cardinal; cdecl; public name 'FAT16_FatEntryOffset_Pas';
+
 implementation
 
 function FAT16_CheckSector_Pas(buf: Pointer; formattedName: PByte; outCluster: PWord; outSize: PCardinal; outAttr: PByte; outOwnerUID: PWord; outOwnerGID: PWord; outPerms: PWord): Byte; cdecl;
@@ -172,6 +180,22 @@ begin
   FAT16_IsValidCluster_Pas := 0;
   if (cluster >= FAT16_MIN_CLUSTER) and (cluster <= FAT16_MAX_CLUSTER) then
     FAT16_IsValidCluster_Pas := 1;
+end;
+
+function FAT16_GetNextCluster_Pas(fatBuf: Pointer; cluster: Word): Word; cdecl;
+var
+  fatOffset: UInt32;
+begin
+  { In FAT16, each FAT entry is 2 bytes: fatOffset = cluster * 2 }
+  fatOffset := UInt32(cluster) * 2;
+  { Read 16-bit FAT entry within the 512-byte sector buffer }
+  Result := PWord(UInt64(fatBuf) + (fatOffset mod 512))^;
+end;
+
+function FAT16_FatEntryOffset_Pas(cluster: Word): Cardinal; cdecl;
+begin
+  { In FAT16, each FAT entry is 2 bytes: offset = (cluster * 2) mod 512 }
+  Result := (UInt32(cluster) * 2) mod 512;
 end;
 
 end.

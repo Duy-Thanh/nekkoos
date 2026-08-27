@@ -188,6 +188,12 @@ public static unsafe class FAT16
     [DllImport("*", EntryPoint = "FAT16_ParseBPB_Pas")]
     private static extern void ParseBPB_Pas(byte* bpb, uint* outRootDirSectors, uint* outRootDirLba, uint* outFirstDataSector);
 
+    [DllImport("*", EntryPoint = "FAT16_GetNextCluster_Pas")]
+    private static extern ushort GetNextCluster_Pas(byte* fatBuf, ushort cluster);
+
+    [DllImport("*", EntryPoint = "FAT16_FatEntryOffset_Pas")]
+    private static extern uint FatEntryOffset_Pas(ushort cluster);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {
         if (buf == null || formattedName == null || outCluster == null || outSize == null || outAttr == null) {
@@ -293,8 +299,7 @@ public static unsafe class FAT16
                 }
                 if (found || abort) break;
 
-                uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+                uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
 
                 // Kiểm tra xem clusterLba có hợp lệ không
                 if (clusterLba > 0xFFFFFF) {
@@ -307,7 +312,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                 }
                 
                 ATA.ReadSector(fatSector, fatBuf);
-                cluster = *(ushort*)(fatBuf + (fatOffset % 512));
+                cluster = GetNextCluster_Pas(fatBuf, cluster);
             }
             Heap.Free(fatBuf);
         }
@@ -490,10 +495,9 @@ if (DaemonWaitTimedOut(&dspinRf)) {
                 }
                 if (bytesRead >= fileSize) break;
             }
-            uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+            uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
 
-             // Kiểm tra xem fatSector có hợp lệ không
+            // Kiểm tra xem fatSector có hợp lệ không
             if (fatSector > 0xFFFFFF) {
                 Terminal.SetColor(0x00FF0000);
                 fixed (char* err = "[!] FATAL: Invalid FAT sector in ReadFile!\n\0") Terminal.Print(err);
@@ -504,8 +508,8 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                 return null;
             }
 
-            ATA.ReadSector(fatSector, fatBuf); 
-            cluster = *(ushort*)(fatBuf + (fatOffset % 512)); 
+                ATA.ReadSector(fatSector, fatBuf);
+                cluster = GetNextCluster_Pas(fatBuf, cluster);
         }
         
         Heap.Free(sectorBuf); 
@@ -581,8 +585,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
             fixed (char* err = "[!] FATAL: Invalid cluster number in GetFatEntry!\n\0") Terminal.Print(err);
             return 0;
         }
-        uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+        uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         // Kiểm tra xem fatSector có hợp lệ không
         if (fatSector > 0xFFFFFF) {
             Terminal.SetColor(0x00FF0000);
@@ -596,7 +599,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
             return 0;
         }
         ATA.ReadSector(fatSector, buf);
-        ushort val = *(ushort*)(buf + (fatOffset % 512));
+        ushort val = GetNextCluster_Pas(buf, cluster);
         Heap.Free(buf);
         return val;
     }
@@ -617,8 +620,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
             return;
         }
 
-        uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+        uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         
         // Kiểm tra xem fatSector có hợp lệ không
         if (fatSector > 0xFFFFFF) {
@@ -634,7 +636,8 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
             return;
         }
         ATA.ReadSector(fatSector, buf);
-        ushort* ptr = (ushort*)(buf + (fatOffset % 512));
+        uint entryOffset = FatEntryOffset_Pas(cluster);
+        ushort* ptr = (ushort*)(buf + entryOffset);
         *ptr = value;
         ATA.WriteSector(fatSector, buf);
         ATA.WriteSector(fatSector + CachedBPB.FATSize16, buf);
@@ -1280,8 +1283,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
                     ATA.ReadSector(clusterLba + (uint)s, sectorBuf);
                     PrintEntriesInline(sectorBuf);
                 }
-                uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+                uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
                 
                 // Kiểm tra xem fatSector có hợp lệ không
                 if (fatSector > 0xFFFFFF) {
@@ -1294,7 +1296,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                 }
 
                 ATA.ReadSector(fatSector, fatBuf);
-                cluster = *(ushort*)(fatBuf + (fatOffset % 512));
+                cluster = GetNextCluster_Pas(fatBuf, cluster);
             }
             Heap.Free(fatBuf);
         }

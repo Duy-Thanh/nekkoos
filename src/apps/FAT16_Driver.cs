@@ -246,18 +246,17 @@ public unsafe class Program
 
     public static ushort GetFatEntry(ushort cluster, byte* fatBuf)
     {
-        uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+        uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         ReadSectorIPC(fatSector, fatBuf);
-        return *(ushort*)(fatBuf + (fatOffset % 512));
+        return GetNextCluster_Pas(fatBuf, cluster);
     }
 
     public static void SetFatEntry(ushort cluster, ushort value, byte* fatBuf)
     {
-        uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+        uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         ReadSectorIPC(fatSector, fatBuf);
-        ushort* ptr = (ushort*)(fatBuf + (fatOffset % 512));
+        uint entryOffset = FatEntryOffset_Pas(cluster);
+        ushort* ptr = (ushort*)(fatBuf + entryOffset);
         *ptr = value;
         WriteSectorIPC(fatSector, fatBuf); 
         WriteSectorIPC(fatSector + CachedBPB.FATSize16, fatBuf); 
@@ -267,6 +266,12 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
     // độc lập kiến trúc CPU, C# chỉ giữ shim mỏng theo recipe trong ARCHITECTURE.md §3.
     [DllImport("*", EntryPoint = "FormatFATName_Pas")]
     public static extern void FormatFATName(char* input, byte* output);
+
+    [DllImport("*", EntryPoint = "FAT16_GetNextCluster_Pas")]
+    private static extern ushort GetNextCluster_Pas(byte* fatBuf, ushort cluster);
+
+    [DllImport("*", EntryPoint = "FAT16_FatEntryOffset_Pas")]
+    private static extern uint FatEntryOffset_Pas(ushort cluster);
 
     [DllImport("*", EntryPoint = "FatNameValid_Pas")]
     private static extern uint FatNameValid(char* input);
@@ -348,8 +353,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                     if (st == 2) { abort = true; break; }
                 }
                 if (found || abort) break;
-                uint fatOffset = (uint)cluster * 2;
-uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
+                uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
                 
                 // Kiểm tra xem fatSector có hợp lệ không
                 if (fatSector > 0xFFFFFF) {
@@ -357,7 +361,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                     return false;
                 }
 
-                ReadSectorIPC(fatSector, fatBuf); cluster = *(ushort*)(fatBuf + (fatOffset % 512));
+                ReadSectorIPC(fatSector, fatBuf); cluster = GetNextCluster_Pas(fatBuf, cluster);
             }
         }
         return *outSize > 0 || *outAttr != 0 || *outCluster != 0; 
