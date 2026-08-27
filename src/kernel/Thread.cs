@@ -51,6 +51,10 @@ public unsafe struct Thread
 
 public static unsafe class Scheduler
 {
+    // [PASCAL PORT] VRuntime thread selection ported to scheduler_dispatch.pas
+    [DllImport("*", EntryPoint = "SelectNextThread_Pas")]
+    private static extern byte SelectNextThread_Pas(Thread* threads, int threadCount, uint coreId, ulong currentTicks, int idleId, out int outBestId, out byte outWokeAny);
+
     public static ushort GetCS() => Arch.GetCs();
     public static ushort GetSS() => Arch.GetSs();
     public static void Yield() => Arch.ForceYield();
@@ -350,33 +354,12 @@ public static unsafe class Scheduler
         // Cũng phải chặn ở đây nữa!
         if (current != -1) Threads[current].ExecutingOnCore = -1;
 
-        ulong currentTicks = SystemTicks; 
-        ulong sysMinVRuntime = 0xFFFFFFFFFFFFFFFF;
-        for (int i = 0; i < ThreadCount; i++) {
-            if (Threads[i].Active == 1 && Threads[i].ExecutingOnCore == -1 && Threads[i].Priority != 99) {
-                if (Threads[i].VRuntime < sysMinVRuntime) sysMinVRuntime = Threads[i].VRuntime;
-            }
-        }
+        ulong currentTicks = SystemTicks;
+        int idleId = IdleThreadIds[coreId];
 
-        for (int i = 0; i < ThreadCount; i++) {
-            if (Threads[i].Active == 2 && currentTicks >= Threads[i].WakeUpTick) {
-                Threads[i].Active = 1; 
-                if (sysMinVRuntime != 0xFFFFFFFFFFFFFFFF && Threads[i].VRuntime < sysMinVRuntime) {
-                    Threads[i].VRuntime = sysMinVRuntime; 
-                }
-            }
-        }
-
-        int bestId = -1; 
-        ulong minVRuntime = 0xFFFFFFFFFFFFFFFF;
-        for (int i = 0; i < ThreadCount; i++) {
-            if (Threads[i].Active == 1 && Threads[i].ExecutingOnCore == -1 && Threads[i].Priority != 99 && Threads[i].VRuntime < minVRuntime) {
-                minVRuntime = Threads[i].VRuntime;
-                bestId = i;
-            }
-        }
-
-        if (bestId == -1) bestId = IdleThreadIds[coreId];
+        int bestId;
+        byte wokeAny;
+        SelectNextThread_Pas(Threads, ThreadCount, coreId, currentTicks, idleId, out bestId, out wokeAny);
 
         CurrentThreadIds[coreId] = bestId;
         Threads[bestId].ExecutingOnCore = (int)coreId;

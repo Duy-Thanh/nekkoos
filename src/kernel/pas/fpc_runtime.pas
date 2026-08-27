@@ -72,6 +72,18 @@ const
   { KASLR magic signature }
   KASLR_MAGIC_SIGNATURE: UInt64 = $1337BEEFCAFE8BAD;
 
+  { ========================================================================
+    THREAD STRUCT OFFSETS (Pack=1, from Thread.cs)
+    Used by scheduler_dispatch.pas for VRuntime-based thread selection.
+    ======================================================================== }
+  THREAD_SIZE: Cardinal = 656;
+  THREAD_ACTIVE_OFFSET: Cardinal = 8;
+  THREAD_EXEC_CORE_OFFSET: Cardinal = 16;
+  THREAD_WAKEUP_TICK_OFFSET: Cardinal = 112;
+  THREAD_VRUNTIME_OFFSET: Cardinal = 120;
+  THREAD_PRIORITY_OFFSET: Cardinal = 128;
+  THREAD_RSP_OFFSET: Cardinal = 0;
+
   { EFI_MEMORY_DESCRIPTOR layout (LayoutKind.Sequential, no Pack)
     Type(4) + Pad(4) + PhysicalStart(8) + VirtualStart(8) + NumberOfPages(8) + Attribute(8) = 40 bytes
     DescriptorSize from GetMemoryMap is typically 48 bytes (with trailing padding) }
