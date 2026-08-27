@@ -72,6 +72,16 @@ const
   { KASLR magic signature }
   KASLR_MAGIC_SIGNATURE: UInt64 = $1337BEEFCAFE8BAD;
 
+  { EFI_MEMORY_DESCRIPTOR layout (LayoutKind.Sequential, no Pack)
+    Type(4) + Pad(4) + PhysicalStart(8) + VirtualStart(8) + NumberOfPages(8) + Attribute(8) = 40 bytes
+    DescriptorSize from GetMemoryMap is typically 48 bytes (with trailing padding) }
+  EFI_MEM_DESC_SIZE: Cardinal = 48;
+  EFI_DESC_TYPE_OFFSET: Cardinal = 0;
+  EFI_PHYS_START_OFFSET: Cardinal = 8; { aligned: 4-byte Type + 4-byte pad }
+  EFI_NUM_PAGES_OFFSET: Cardinal = 24; { 8 + 8 + 8 = 24 }
+  EFI_MEM_TYPE_CONVENTIONAL: Cardinal = 7;
+  PAGE_SIZE: Cardinal = 4096;
+
 implementation
 
 end.

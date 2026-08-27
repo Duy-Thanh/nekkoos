@@ -38,14 +38,21 @@ Kernel.exe (bflat)  →  Kernel.exe (FPC native)
 
 ## Phụ thuộc & Thứ Tự Thực Hiện
 
-### Giai đoạn 1: Nền tảng (Foundation)
-**Mục tiêu**: Tạo framework cho việc port thế nào
+## Tiến Độ (Updated 2026-08-27)
+### Giai đoạn 1: Nền tảng ✅ HOÀN THÀNH
+- 1.1 ✅ Tạo `fpc_runtime.pas` — PE constants, type aliases (built-in types only, no RTTI)
+- 1.2 ✅ Thêm `-CD` flag vào compile_pascal.sh
+- 1.3 ✅ pe_loader.pas là template mẫu cho module kế tiếp
 
-| Bước | Công việc | Rủi ro |
-|---|---|---|
-| 1.1 | Tạo `fpc_runtime.pas` — wrapper quanh `System` unit, định nghĩa types tương thích Win64 calling convention | Thấp |
-| 1.2 | Thêm `build.sh` flag `--fpc-only` để build một target bằng FPC thuần | Trung bình |
-| 1.3 | Tạo template `.pas` unit + matching `.cs` shim (DllImport `_Pas`) | Thấp |
+### Giai đoạn 2: Kernel core logic (porting)
+- 2.1 ✅ **Completed**: `PELoader.cs` → `pe_loader.pas`
+  - 4 exported functions: ValidateHeaders, CopySections, ApplyRelocations, FindAppMainExport
+  - 256 C# lines → 321 Pascal lines (logic chi tiết hơn, bounds checks)
+  - Commit 5b223e8: 9/9 smoke test pass
+- 2.2 ⏳ `Kernel.cs` → pending (1300 lines, boot sequence)
+- 2.3 ⏳ `Syscall.cs` → pending (syscall dispatch)
+- 2.4 ⏳ `FAT16.cs` → pending (cluster chain walk, GetFatEntry/SetFatEntry)
+- 2.5 ⏳ `ATA.cs` → pending (ATA register I/O wrapper)
 
 ### Giai đoạn 2: Port kernel core logic (theo thứ tự dependency)
 **Mỗi bước**: port logic → compile Pascal → update build.sh ldflags → rebuild → smoke test
@@ -69,7 +76,7 @@ Kernel.exe (bflat)  →  Kernel.exe (FPC native)
 ### Giai đoạn 4: Chuyển build đầy đủ sang FPC
 | Bước | Công việc |
 |---|---|
-| 4.1 | Thử build Kernel.exe toàn bộ bằng FPC (không qua bflat) |
+| 4.1 | ⏳ Thử build Kernel.exe toàn bộ bằng FPC (không qua bflat) |
 | 4.2 | Thử build Shell.exe, FAT16.exe, SysLogon.exe bằng FPC |
 | 4.3 | Gỡ bỏ từng target ra khỏi bflat |
 

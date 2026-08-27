@@ -23,6 +23,12 @@ public struct EFI_MEMORY_DESCRIPTOR
 
 public static unsafe class Program
 {
+    // [PASCAL PORT] EFI memory map scanning ported to memmap_scan.pas
+    [DllImport("*", EntryPoint = "ScanMemmap_Pas")]
+    private static extern byte ScanMemmap_Pas(byte* mapPtr, ulong numEntries, ulong descSize, ulong fbBase, ulong fbSize,
+        out ulong totalPages, out ulong freePages, out ulong largestFreeStart,
+        out ulong largestFreePages, out ulong maxPhysicalAddr);
+
     // ==========================================================
     // KHAI BÁO RÀO CHẮN PHẦN CỨNG & COMPILER
     // ==========================================================
@@ -176,33 +182,14 @@ public static unsafe class Program
         Terminal.SetColor(0x0000FFFF); 
         fixed (char* mScan = "[*] Reading memory map...\n\0") Terminal.Print(mScan);
 
-        ulong totalPages = 0; ulong freePages = 0; ulong largestFreeStart = 0; ulong largestFreePages = 0;
-        ulong maxPhysicalAddr = 0; 
+        ulong totalPages, freePages, largestFreeStart, largestFreePages, maxPhysicalAddr;
         ulong numEntries = bootInfo->MemoryMapSize / bootInfo->DescriptorSize;
-        byte* mapPtr = (byte *)bootInfo->MemoryMap;
 
-        for (ulong i = 0; i < numEntries; i++)
-        {
-            EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mapPtr + (i * bootInfo->DescriptorSize));
-            totalPages += desc->NumberOfPages;
-
-            ulong endAddr = desc->PhysicalStart + (desc->NumberOfPages * 4096);
-            if (endAddr > maxPhysicalAddr) maxPhysicalAddr = endAddr;
-
-            if (desc->Type == 7) {
-                freePages += desc->NumberOfPages;
-                if (desc->NumberOfPages > largestFreePages) {
-                    largestFreePages = desc->NumberOfPages;
-                    largestFreeStart = desc->PhysicalStart;
-                }
-            }
-        }
-
-        ulong fbEnd = bootInfo->FrameBufferBase + bootInfo->FrameBufferSize;
-        if (fbEnd > maxPhysicalAddr) maxPhysicalAddr = fbEnd;
-
-        maxPhysicalAddr += 0x100000000UL; 
-        maxPhysicalAddr = (maxPhysicalAddr + 2097151UL) & ~2097151UL;
+        ScanMemmap_Pas((byte*)bootInfo->MemoryMap, numEntries,
+            bootInfo->DescriptorSize,
+            bootInfo->FrameBufferBase, bootInfo->FrameBufferSize,
+            out totalPages, out freePages, out largestFreeStart,
+            out largestFreePages, out maxPhysicalAddr);
 
         PMM.Init(bootInfo, largestFreeStart);
 
