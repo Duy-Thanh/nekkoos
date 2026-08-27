@@ -9,9 +9,18 @@
   **lint gate trong build.sh cấm mọi DllImport ngoài src/arch/** (trừ shim
   `_Pas`, AppMainAsm, và boot Out8/In8 standalone). Vi phạm = build fail.
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
-  terminal (+ arch_interface + HAL impls). libc.pas mới thêm:
+  terminal fat16 (+ arch_interface + HAL impls). libc.pas mới thêm:
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
   SplitTwoArgs_Pas, MemSet_Pas delegation, StrCmp_Pas, StrStartsWith_Pas.
+  fat16.pas cung cấp 6 helper protocol thuần: CheckSector_Pas,
+  ClusterLba_Pas, FatSectorForCluster_Pas, ParseBPB_Pas,
+  FindFreeCluster_Pas, IsValidCluster_Pas.
+- FAT16 protocol đã tách khỏi raw I/O path: mọi cluster-LBA/FAT-sector/BPB
+  math trong kernel FAT16.cs và userland FAT16_Driver.cs hiện gọi qua
+  fat16.pas. 25+ call sites đã wire (ClusterLba_Pas, FatSectorForCluster_Pas,
+  ParseBPB_Pas, FindFreeCluster_Pas). Kernel FindFreeCluster inner loop
+  thay thế bằng FindFreeCluster_Pas. Init/AppMain thay 3 dòng BPB math
+  bằng ParseBPB_Pas (đã xử lý BytesPerSector=0 default).
 - Login/Shell đã normalize hết helper chuỗi lên libc.pas (roadmap #1 XONG).
   Lưu ý: bản ClearBuffer cũ có bug ABI 2 tham số vs 3 — đã fix trong phiên
   2026-08-27 (commit 9ac1100).
@@ -40,6 +49,6 @@
 
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
 1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell về libc.pas~~ ✅ XONG
-2. Tách protocol FAT16 daemon khỏi port-I/O raw path
+2. ~~Tách protocol FAT16 daemon khỏi port-I/O raw path~~ ✅ XONG
 3. Terminal API vẽ bảng cho ls (đã align cột 12, có thể nâng cấp bảng đẹp hơn)
 4. ARM64 port theo checklist ARCHITECTURE.md §5 (khung đã đầy đủ)

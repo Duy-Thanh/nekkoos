@@ -384,6 +384,17 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
         int digits = 1; ulong t2 = num; while (t2 >= 10) { digits++; t2 /= 10; } if (num == 0) digits = 1;
         for (int s = 0; s < 10 - digits; s++) { fixed(char* sp = " \0") AppendStr(sp, outStr, ref outIdx, maxChars); }
     }
+    public static void FormatPermissions(ushort perms, char type, char* outStr, ref int outIdx, int maxChars) {
+        AppendChar(type, outStr, ref outIdx, maxChars);
+        char r = 'r', w = 'w', x = 'x', d = '-';
+        for (int shift = 8; shift >= 0; shift--) {
+            if ((perms & (1 << shift)) != 0) {
+                if (shift % 3 == 2) AppendChar(r, outStr, ref outIdx, maxChars);
+                else if (shift % 3 == 1) AppendChar(w, outStr, ref outIdx, maxChars);
+                else AppendChar(x, outStr, ref outIdx, maxChars);
+            } else AppendChar(d, outStr, ref outIdx, maxChars);
+        }
+    }
     public static void ProcessLSSector(byte* buf, char* outStr, ref int outIdx, int maxChars) {
         // Kiểm tra xem các con trỏ có null không
         if (buf == null || outStr == null) {
@@ -401,17 +412,19 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
         for (int i = 0; i < 16; i++) {
             if (entries[i].Name[0] == 0x00) return;
             if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
-            // [FIX #5 + ALIGN] In 8.3 có dấu chấm + pad cột tên cố định 12 ký tự
             int printed = 0;
             for (int j = 0; j < 8; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); printed++; }
             if (entries[i].Name[8] != (byte)' ' && entries[i].Name[8] != 0) {
                 AppendChar('.', outStr, ref outIdx, maxChars); printed++;
                 for (int j = 8; j < 11; j++) { char c = (char)entries[i].Name[j]; if (c == ' ' || c == 0) break; AppendChar((c >= 32 && c <= 126) ? c : ' ', outStr, ref outIdx, maxChars); printed++; }
             }
-            while (printed < 12) { AppendChar(' ', outStr, ref outIdx, maxChars); printed++; }
+            while (printed < 16) { AppendChar(' ', outStr, ref outIdx, maxChars); printed++; }
             fixed(char* sep1 = " | \0") AppendStr(sep1, outStr, ref outIdx, maxChars);
+            char permType = ((entries[i].Attributes & 0x10) != 0) ? 'd' : '-';
+            FormatPermissions(entries[i].Permissions, permType, outStr, ref outIdx, maxChars);
+            fixed(char* sep2 = " | \0") AppendStr(sep2, outStr, ref outIdx, maxChars);
             AppendNumPadded(entries[i].FileSize, outStr, ref outIdx, maxChars);
-            fixed(char* sep2 = " bytes | \0") AppendStr(sep2, outStr, ref outIdx, maxChars);
+            fixed(char* sep3 = " bytes | \0") AppendStr(sep3, outStr, ref outIdx, maxChars);
             if ((entries[i].Attributes & 0x10) != 0) { fixed(char* dir = "<DIR>\n\0") AppendStr(dir, outStr, ref outIdx, maxChars); }
             else { fixed(char* file = "FILE\n\0") AppendStr(file, outStr, ref outIdx, maxChars); }
         }

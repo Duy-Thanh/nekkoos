@@ -1156,7 +1156,6 @@ if (DaemonWaitTimedOut(&dspinLs)) {
             if (entries[i].Name[0] == 0xE5 || entries[i].Attributes == 0x0F || (entries[i].Attributes & 0x08) != 0) continue;
 
             Terminal.SetColor(0x00FFFFFF);
-            // [FIX #5 + ALIGN] In 8.3 có dấu chấm + pad cột tên cố định 12 ký tự
             int printed = 0;
             for (int j = 0; j < 8; j++) {
                 char c = (char)entries[i].Name[j];
@@ -1171,7 +1170,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
                     Terminal.DrawChar((c >= 32 && c <= 126) ? c : ' '); printed++;
                 }
             }
-            for (int s2 = printed; s2 < 12; s2++) Terminal.DrawChar(' ');
+            for (int s2 = printed; s2 < 16; s2++) Terminal.DrawChar(' ');
             
             fixed (char* sep1 = " | \0") Terminal.Print(sep1);
             Terminal.SetColor(0x0000FF00);
@@ -1203,7 +1202,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
             while(true) {
                 if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 41) {
                     Terminal.SetColor(0x00FFFF00);
-                    fixed (char* header = "FILENAME    | SIZE       | TYPE\n---------------------------------\n\0") Terminal.Print(header);
+                    fixed (char* header = "FILENAME        | PERMS    | SIZE       | TYPE\n-------------------------------------------------\n\0") Terminal.Print(header);
                     Terminal.SetColor(0x00FFFFFF);
                     
                     KernelSharedMemBlock* shared = GetSharedMem();
@@ -1228,7 +1227,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
         byte* sectorBuf = (byte*)Heap.Alloc(512);
 
         Terminal.SetColor(0x00FFFF00);
-        fixed (char* header = "FILENAME    | SIZE       | TYPE\n---------------------------------\n\0") Terminal.Print(header);
+        fixed (char* header = "FILENAME        | SIZE       | TYPE\n------------------------------------\n\0") Terminal.Print(header);
 
         if (CurrentDirCluster == 0) {
             // Kiểm tra xem RootDirSectors có hợp lệ không
