@@ -495,7 +495,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
         if (CurrentDirCluster == 0) {
             if (callerUID == 0) canCreateHere = true;
         } else {
-            uint curDirLba = FirstDataSector + ((uint)(CurrentDirCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                        uint curDirLba = ClusterLba_Pas(FirstDataSector, CurrentDirCluster, CachedBPB.SectorsPerCluster);
             ReadSectorIPC(curDirLba, sectorBuf);
             FAT_DirectoryEntry* dotEntry = (FAT_DirectoryEntry*)sectorBuf;
             if (CheckAccess(callerUID, callerGID, dotEntry[0].OwnerUID, dotEntry[0].OwnerGID, dotEntry[0].Permissions, W_OK)) canCreateHere = true;
@@ -518,7 +518,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
 
         if (newCluster == 0) { SyscallSendIPC(client, responseType, 0); SyscallYieldApp(); return; }
 
-        uint newClusterLba = FirstDataSector + ((uint)(newCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+        uint newClusterLba = ClusterLba_Pas(FirstDataSector, newCluster, CachedBPB.SectorsPerCluster);
         for(int b = 0; b < 512; b++) sectorBuf[b] = 0;
         for(int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(newClusterLba + (uint)s, sectorBuf); }
 
@@ -568,7 +568,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                 if (expandCluster == 0) {
                     SetFatEntry(newCluster, 0x0000, fatBuf); FlushCacheIPC(); SyscallSendIPC(client, responseType, 0);
                 } else {
-                    uint expandLba = FirstDataSector + ((uint)(expandCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                                uint expandLba = ClusterLba_Pas(FirstDataSector, expandCluster, CachedBPB.SectorsPerCluster);
                     for (int b = 0; b < 512; b++) sectorBuf[b] = 0;
                     for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(expandLba + (uint)s, sectorBuf); }
                     FAT_DirectoryEntry* entries = (FAT_DirectoryEntry*)sectorBuf;
@@ -659,7 +659,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
         // de DoMkdir/CheckAccess (doc dotEntry[0].OwnerUID) phan anh dung owner moi.
         // curAttr da co tu FindEntry o tren; curCluster la first cluster cua thu muc do.
         if (found && (curAttr & 0x10) != 0 && curCluster >= 2) {
-            uint dotLba = FirstDataSector + ((uint)(curCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            uint dotLba = ClusterLba_Pas(FirstDataSector, curCluster, CachedBPB.SectorsPerCluster);
             ReadSectorIPC(dotLba, sectorBuf);
             FAT_DirectoryEntry* dotEntries = (FAT_DirectoryEntry*)sectorBuf;
             // entry 0 = ".", entry 1 = ".."
@@ -975,7 +975,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                     if (CurrentDirCluster == 0) {
                         if (callerUID == 0) canCreateHere = true; 
                     } else {
-                        uint curDirLba = FirstDataSector + ((uint)(CurrentDirCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            uint curDirLba = ClusterLba_Pas(FirstDataSector, CurrentDirCluster, CachedBPB.SectorsPerCluster);
                         ReadSectorIPC(curDirLba, sectorBuf);
                         FAT_DirectoryEntry* dotEntry = (FAT_DirectoryEntry*)sectorBuf;
                         if (CheckAccess(callerUID, callerGID, dotEntry[0].OwnerUID, dotEntry[0].OwnerGID, dotEntry[0].Permissions, W_OK)) canCreateHere = true;
@@ -1097,7 +1097,7 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
                                 }
                                 FlushCacheIPC(); SyscallSendIPC(client, 35, 0); 
                             } else {
-                                uint expandLba = FirstDataSector + ((uint)(expandCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                    uint expandLba = ClusterLba_Pas(FirstDataSector, expandCluster, CachedBPB.SectorsPerCluster);
                                 for (int b = 0; b < 512; b++) sectorBuf[b] = 0;
                                 for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { WriteSectorIPC(expandLba + (uint)s, sectorBuf); }
 
