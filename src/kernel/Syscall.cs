@@ -23,6 +23,10 @@ public unsafe struct ProcessInfo
 
 public static unsafe class Syscall
 {
+    // [PASCAL PORT] User pointer validation ported to syscall_security.pas
+    [DllImport("*", EntryPoint = "IsValidUserPtr_Pas")]
+    private static extern byte IsValidUserPtr_Pas(int threadId, ulong virtAddr, ulong pml4Phys, ulong totalPages);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -38,59 +42,20 @@ public static unsafe class Syscall
     // 9=vào nhánh builtin, 10=ListDir gọi, 11=ListDir xong, 12=trước free cuối,
     // 13=hoàn tất sạch.
 
-    // Mặt nạ địa chỉ vật lý chuẩn x86_64 (bit 12->51), giống hệt VMM.cs's PHYS_ADDR_MASK.
-    private const ulong PHYS_ADDR_MASK = 0x000FFFFFFFFFF000UL;
+    // [PASCAL PORT] PHYS_ADDR_MASK now defined in syscall_security.pas
+    // (kept here as no-op for reference; all page-table logic ported)
 
-    // [FIX CRITICAL #2] Trước đây chỉ kiểm tra ptr có nằm trong dải canonical hợp lệ hay
-    // không (0x1000 -> 0x00007FFFFFFFFFFF) - KHÔNG hề xác minh trang đó có thực sự được
-    // MAP (Present) trong PML4 của chính tiến trình gọi syscall hay chưa. Một con trỏ
-    // canonical nhưng CHƯA MAP vẫn lọt qua kiểm tra này, rồi bị Ring0 dereference thẳng ở
-    // các syscall (case 1/8/10/14/51/52/88) -> Page Fault xảy ra Ở RING 0
-    // (InterruptHandlers.cs PageFaultHandler, nhánh Ring0) -> BroadcastApocalypse() +
-    // HardReboot/LegacyReboot/HaltSystemForever - tức là MỘT SYSCALL TỪ RING3 THƯỜNG CŨNG
-    // CÓ THỂ RESET/TREO TOÀN BỘ MÁY, không chỉ giết tiến trình gọi nó. Fix: đi bộ (walk)
-    // PML4 của chính luồng gọi syscall (Scheduler.CurrentThreadId), xác minh cờ Present
-    // (bit 0) VÀ User (bit 2) tồn tại xuyên suốt PML4 -> PDPT -> PD -> PT (hoặc dừng sớm ở
-    // PD nếu là Huge Page 2MB) trước khi coi con trỏ là hợp lệ để Ring0 đụng vào.
-    private static bool IsPageMappedForUser(int threadId, ulong virtAddr)
-    {
-        if (threadId < 0 || threadId >= Scheduler.ThreadCount) return false;
-
-        ulong pml4Phys = Scheduler.Threads[threadId].AddrSpace;
-        if (pml4Phys == 0 || pml4Phys >= PMM.TotalPages * 4096UL) return false;
-        ulong* pml4 = (ulong*)pml4Phys;
-
-        ulong pml4Index = (virtAddr >> 39) & 0x1FF;
-        ulong pdptIndex = (virtAddr >> 30) & 0x1FF;
-        ulong pdIndex   = (virtAddr >> 21) & 0x1FF;
-        ulong ptIndex   = (virtAddr >> 12) & 0x1FF;
-
-        ulong e4 = pml4[pml4Index];
-        if ((e4 & 0x01) == 0 || (e4 & 0x04) == 0) return false; // Present + User
-
-        ulong* pdpt = (ulong*)(e4 & PHYS_ADDR_MASK);
-        if (pdpt == null || (ulong)pdpt >= PMM.TotalPages * 4096UL) return false;
-        ulong e3 = pdpt[pdptIndex];
-        if ((e3 & 0x01) == 0 || (e3 & 0x04) == 0) return false;
-
-        ulong* pd = (ulong*)(e3 & PHYS_ADDR_MASK);
-        if (pd == null || (ulong)pd >= PMM.TotalPages * 4096UL) return false;
-        ulong e2 = pd[pdIndex];
-        if ((e2 & 0x01) == 0 || (e2 & 0x04) == 0) return false;
-        if ((e2 & 0x80) != 0) return true; // Huge Page 2MB - đã Present + User, dừng ở đây
-
-        ulong* pt = (ulong*)(e2 & PHYS_ADDR_MASK);
-        if (pt == null || (ulong)pt >= PMM.TotalPages * 4096UL) return false;
-        ulong e1 = pt[ptIndex];
-        if ((e1 & 0x01) == 0 || (e1 & 0x04) == 0) return false;
-
-        return true;
-    }
-
+    // [PASCAL PORT] IsPageMappedForUser + IsValidUserPtr replaced with
+    // syscall_security.pas IsValidUserPtr_Pas for the full PML4 walk.
+    // Returns true if ptr is within canonical user range AND mapped with
+    // Present + User bits in the calling thread's address space.
     private static bool IsValidUserPtr(ulong ptr)
     {
         if (ptr < 0x1000 || ptr > 0x00007FFFFFFFFFFF) return false;
-        return IsPageMappedForUser(Scheduler.CurrentThreadId, ptr);
+        int tid = Scheduler.CurrentThreadId;
+        if (tid < 0 || tid >= Scheduler.ThreadCount) return false;
+        ulong pml4Phys = Scheduler.Threads[tid].AddrSpace;
+        return IsValidUserPtr_Pas(tid, ptr, pml4Phys, PMM.TotalPages * 4096UL) != 0;
     }
 
     // [SUDO BUILTIN] Tach "arg1 arg2..." thanh 2 phan (vd "755 /file" -> "755","/file"),

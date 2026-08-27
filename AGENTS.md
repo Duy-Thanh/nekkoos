@@ -46,6 +46,9 @@
 - Shell.ClearBuffer có bug ABI 2 tham số vs 3 đối với `MemSet_Pas` —
   đã fix ở commit 9ac1100. Mọi shim `_Pas` mới phải so khớp signature với
   `*.pas` export (không thừa nhận/thiếu tham số).
+- **RTTI trap**: FPC sinh RTTI cho record types + type aliases → lld không resolve
+  `RTTI_$SYSTEM_*$indirect` symbols. Fix: dùng built-in types (Pointer, PByte, ...)
+  trong exports, thêm `{$TYPEINFO OFF}` và `-CD` flag. Xem `heap.pas`.
 
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
 1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell vên libc.pas~~ ✅ XONG
