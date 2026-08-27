@@ -17,18 +17,18 @@ mod_src() {
     esac
 }
 
-PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime)
+PASCAL_MODULES=(libc prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader)
 ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
-    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "$(mod_src "${mod}")"
+    fpc -Twin64 -O1 -CX -Ur -g- -Si -CD @.fpc/fpc.cfg -FUbuild/ "$(mod_src "${mod}")"
 done
 
 # Compile x86_64 architecture-specific modules
 for mod in "${ARCH_X86_64_MODULES[@]}"; do
     echo "[Pascal] Compiling arch/x86_64/${mod}.pas for Win64 target..."
-    fpc -Twin64 -O1 -CX -Ur -g- -Si @.fpc/fpc.cfg -FUbuild/ "src/arch/x86_64/${mod}.pas"
+    fpc -Twin64 -O1 -CX -Ur -g- -Si -CD @.fpc/fpc.cfg -FUbuild/ "src/arch/x86_64/${mod}.pas"
 done
 
 echo "[Pascal] Stripping bogus type-0 (ABSOLUTE/placeholder) relocations from COFF object files..."
