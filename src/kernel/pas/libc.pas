@@ -31,6 +31,11 @@ function FatNameValid(input: PWord): Cardinal; cdecl; public name 'FatNameValid_
 function OctalStrToUInt(str: PWord): Cardinal; cdecl; public name 'OctalStrToUInt_Pas';
 function SplitTwoArgs(rest: PWord; outFirst: PWord; firstCap: Integer; outSecond: PWord; secondCap: Integer): Byte; cdecl; public name 'SplitTwoArgs_Pas';
 
+{ Decimal conversion: converts a Cardinal to decimal string representation
+  writing into buf starting at position *idx, advancing idx. Returns nothing.
+  Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
+procedure AppendDecimal_Pas(num: Cardinal; buf: PByte; idx: PInteger); cdecl; public name 'AppendDecimal_Pas';
+
 implementation
 
 { Helper: convert char to lowercase (inline, not exported) }
@@ -262,6 +267,40 @@ begin
   begin outSecond[sec] := rest[i]; Inc(sec); Inc(i); end;
   outSecond[sec] := 0;
   SplitTwoArgs := 1;
+end;
+
+{ AppendDecimal_Pas: converts a Cardinal to decimal string representation,
+  writing ASCII bytes into buf starting at *idx, advancing idx. }
+procedure AppendDecimal_Pas(num: Cardinal; buf: PByte; idx: PInteger); cdecl;
+var
+  rev: array[0..15] of Byte;
+  c, i: Integer;
+  digit: Byte;
+begin
+  if (buf = nil) or (idx = nil) then
+    Exit;
+
+  c := 0;
+  if num = 0 then
+  begin
+    buf[idx^] := Ord('0');
+    Inc(idx^);
+    Exit;
+  end;
+
+  while num > 0 do
+  begin
+    digit := Byte(num mod 10);
+    rev[c] := Ord('0') + digit;
+    Inc(c);
+    num := num div 10;
+  end;
+
+  for i := c - 1 downto 0 do
+  begin
+    buf[idx^] := rev[i];
+    Inc(idx^);
+  end;
 end;
 
 end.

@@ -157,11 +157,20 @@ public unsafe class Shell
         }
     }
 
-    public static void AppendDecimalToBuffer(uint num, char* buf, ref int idx) {
-        char* rev = stackalloc char[16]; int c = 0;
-        if (num == 0) { buf[idx++] = '0'; return; }
-        while (num > 0) { rev[c++] = (char)('0' + (num % 10)); num /= 10; }
-        while (c > 0) buf[idx++] = rev[--c];
+    // [PASCAL PORT] AppendDecimalToBuffer logic extracted to libc.pas AppendDecimal_Pas
+    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
+    private static extern void AppendDecimal_Pas(uint num, byte* buf, int* idx);
+    public static void AppendDecimalToBuffer(uint num, byte* buf, ref int idx)
+    {
+        int localIdx = idx;
+        AppendDecimal_Pas(num, buf, &localIdx);
+        idx = localIdx;
+    }
+    public static void AppendDecimalToBuffer(uint num, char* buf, ref int idx)
+    {
+        int localIdx = idx;
+        AppendDecimal_Pas(num, (byte*)buf, &localIdx);
+        idx = localIdx;
     }
 
     // [SUDO] Doc mat khau an ky tu - copy y het logic ReadInput cua Login.cs
