@@ -174,6 +174,9 @@ public static unsafe class FAT16
     [DllImport("*", EntryPoint = "FAT16_FatSectorForCluster_Pas")]
     private static extern uint FatSectorForCluster_Pas(uint fatStartLba, ushort reservedSectorCount, ushort cluster);
 
+    [DllImport("*", EntryPoint = "FAT16_FindFreeCluster_Pas")]
+    private static extern ushort FindFreeCluster_Pas(ushort cluster, byte* fatBuf, uint fatSectorOffset);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {
         if (buf == null || formattedName == null || outCluster == null || outSize == null || outAttr == null) {
@@ -528,34 +531,24 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
 
         for (uint s = 0; s < CachedBPB.FATSize16; s++)
         {
-            // Kiểm tra xem s có hợp lệ không
-            if (s >= CachedBPB.FATSize16) {
-                Terminal.SetColor(0x00FF0000);
-                fixed (char* err = "[!] FATAL: Invalid FAT sector in FindFreeCluster!\n\0") Terminal.Print(err);
-                Heap.Free(fatBuf);
-                return 0;
-            }
             ATA.ReadSector(FatStartLba + CachedBPB.ReservedSectorCount + s, fatBuf);
             ushort* fat = (ushort *)fatBuf;
 
-            for (int i = 0; i < 256; i++)
+            ushort baseCluster = (ushort)(s * 256);
+            ushort found = FindFreeCluster_Pas(baseCluster, fatBuf, s);
+            if (found != 0)
             {
-                ushort clusterNum = (ushort)(s * 256 + i);
-                // Kiểm tra xem clusterNum có hợp lệ không
-                if (clusterNum < 2 || clusterNum > 0xFFEF) {
+                if (found < 2 || found > 0xFFEF) {
                     Terminal.SetColor(0x00FF0000);
                     fixed (char* err = "[!] FATAL: Invalid cluster number in FindFreeCluster!\n\0") Terminal.Print(err);
                     Heap.Free(fatBuf);
                     return 0;
                 }
-                if (clusterNum >= 2 && fat[i] == 0x0000)
-                {
-                    fat[i] = 0xFFFF;
-                    ATA.WriteSector(FatStartLba + CachedBPB.ReservedSectorCount + s, fatBuf);
-                    ATA.WriteSector(FatStartLba + CachedBPB.ReservedSectorCount + CachedBPB.FATSize16 + s, fatBuf);
-                    Heap.Free(fatBuf);
-                    return clusterNum;
-                }
+                fat[found - baseCluster] = 0xFFFF;
+                ATA.WriteSector(FatStartLba + CachedBPB.ReservedSectorCount + s, fatBuf);
+                ATA.WriteSector(FatStartLba + CachedBPB.ReservedSectorCount + CachedBPB.FATSize16 + s, fatBuf);
+                Heap.Free(fatBuf);
+                return found;
             }
         }
         Heap.Free(fatBuf);
