@@ -146,12 +146,20 @@ public static unsafe class FAT16
         FAT_BPB* bpbPtr = (FAT_BPB*)bpbBuf;
         CachedBPB = *bpbPtr;
 
-        if (CachedBPB.BytesPerSector == 0) CachedBPB.BytesPerSector = 512;
-        if (CachedBPB.SectorsPerCluster == 0) CachedBPB.SectorsPerCluster = 1;
+        if (CachedBPB.BytesPerSector == 0) {
+            CachedBPB.BytesPerSector = 512;
+            bpbPtr->BytesPerSector = 512;
+        }
+        if (CachedBPB.SectorsPerCluster == 0) {
+            CachedBPB.SectorsPerCluster = 1;
+            bpbPtr->SectorsPerCluster = 1;
+        }
 
-        RootDirSectors = ((uint)CachedBPB.RootEntryCount * 32 + (uint)CachedBPB.BytesPerSector - 1) / CachedBPB.BytesPerSector;
-        RootDirLba = FatStartLba + CachedBPB.ReservedSectorCount + (uint)(CachedBPB.NumFATs * CachedBPB.FATSize16);
-        FirstDataSector = RootDirLba + RootDirSectors;
+        uint rootDirSectors, rootDirLba, firstDataSector;
+        ParseBPB_Pas(bpbBuf, &rootDirSectors, &rootDirLba, &firstDataSector);
+        RootDirSectors = rootDirSectors;
+        RootDirLba = FatStartLba + rootDirLba;
+        FirstDataSector = FatStartLba + firstDataSector;
 
         IsInitialized = true;
         CurrentDirCluster = 0; 
@@ -176,6 +184,9 @@ public static unsafe class FAT16
 
     [DllImport("*", EntryPoint = "FAT16_FindFreeCluster_Pas")]
     private static extern ushort FindFreeCluster_Pas(ushort cluster, byte* fatBuf, uint fatSectorOffset);
+
+    [DllImport("*", EntryPoint = "FAT16_ParseBPB_Pas")]
+    private static extern void ParseBPB_Pas(byte* bpb, uint* outRootDirSectors, uint* outRootDirLba, uint* outFirstDataSector);
 
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {

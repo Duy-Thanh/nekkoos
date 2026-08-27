@@ -288,6 +288,9 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
     [DllImport("*", EntryPoint = "FAT16_FatSectorForCluster_Pas")]
     private static extern uint FatSectorForCluster_Pas(uint fatStartLba, ushort reservedSectorCount, ushort cluster);
 
+    [DllImport("*", EntryPoint = "FAT16_ParseBPB_Pas")]
+    private static extern void ParseBPB_Pas(byte* bpb, uint* outRootDirSectors, uint* outRootDirLba, uint* outFirstDataSector);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms) {
         return CheckSector_Pas(buf, formattedName, outCluster, outSize, outAttr, outOwnerUID, outOwnerGID, outPerms);
     }
@@ -862,10 +865,15 @@ uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCo
         }
 
         FAT_BPB* bpbPtr = (FAT_BPB*)sectorBuf; CachedBPB = *bpbPtr;
-        if (CachedBPB.BytesPerSector == 0) CachedBPB.BytesPerSector = 512;
-        RootDirSectors = ((uint)CachedBPB.RootEntryCount * 32 + (uint)CachedBPB.BytesPerSector - 1) / CachedBPB.BytesPerSector;
-        RootDirLba = FatStartLba + CachedBPB.ReservedSectorCount + (uint)(CachedBPB.NumFATs * CachedBPB.FATSize16);
-        FirstDataSector = RootDirLba + RootDirSectors;
+        if (CachedBPB.BytesPerSector == 0) {
+            CachedBPB.BytesPerSector = 512;
+            bpbPtr->BytesPerSector = 512;
+        }
+        uint rootDirSectors, rootDirLba, firstDataSector;
+        ParseBPB_Pas(sectorBuf, &rootDirSectors, &rootDirLba, &firstDataSector);
+        RootDirSectors = rootDirSectors;
+        RootDirLba = FatStartLba + rootDirLba;
+        FirstDataSector = FatStartLba + firstDataSector;
 
         SyscallSendIPC(0, 39, 0);
         fixed(char* m2 = "[+] FAT Server (Ring 3) Online & Listening for File Requests!\n\0") SyscallPrint(m2);
