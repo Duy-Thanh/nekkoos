@@ -167,6 +167,13 @@ public static unsafe class FAT16
     [DllImport("*", EntryPoint = "FAT16_CheckSector_Pas")]
     private static extern byte CheckSector_Pas(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms);
 
+    // [PASCAL PORT] Cluster-LBA and FAT-sector math extracted to fat16.pas
+    [DllImport("*", EntryPoint = "FAT16_ClusterLba_Pas")]
+    private static extern uint ClusterLba_Pas(uint firstDataSector, ushort cluster, byte sectorsPerCluster);
+
+    [DllImport("*", EntryPoint = "FAT16_FatSectorForCluster_Pas")]
+    private static extern uint FatSectorForCluster_Pas(uint fatStartLba, ushort reservedSectorCount, ushort cluster);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {
         if (buf == null || formattedName == null || outCluster == null || outSize == null || outAttr == null) {
@@ -250,7 +257,7 @@ public static unsafe class FAT16
                     return false;
                 }
                 
-                uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
                 bool abort = false;
                 
                 // Kiểm tra xem clusterLba có hợp lệ không
@@ -273,7 +280,7 @@ public static unsafe class FAT16
                 if (found || abort) break;
 
                 uint fatOffset = (uint)cluster * 2;
-                uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
 
                 // Kiểm tra xem clusterLba có hợp lệ không
                 if (clusterLba > 0xFFFFFF) {
@@ -449,7 +456,7 @@ if (DaemonWaitTimedOut(&dspinRf)) {
                 return null;
             }
 
-            uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
             // Kiểm tra xem clusterLba có hợp lệ không
             if (clusterLba > 0xFFFFFF) {
                 Terminal.SetColor(0x00FF0000);
@@ -470,7 +477,7 @@ if (DaemonWaitTimedOut(&dspinRf)) {
                 if (bytesRead >= fileSize) break;
             }
             uint fatOffset = (uint)cluster * 2;
-            uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
 
              // Kiểm tra xem fatSector có hợp lệ không
             if (fatSector > 0xFFFFFF) {
@@ -571,7 +578,7 @@ if (DaemonWaitTimedOut(&dspinRf)) {
             return 0;
         }
         uint fatOffset = (uint)cluster * 2;
-        uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         // Kiểm tra xem fatSector có hợp lệ không
         if (fatSector > 0xFFFFFF) {
             Terminal.SetColor(0x00FF0000);
@@ -607,7 +614,7 @@ if (DaemonWaitTimedOut(&dspinRf)) {
         }
 
         uint fatOffset = (uint)cluster * 2;
-        uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         
         // Kiểm tra xem fatSector có hợp lệ không
         if (fatSector > 0xFFFFFF) {
@@ -799,7 +806,7 @@ if (DaemonWaitTimedOut(&dspinWf)) {
         ushort currentCluster = firstCluster;
 
         while (currentCluster >= 2 && currentCluster <= 0xFFEF && bytesWritten < size) {
-            uint clusterLba = FirstDataSector + ((uint)(currentCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+            uint clusterLba = ClusterLba_Pas(FirstDataSector, currentCluster, CachedBPB.SectorsPerCluster);
             // Kiểm tra xem clusterLba có hợp lệ không
             if (clusterLba > 0xFFFFFF) {
                 Terminal.SetColor(0x00FF0000);
@@ -1255,7 +1262,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
                     ReleaseVfs();
                     return;
                 }
-                uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
                 // Kiểm tra xem clusterLba có hợp lệ không
                 if (clusterLba > 0xFFFFFF) {
                     Terminal.SetColor(0x00FF0000);
@@ -1271,7 +1278,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
                     PrintEntriesInline(sectorBuf);
                 }
                 uint fatOffset = (uint)cluster * 2;
-                uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
                 
                 // Kiểm tra xem fatSector có hợp lệ không
                 if (fatSector > 0xFFFFFF) {

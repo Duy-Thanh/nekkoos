@@ -238,7 +238,10 @@ def step_write_and_cat(res):
     if not ok1:
         time.sleep(2)
     type_text("automated smoke test\n.\n")
-    ok2 = wait_for(r"root@nekkoOS#", timeout=20, window=400)
+    # Wait for the specific success message first - the generic prompt
+    # pattern may match a stale prompt from a previous step.
+    ok_write = wait_for(r"File written", timeout=20, window=400)
+    ok2 = wait_for(r"root@nekkoOS#", timeout=15, window=200)
     snap = tail(400)
     write_ok = "[+] File written successfully" in snap
     no_panic = "PANIC" not in snap and "EXCEPTION" not in snap

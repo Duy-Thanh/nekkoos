@@ -247,7 +247,7 @@ public unsafe class Program
     public static ushort GetFatEntry(ushort cluster, byte* fatBuf)
     {
         uint fatOffset = (uint)cluster * 2;
-        uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         ReadSectorIPC(fatSector, fatBuf);
         return *(ushort*)(fatBuf + (fatOffset % 512));
     }
@@ -255,7 +255,7 @@ public unsafe class Program
     public static void SetFatEntry(ushort cluster, ushort value, byte* fatBuf)
     {
         uint fatOffset = (uint)cluster * 2;
-        uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
         ReadSectorIPC(fatSector, fatBuf);
         ushort* ptr = (ushort*)(fatBuf + (fatOffset % 512));
         *ptr = value;
@@ -280,6 +280,13 @@ public unsafe class Program
     // UID/GID and permissions for access control.
     [DllImport("*", EntryPoint = "FAT16_CheckSector_Pas")]
     private static extern byte CheckSector_Pas(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms);
+
+    // [PASCAL PORT] Cluster-LBA and FAT-sector math extracted to fat16.pas
+    [DllImport("*", EntryPoint = "FAT16_ClusterLba_Pas")]
+    private static extern uint ClusterLba_Pas(uint firstDataSector, ushort cluster, byte sectorsPerCluster);
+
+    [DllImport("*", EntryPoint = "FAT16_FatSectorForCluster_Pas")]
+    private static extern uint FatSectorForCluster_Pas(uint fatStartLba, ushort reservedSectorCount, ushort cluster);
 
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms) {
         return CheckSector_Pas(buf, formattedName, outCluster, outSize, outAttr, outOwnerUID, outOwnerGID, outPerms);
@@ -322,7 +329,7 @@ public unsafe class Program
                     return false;
                 }
 
-                uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
                 
                 // Kiểm tra xem clusterLba có hợp lệ không
                 if (clusterLba > 0xFFFFFF) {
@@ -338,7 +345,8 @@ public unsafe class Program
                     if (st == 2) { abort = true; break; }
                 }
                 if (found || abort) break;
-                uint fatOffset = (uint)cluster * 2; uint fatSector = FatStartLba + CachedBPB.ReservedSectorCount + (fatOffset / 512);
+                uint fatOffset = (uint)cluster * 2;
+uint fatSector = FatSectorForCluster_Pas(FatStartLba, CachedBPB.ReservedSectorCount, cluster);
                 
                 // Kiểm tra xem fatSector có hợp lệ không
                 if (fatSector > 0xFFFFFF) {
@@ -533,7 +541,7 @@ public unsafe class Program
         } else {
             ushort curClus = CurrentDirCluster;
             while(curClus >= 0x0002 && curClus <= 0xFFEF) {
-                uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, curClus, CachedBPB.SectorsPerCluster);
                 for(int s=0; s<CachedBPB.SectorsPerCluster; s++) ProcessMkdirSector(clusterLba + (uint)s, formattedName, newCluster, effectiveOwnerUID, effectiveOwnerGID, sectorBuf, ref created);
                 curClus = GetFatEntry(curClus, fatBuf);
             }
@@ -612,7 +620,7 @@ public unsafe class Program
         } else {
             ushort cur = CurrentDirCluster;
             while (cur >= 0x0002 && cur <= 0xFFEF) {
-                uint clusterLba = FirstDataSector + ((uint)(cur - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, cur, CachedBPB.SectorsPerCluster);
                 for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) ProcessChattrSector(clusterLba + (uint)s, formattedName, sectorBuf, ref found, false, 0, 0, true, newPerms);
                 cur = GetFatEntry(cur, fatBuf);
             }
@@ -639,7 +647,7 @@ public unsafe class Program
         } else {
             ushort cur = CurrentDirCluster;
             while (cur >= 0x0002 && cur <= 0xFFEF) {
-                uint clusterLba = FirstDataSector + ((uint)(cur - 2) * (uint)CachedBPB.SectorsPerCluster);
+                uint clusterLba = ClusterLba_Pas(FirstDataSector, cur, CachedBPB.SectorsPerCluster);
                 for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) ProcessChattrSector(clusterLba + (uint)s, formattedName, sectorBuf, ref found, true, newUID, newGID, false, 0);
                 cur = GetFatEntry(cur, fatBuf);
             }
@@ -709,7 +717,7 @@ public unsafe class Program
                 return;
             }
 
-            uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
+            uint clusterLba = ClusterLba_Pas(FirstDataSector, curClus, CachedBPB.SectorsPerCluster);
 
             // Kiểm xem clusterLba có hợp lệ không
             if (clusterLba > 0xFFFFFF) {
@@ -917,7 +925,7 @@ public unsafe class Program
                     byte* dataChunk = (byte*)SharedMem->FatResponseData; 
 
                     while (cluster >= 0x0002 && cluster <= 0xFFEF && bytesRead < fileSize) {
-                        uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                        uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
                         for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) {
                             if (bytesRead >= fileSize) break;
                             ReadSectorIPC(clusterLba + (uint)s, sectorBuf);
@@ -988,7 +996,7 @@ public unsafe class Program
                         } else {
                             ushort curClus = CurrentDirCluster;
                             while(curClus >= 0x0002 && curClus <= 0xFFEF) {
-                                uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
+                                uint clusterLba = ClusterLba_Pas(FirstDataSector, curClus, CachedBPB.SectorsPerCluster);
                                 for (int s=0; s<CachedBPB.SectorsPerCluster; s++) ProcessSilentRm(clusterLba + (uint)s, formattedName, targetCluster, fatBuf, sectorBuf, ref deletedOld);
                                 curClus = GetFatEntry(curClus, fatBuf);
                             }
@@ -1023,7 +1031,7 @@ public unsafe class Program
                     byte* dataChunk = (byte*)SharedMem->FatResponseData;
 
                     while (currentCluster >= 2 && currentCluster <= 0xFFEF && bytesWritten < fileSize) {
-                        uint clusterLba = FirstDataSector + ((uint)(currentCluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                        uint clusterLba = ClusterLba_Pas(FirstDataSector, currentCluster, CachedBPB.SectorsPerCluster);
                         for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) {
                             if (bytesWritten >= fileSize) break;
                             SyscallSendIPC(client, 33, bytesWritten); 
@@ -1045,7 +1053,7 @@ public unsafe class Program
                     } else {
                         ushort curClus = CurrentDirCluster;
                         while (curClus >= 0x0002 && curClus <= 0xFFEF) {
-                            uint clusterLba = FirstDataSector + ((uint)(curClus - 2) * (uint)CachedBPB.SectorsPerCluster);
+                            uint clusterLba = ClusterLba_Pas(FirstDataSector, curClus, CachedBPB.SectorsPerCluster);
                             for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { ProcessWriteSector(clusterLba + (uint)s, formattedName, firstCluster, fileSize, callerUID, callerGID, sectorBuf, ref saved); }
                             curClus = GetFatEntry(curClus, fatBuf);
                         }
@@ -1130,7 +1138,7 @@ public unsafe class Program
                         ushort cluster = CurrentDirCluster;
                         while (cluster >= 0x0002 && cluster <= 0xFFEF) {
                             if (outIdx >= maxChars) break;
-                            uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster);
+                            uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster);
                             for (int s = 0; s < CachedBPB.SectorsPerCluster; s++) { ReadSectorIPC(clusterLba + (uint)s, sectorBuf); ProcessLSSector(sectorBuf, outStr, ref outIdx, maxChars); }
                             cluster = GetFatEntry(cluster, fatBuf);
                         }
@@ -1200,7 +1208,7 @@ public unsafe class Program
 
                     if (CurrentDirCluster == 0) { for(uint s=0; s<RootDirSectors; s++) ProcessRmSector(RootDirLba + s, formattedName, callerUID, callerGID, fatBuf, sectorBuf, ref deleted, ref isDirError, ref accessDenied); } 
                     else { ushort cluster = CurrentDirCluster; while(cluster >= 0x0002 && cluster <= 0xFFEF) { 
-                        uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster); 
+                        uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster); 
                         for (int s=0; s<CachedBPB.SectorsPerCluster; s++) ProcessRmSector(clusterLba + (uint)s, formattedName, callerUID, callerGID, fatBuf, sectorBuf, ref deleted, ref isDirError, ref accessDenied); cluster = GetFatEntry(cluster, fatBuf); 
                     } }
                     FlushCacheIPC();
@@ -1217,7 +1225,7 @@ public unsafe class Program
 
                     if (CurrentDirCluster == 0) { for(uint s=0; s<RootDirSectors; s++) FindAndNuke(RootDirLba + s, formattedName, callerUID, callerGID, fatBuf, sectorBuf, ref deleted, ref errorCode); }
                     else { ushort cluster = CurrentDirCluster; while(cluster >= 0x0002 && cluster <= 0xFFEF) { 
-                        uint clusterLba = FirstDataSector + ((uint)(cluster - 2) * (uint)CachedBPB.SectorsPerCluster); 
+                        uint clusterLba = ClusterLba_Pas(FirstDataSector, cluster, CachedBPB.SectorsPerCluster); 
                         for (int s=0; s<CachedBPB.SectorsPerCluster; s++) FindAndNuke(clusterLba + (uint)s, formattedName, callerUID, callerGID, fatBuf, sectorBuf, ref deleted, ref errorCode); cluster = GetFatEntry(cluster, fatBuf); 
                     } }
                     FlushCacheIPC();
