@@ -48,7 +48,9 @@
   `*.pas` export (không thừa nhận/thiếu tham số).
 
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
-1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell về libc.pas~~ ✅ XONG
+1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell vên libc.pas~~ ✅ XONG
 2. ~~Tách protocol FAT16 daemon khỏi port-I/O raw path~~ ✅ XONG
-3. Terminal API vẽ bảng cho ls (đã align cột 12, có thể nâng cấp bảng đẹp hơn)
+3. ~~Cải thiện bảng ls: +permissions cột, name 16-char~~ ✅ XONG
 4. ARM64 port theo checklist ARCHITECTURE.md §5 (khung đã đầy đủ)
+5. **BƯỚC MỚI: Chuyển toàn bộ mã sang Pascal** (bflat EOL, không hỗ trợ RISCV64)
+   - Xem kế hoạch chi tiết tại `.kilo/plans/1787720764054-pascal-migration-plan.md`
