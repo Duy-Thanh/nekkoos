@@ -158,6 +158,13 @@ public unsafe class Program
     public static ushort SLP_TYPb = 0;
     public static bool S5Parsed = false;
 
+    // [PASCAL PORT] ACPI table parsing ported to acpi_parse.pas
+    [DllImport("*", EntryPoint = "ScanMadtEntries_Pas")]
+    private static extern byte ScanMadtEntries_Pas(void* madtBase, uint madtLength, out uint cpuCores, out uint ioApicCount);
+
+    [DllImport("*", EntryPoint = "ParseS5FromDsdt_Pas")]
+    private static extern byte ParseS5FromDsdt_Pas(void* dsdtBase, uint dsdtLength, out ushort slpTypA, out ushort slpTypB);
+
     // ==========================================================
     // [MEMORY MAPPING] Map physical ACPI memory into virtual address space
     // Preserves page offset to return the exact requested virtual address
@@ -230,29 +237,20 @@ public unsafe class Program
                 PrintHex(madt->LocalApicAddress);
                 PrintNewline();
 
+                // [PASCAL PORT] Count CPU cores and I/O APICs via ScanMadtEntries_Pas
+                uint cpuCores, ioApicCount;
+                ScanMadtEntries_Pas((void*)entryVirt, madt->Header.Length, out cpuCores, out ioApicCount);
+
+                // Report I/O APIC addresses by scanning in C# for individual addresses
                 byte* ptr = (byte*)madt + sizeof(MADT);
                 byte* end = (byte*)madt + madt->Header.Length;
-                
-                uint cpuCores = 0;
-                uint ioApicCount = 0;
-
                 while (ptr < end) {
                     byte type = ptr[0];
                     byte length = ptr[1];
-                    
-                    // ==========================================================
-                    // [VALIDATION] Prevent infinite loop if length field is 0
-                    // ==========================================================
-                    if (length == 0) break; 
-                    
-                    if (type == 0) { 
-                        uint flags = *(uint*)(ptr + 4);
-                        if ((flags & 1) != 0) cpuCores++; 
-                    }
-                    else if (type == 1) { 
+                    if (length == 0) break;
+                    if (type == 1) {
                         uint ioApicAddr = *(uint*)(ptr + 4);
                         SyscallReportHardware(3, ioApicAddr);
-                        ioApicCount++;
                     }
                     ptr += length;
                 }
@@ -306,30 +304,14 @@ public unsafe class Program
                     {
                         byte* S5Addr = (byte*)dsdtVirt + sizeof(ACPISDTHeader);
                         int dsdtLength = (int)dsdt->Length - sizeof(ACPISDTHeader);
-                        
-                        while (0 < dsdtLength--)
+
+                        // [PASCAL PORT] S5 parsing delegated to ParseS5FromDsdt_Pas
+                        if (ParseS5FromDsdt_Pas((void*)dsdtVirt, (uint)dsdt->Length, out ushort slpTypA, out ushort slpTypB) != 0)
                         {
-                            if (S5Addr[0] == '_' && S5Addr[1] == 'S' && S5Addr[2] == '5' && S5Addr[3] == '_') break;
-                            S5Addr++;
-                        }
-                        
-                        if (dsdtLength > 0)
-                        {
-                            if ((S5Addr[-1] == 0x08 || (S5Addr[-2] == 0x08 && S5Addr[-1] == '\\')) && S5Addr[4] == 0x12)
-                            {
-                                S5Addr += 5;
-                                S5Addr += ((S5Addr[0] & 0xC0) >> 6) + 2; 
-                                
-                                if (S5Addr[0] == 0x0A) S5Addr++; 
-                                SLP_TYPa = (ushort)(S5Addr[0] << 10); 
-                                S5Addr++;
-                                
-                                if (S5Addr[0] == 0x0A) S5Addr++; 
-                                SLP_TYPb = (ushort)(S5Addr[0] << 10); 
-                                
-                                S5Parsed = true;
-                                fixed(char* s5msg = "[+] AML Hack: Found DSDT \\_S5_. Dynamic Shutdown Armed!\n\0") SyscallPrint(s5msg);
-                            }
+                            SLP_TYPa = slpTypA;
+                            SLP_TYPb = slpTypB;
+                            S5Parsed = true;
+                            fixed(char* s5msg = "[+] AML Hack: Found DSDT \\_S5_. Dynamic Shutdown Armed!\n\0") SyscallPrint(s5msg);
                         }
                     }
                 }

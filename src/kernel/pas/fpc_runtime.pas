@@ -73,6 +73,19 @@ const
   KASLR_MAGIC_SIGNATURE: UInt64 = $1337BEEFCAFE8BAD;
 
   { ========================================================================
+    AML / ACPI CONSTANTS — used by acpi_parse.pas
+    ======================================================================== }
+  AML_NAME_PREFIX_LEN: Cardinal = 4; { signature is always 4 chars }
+  MADT_HEADER_SIZE: Cardinal = 12; { ACPISDTHeader(36) + LocalApicAddress(4) + Flags(4) = wait... }
+
+  { MADT sub-table types }
+  MADT_TYPE_PROCESSOR: Byte = 0;
+  MADT_TYPE_IOAPIC: Byte = 1;
+
+  { AML S5 parsing }
+  AML_S5_NAME_LEN: Cardinal = 4; { "_S5_" }
+
+  { ========================================================================
     THREAD STRUCT OFFSETS (Pack=1, from Thread.cs)
     Used by scheduler_dispatch.pas for VRuntime-based thread selection.
     ======================================================================== }
