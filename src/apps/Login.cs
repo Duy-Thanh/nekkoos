@@ -33,7 +33,11 @@ public unsafe class Login
     private static extern byte StrCmp_Pas(char* a, char* b);
     public static bool StrCmp(char* a, char* b) { return StrCmp_Pas(a, b) != 0; }
     public static void StringToSharedBuffer(char* source, char* dest) { int i = 0; while (source[i] != '\0') { dest[i] = source[i]; i++; } dest[i] = '\0'; }
-    public static uint Atoi(char* str) { uint res = 0; for (int i = 0; str[i] != '\0'; ++i) { if (str[i] >= '0' && str[i] <= '9') res = res * 10 + (uint)(str[i] - '0'); else break; } return res; }
+    // [PASCAL PORT] String-to-uint conversion (decimal base 10) now in libc.pas.
+    // Shared implementation with kernel, avoids divergent base-10 parsers.
+    [DllImport("*", EntryPoint = "Atoi_Pas")]
+    private static extern uint Atoi_Pas(char* str);
+    public static uint Atoi(char* str) { return Atoi_Pas(str); }
 
     // ==========================================================
     // [FIX BẢO MẬT] Helper hex cho định dạng PASSWD mới: user:salt:hash:UID:GID

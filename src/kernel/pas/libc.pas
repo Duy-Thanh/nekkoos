@@ -31,6 +31,8 @@ function FatNameValid(input: PWord): Cardinal; cdecl; public name 'FatNameValid_
 function OctalStrToUInt(str: PWord): Cardinal; cdecl; public name 'OctalStrToUInt_Pas';
 function SplitTwoArgs(rest: PWord; outFirst: PWord; firstCap: Integer; outSecond: PWord; secondCap: Integer): Byte; cdecl; public name 'SplitTwoArgs_Pas';
 
+function Atoi(str: PWord): Cardinal; cdecl; public name 'Atoi_Pas';
+
 { Decimal conversion: converts a Cardinal to decimal string representation
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
@@ -300,6 +302,22 @@ begin
   begin
     buf[idx^] := rev[i];
     Inc(idx^);
+  end;
+end;
+
+{ Atoi_Pas: converts a decimal string to Cardinal (base 10). Stops at first non-digit. }
+function Atoi(str: PWord): Cardinal; cdecl;
+var
+  i: Integer;
+begin
+  Atoi := 0;
+  if str = nil then Exit;
+  i := 0;
+  while str[i] <> 0 do
+  begin
+    if (str[i] < Ord('0')) or (str[i] > Ord('9')) then Break;
+    Atoi := Atoi * 10 + Cardinal(str[i]) - Ord('0');
+    Inc(i);
   end;
 end;
 
