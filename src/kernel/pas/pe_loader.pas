@@ -40,6 +40,10 @@ function PELoader_ApplyRelocations_Pas(appBasePhys: Pointer; sizeOfImage: UInt32
   Returns: 1 = found (addressOfEntryPoint set), 0 = not found }
 function PELoader_FindAppMainExport_Pas(appBasePhys: Pointer; sizeOfImage: UInt32; exportRVA: UInt32; exportSize: UInt32; out addressOfEntryPoint: UInt32): Byte; cdecl; public name 'PELoader_FindAppMainExport_Pas';
 
+{ [KASLR] Brute-force scans appBasePhys for KASLR_MAGIC_SIGNATURE (0x1337BEEFCAFE8BAD)
+  and injects vdsoVirt in-place. Returns: 1 = injected, 0 = not found }
+function PELoader_FindKaslrMagic_Pas(appBasePhys: Pointer; sizeToScan: UInt64; vdsoVirt: UInt64): Byte; cdecl; public name 'PELoader_FindKaslrMagic_Pas';
+
 implementation
 
 uses fpc_runtime;
@@ -313,6 +317,32 @@ begin
     begin
       addressOfEntryPoint := addressOfFunctions[addressOfNameOrdinals[i]];
       PELoader_FindAppMainExport_Pas := 1;
+      Exit;
+    end;
+  end;
+end;
+
+{ ========================================================================
+  [KASLR] — brute-force scan for KASLR magic signature
+  ======================================================================== }
+function PELoader_FindKaslrMagic_Pas(appBasePhys: Pointer; sizeToScan: UInt64; vdsoVirt: UInt64): Byte; cdecl;
+const
+  KASLR_MAGIC_SIGNATURE = UInt64($1337BEEFCAFE8BAD);
+var
+  i: UInt64;
+  maybeMagic: UInt64;
+begin
+  PELoader_FindKaslrMagic_Pas := 0;
+  if (appBasePhys = nil) or (sizeToScan < 8) then
+    Exit;
+
+  for i := 0 to sizeToScan - 8 do
+  begin
+    maybeMagic := PUInt64(UInt64(appBasePhys) + i)^;
+    if maybeMagic = KASLR_MAGIC_SIGNATURE then
+    begin
+      PUInt64(UInt64(appBasePhys) + i)^ := vdsoVirt;
+      PELoader_FindKaslrMagic_Pas := 1;
       Exit;
     end;
   end;

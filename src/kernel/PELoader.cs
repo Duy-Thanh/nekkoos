@@ -22,6 +22,9 @@ public static unsafe class PELoader
     [DllImport("*", EntryPoint = "PELoader_FindAppMainExport_Pas")]
     private static extern byte FindAppMainExport_Pas(byte* appBasePhys, uint sizeOfImage, uint exportRVA, uint exportSize, out uint addressOfEntryPoint);
 
+    [DllImport("*", EntryPoint = "PELoader_FindKaslrMagic_Pas")]
+    private static extern byte FindKaslrMagic_Pas(byte* appBasePhys, ulong sizeToScan, ulong vdsoVirt);
+
     public static void LoadAndRun(byte* rawFile, bool runInBackground = false, bool isJailed = false, bool forceRoot = false, char* processName = null, byte priority = 1)
     {
         int _unusedId;
@@ -186,22 +189,9 @@ public static unsafe class PELoader
         // [FIX CHÍ MẠNG VŨ TRỤ] QUÉT BYTE-BY-BYTE BRUTEFORCE!
         // Chấp mọi thể loại Padding và Căn lề của Trình biên dịch C#!
         // ==========================================================
-        ulong sizeToScan = pages * 4096; 
-        bool injected = false;
         
-        for(ulong i = 0; i <= sizeToScan - 8; i++) 
-        {
-            // Trích xuất con số 64-bit từ offset i (Bất chấp lệch lề)
-            ulong maybeMagic = *(ulong*)(appBasePhys + i); 
-            
-            if (maybeMagic == 0x1337BEEFCAFE8BAD) {
-                // Đóng đinh con trỏ KASLR vào đúng vị trí đó!
-                *(ulong*)(appBasePhys + i) = vdsoVirt; 
-                injected = true;
-                break;
-            }
-        }
-
+        ulong sizeToScan = pages * 4096;
+        bool injected = FindKaslrMagic_Pas(appBasePhys, sizeToScan, vdsoVirt) != 0;
         if (!injected) {
             Terminal.SetColor(0x00FF00FF);
             fixed(char* warn = "   [?] Warning: Legacy App detected (No KASLR Magic Signature).\n\0") Terminal.Print(warn);
