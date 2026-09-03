@@ -50,10 +50,58 @@
   `RTTI_$SYSTEM_*$indirect` symbols. Fix: dùng built-in types (Pointer, PByte, ...)
   trong exports, thêm `{$TYPEINFO OFF}` và `-CD` flag. Xem `heap.pas`.
 
+## Chuyển đổi syscall thành portable architecture-agnostic design
+
+### Vấn đề
+Hiện tại `Syscall.cs` chứa rất nhiều logic I/O và phần cứng cụp trực tiếp:
+- Keyboard polling (case 4)
+- Physical memory mapping (case 12, case 50)
+- Framebuffer management (case 50, case 51, case 52)
+- Disk I/O via IPC (case 88 internal shell)
+- Hardware reporting (case 13: APIC init, I/O APIC base)
+
+Điều này khiến Syscall.cs khó port sang kiến trúc mới (ARM64, RISC-V).
+
+### Giải pháp: Syscall dispatch theo kiến trúc (Architecture-Aware Syscall Dispatch)
+
+**Cách hoạt động:**
+1. Định nghĩa interface `IArcSyscall` trong `src/arch/Arch.cs` với các phương thức
+   `DispatchSyscall(ulong syscallId, RegisterContext* ctx, int threadId, bool isKing)`.
+2. Mỗi kiến trúc (x86_64, ARM64, RISC-V) implement interface trong
+   `src/arch/{arch}/SyscallImpl.cs` (hoặc `.pas` tương đương).
+3. Kernel generic syscall dispatcher gọi `ArchCtx.SyscallImpl.DispatchSyscall(...)`:
+   - Nếu syscall là I/O-specific (4, 12, 50, 51, 52, 13): delegate đến ArchCtx implementation.
+   - Nếu syscall không được hỗ trợ trên kiến trúc hiện tại: trả về lỗi -ENOSYS
+     (`"Syscall này không hỗ trợ trên kiến trúc này"`).
+   - Nếu syscall là generic (IPC, heap, process management): xử lý trong kernel.
+4. Các syscall chung (IPC, heap, process management) giữ ở kernel generic.
+5. Các syscall I/O-specific (keyboard, framebuffer, physical memory mapping)
+   được delegate đến `ArchCtx` implementation.
+
+**Lợi ích:**
+- Port kiến trúc mới chỉ cần implement syscall vtable, không cần sửa Syscall.cs
+- Rõ ràng phân tách generic logic vs architecture-specific I/O
+- Hỗ trợ graceful degradation: syscall I/O không có trên arch nào đó được disable
+
+### Phân loại syscall
+- **I/O-specific** (delegate to arch): 4 (keyboard), 12 (map phys mem), 50 (map FB), 51 (FB dims), 52 (redirect FB), 13 (hardware report)
+- **Generic** (kernel): 0 (exit), 1 (print), 2 (draw pixel - uses Terminal abstraction), 3 (clear screen), 5 (IPC send), 6 (heap alloc), 7 (I/O port grant - arch-specific but privileged), 8 (IPC receive), 10 (process info), 11 (ACPI RSDP), 14 (find PID by name), 88 (internal shell), 89-94 (auth), 100 (shared mem)
+
+### Plan hành động refactor
+1. Tạo interface `IArcSyscall` trong `src/arch/Arch.cs`
+2. x86_64 implementation: `src/arch/x86_64/SyscallImpl.cs` (chứa cases 4, 12, 50, 51, 52, 13)
+3. ARM64 skeleton: `src/arch/arm64/SyscallImpl.cs` (stub cho I/O syscalls, trả -ENOSYS)
+4. RISC-V port sẽ inherit ARM64 stubs
+5. Refactor Syscall.cs: generic cases ở lại, I/O-specific cases gọi qua `ArchCtx.SyscallImpl`
+6. Build + smoke test để đảm bảo x86_64 vẫn hoạt động
+
+
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
 1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell vên libc.pas~~ ✅ XONG
 2. ~~Tách protocol FAT16 daemon khỏi port-I/O raw path~~ ✅ XONG
 3. ~~Cải thiện bảng ls: +permissions cột, name 16-char~~ ✅ XONG
-4. ARM64 port theo checklist ARCHITECTURE.md §5 (khung đã đầy đủ)
-5. **BƯỚC MỚI: Chuyển toàn bộ mã sang Pascal** (bflat EOL, không hỗ trợ RISCV64)
-   - Xem kế hoạch chi tiết tại `.kilo/plans/1787720764054-pascal-migration-plan.md`
+4. ~~Port ACPI parsing sang Pascal (acpi_parse.pas)~~ ✅ XONG
+5. ~~Port PELoader KASLR scan sang Pascal~~ ✅ XONG
+6. ~~Port Atoi, AppendDecimal, GetNextCluster, FatEntryOffset sang Pascal~~ ✅ XONG
+7. **REFACTOR: Implement portable syscall dispatch per-architecture** (xem chi tiết ở trên)
+8. ARM64 port theo checklist ARCHITECTURE.md §5 (khung đã đầy đủ)

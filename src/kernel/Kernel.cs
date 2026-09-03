@@ -120,7 +120,10 @@ public static unsafe class Program
         // =====================================================================
         // PHASE 1: KHỞI TẠO NỀN TẢNG BAREMETAL & BẢO MẬT
         // =====================================================================
-        UnlockScheduler_ASM(); 
+        UnlockScheduler_ASM();
+
+        // [PORTABLE SYSCALL] Bind arch-specific syscall implementation
+        Arch.SyscallImpl = new X86SyscallImpl();
 
         if (NekkoInt.isDebug) {
             fixed (char* dbg1 = "[DBG] KM: after UnlockScheduler\n\0") Serial.WriteString(dbg1);

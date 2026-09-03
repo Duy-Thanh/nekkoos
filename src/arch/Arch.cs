@@ -73,4 +73,40 @@ public static unsafe class Arch
         [DllImport("*", EntryPoint = "Arch_ReadPageTable")] public static extern ulong ReadPageTable();
         [DllImport("*", EntryPoint = "Arch_FlushTLB")] public static extern void FlushTlbAll();
         [DllImport("*", EntryPoint = "Arch_EnableNX")] public static extern void EnableNx();
+
+        // [PORTABLE SYSCALL DISPATCH]
+        // Instance của IArcSyscall implementation cho kiến trúc hiện tại.
+        // Được khởi tạo trong Kernel.cs / PlatformBootstrap.cs.
+        public static IArcSyscall? SyscallImpl;
+}
+// =========================================================================
+// [PORTABLE SYSCALL DISPATCH]
+// IArcSyscall: interface cho các syscall I/O-specific (keyboard, framebuffer,
+// physical memory mapping, hardware reporting). Mỗi kiến trúc implement interface
+// này vào src/arch/{arch}/SyscallImpl.cs. Nếu syscall không được hỗ trợ trên
+// kiến trúc đó, trả về lỗi "Syscall này không hỗ trợ trên kiến trúc này".
+//
+// Các syscall GENERIC (IPC, heap, process management) vẫn ở kernel generic
+// (Syscall.cs) và KHÔNG qua interface này.
+// =========================================================================
+public unsafe interface IArcSyscall
+{
+    // [SYSCALL 4]: Keyboard read (I/O-specific)
+    // currentRsp: stack pointer hiện tại để pass xuống SwitchTask nếu cần ngủ
+    ulong DispatchKeyboardRead(int threadId, bool isKing, RegisterContext* ctx, ulong currentRsp);
+
+    // [SYSCALL 12]: Map physical memory (I/O-specific - paging hardware)
+    ulong DispatchMapPhysicalMemory(int threadId, bool isKing, RegisterContext* ctx);
+
+    // [SYSCALL 13]: Hardware reporting (I/O-specific - APIC/MADT)
+    ulong DispatchHardwareReport(uint hwType, ulong payload, bool isKing);
+
+    // [SYSCALL 50]: Map framebuffer (I/O-specific - FB hardware)
+    ulong DispatchMapFramebuffer(int threadId, bool isKing, RegisterContext* ctx);
+
+    // [SYSCALL 51]: Get framebuffer dimensions (I/O-specific)
+    ulong DispatchFramebufferDims(ulong* ptrWidth, ulong* ptrHeight, ulong* ptrScanLine);
+
+    // [SYSCALL 52]: Redirect framebuffer output (I/O-specific)
+    ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing);
 }

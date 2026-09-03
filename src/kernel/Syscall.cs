@@ -238,58 +238,10 @@ public static unsafe class Syscall
             // ForegroundTask không hợp lệ/đã chết (VD: -1 lúc boot, hoặc bị
             // zombie hóa mà chưa kịp trả về ParentId), KHÔNG khóa cứng bàn
             // phím - mở lại cho tất cả để tránh input bị "câm" vĩnh viễn.
+            // [PORTABLE] I/O-specific syscall 4 (keyboard read) delegated to arch vtable
             case 4:
             {
-                bool found = false;
-                char c = '\0';
-
-                int fgTask = Scheduler.ForegroundTask;
-                bool fgValid = fgTask >= 0 && fgTask < Scheduler.ThreadCount && Scheduler.Threads[fgTask].Active != 0;
-                bool allowedToConsume = !fgValid || fgTask == id;
-
-                if (allowedToConsume)
-                {
-                    // Lục soát toàn bộ mảng IPC (Không khóa)
-                    for (int i = 0; i < IPC.MAX_MESSAGES; i++)
-                    {
-                        // Nếu là phím bấm (Type = 1) và từ Keyboard (Sender = 33)
-                        if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
-                        {
-                            // [ATOMIC] Acquire exclusive read access using AtomicExchange on IsLocked flag
-                            if (IPC.AtomicExchange(ref IPC.queue[i].IsLocked, 1) == 0)
-                            {
-                                // Kiểm tra lại lần nữa cho chắc sau khi chiếm được khóa ô
-                                if (IPC.queue[i].Type == 1 && IPC.queue[i].Sender == 33)
-                                {
-                                    c = KeyboardDriver.ProcessScanCode((byte)IPC.queue[i].Payload);
-                                    IPC.StoreFence();
-                                    IPC.queue[i].Type = 0; // Hủy tin nhắn
-                                    IPC.StoreFence();
-                                    IPC.queue[i].IsLocked = 0; // Nhả khóa
-                                    found = true;
-                                    break;
-                                }
-                                IPC.queue[i].IsLocked = 0; // Bị hố thì nhả khóa
-                            }
-                        }
-                    }
-                }
-
-                if (found) {
-                    if (c != '\0') { ArchCtx.SetRet(ctx, (ulong)c); } else { ArchCtx.SetRet(ctx, 0); }
-                    break;
-                }
-                
-                // Đi ngủ 1 Tick
-                bool irq = Scheduler.AcquireSchedLockSafe();
-                Scheduler.Threads[id].WakeUpTick = currentTicks + 1; 
-                Scheduler.Threads[id].Active = 2; 
-                Scheduler.ReleaseSchedLockSafe(irq);
-                
-                // Gọi SwitchTask trực tiếp — IsrSyscall dùng mov rsp,rax để
-                // nhảy sang thread mới ngay lập tức, không spin CPU vô tận.
-                ArchCtx.SetRet(ctx, 0); 
-                return Scheduler.SwitchTask(currentRsp);
+                return Arch.SyscallImpl!.DispatchKeyboardRead(id, isKing, ctx, currentRsp);
             }
             
             // [SYSCALL 5]: GỬI TIN NHẮN IPC (Send IPC)
@@ -472,41 +424,19 @@ public static unsafe class Syscall
             case 11: { ArchCtx.SetRet(ctx, Program.GlobalBootInfo->AcpiRsdp); break; }
 
             // [SYSCALL 12]: MƯỢN ĐẤT PHẦN CỨNG (Map Physical Memory)
-            case 12: 
+            // [PORTABLE] I/O-specific syscall 12 (map physical memory) delegated to arch vtable
+            case 12:
             {
-                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
-                ulong physAddr = ArchCtx.GetArg(ctx, 1); ulong numPages = ArchCtx.GetArg(ctx, 2);
-                if (numPages == 0 || numPages > 256) { ArchCtx.SetRet(ctx, 0); break; }
-
-                bool irq = Scheduler.AcquireSchedLockSafe();
-
-                ulong alignedPhys = physAddr & ~0xFFFUL; ulong offset = physAddr & 0xFFFUL; 
-                ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
-                
-                // [PAGING] Use the thread's own PML4 and validate the pointer first
-                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
-                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                // Ensure the syscall is running under the thread's PML4 before mapping.
-                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) { Mem.MapPage(alignedPhys + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
-                Mem.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
-
-                Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
-                Scheduler.ReleaseSchedLockSafe(irq);
-                
-                ArchCtx.SetRet(ctx, virtAddr + offset); break;
+                return Arch.SyscallImpl!.DispatchMapPhysicalMemory(id, isKing, ctx);
             }
 
-            // [SYSCALL 13]: KHAI BÁO PHẦN CỨNG BẬC CAO (Hardware Report)
-            case 13: 
+            // [PORTABLE] I/O-specific syscall 13 (hardware reporting) delegated to arch vtable
+            case 13:
             {
+                uint hwType = (uint)ArchCtx.GetArg(ctx, 1);
+                ulong payload = ArchCtx.GetArg(ctx, 2);
                 if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
-                uint hwType = (uint)ArchCtx.GetArg(ctx, 1); ulong payload = ArchCtx.GetArg(ctx, 2);
-                if (hwType == 1) { APIC.Init(payload); ArchCtx.SetRet(ctx, 1); }
-                else if (hwType == 2) { APIC.CoreCount = (uint)payload; ArchCtx.SetRet(ctx, 1); }
-                else if (hwType == 3) { APIC.IOApicBase = payload; ArchCtx.SetRet(ctx, 1); }
-                else { ArchCtx.SetRet(ctx, 0); }
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchHardwareReport(hwType, payload, isKing));
                 break;
             }
 
@@ -532,81 +462,31 @@ public static unsafe class Syscall
                 ArchCtx.SetRet(ctx, (ulong)foundId); break;
             }
 
-            // [SYSCALL 50] YÊU CẦU QUYỀN SỞ HỮU MÀN HÌNH (MAP FRAMEBUFFER)
-            case 50: 
+            // [PORTABLE] I/O-specific syscall 50 (map framebuffer) delegated to arch vtable
+            case 50:
             {
-                if (!isKing) { 
-                    Scheduler.Threads[id].IsPhantomDead = 1; 
-                    ArchCtx.SetRet(ctx, 0); 
-                    break; 
-                }
-
-                ulong fbPhys = Program.GlobalBootInfo->FrameBufferBase; 
-                ulong fbSize = (ulong)(Terminal.scanLine * Terminal.height * 4); 
-                
-                ulong vAddr = Scheduler.Threads[id].AppHeapBase; 
-
-                ulong numPages = (fbSize + 4095) / 4096;
-                ulong pml4 = Scheduler.Threads[id].AddrSpace;
-
-                if (pml4 == 0 || pml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical(pml4)) { ArchCtx.SetRet(ctx, 0); break; }
-
-                bool irq = Scheduler.AcquireSchedLockSafe();
-
-                // Map only when current CR3 equals the thread's PML4.
-                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)pml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) {
-                    Mem.MapPage(fbPhys + (p * 4096), vAddr + (p * 4096), 0x07, currentPml4);
-                }
-                
-                Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
-                Scheduler.Threads[id].VirtPages += (uint)numPages;
-                
-                Scheduler.ReleaseSchedLockSafe(irq);
-
-                ArchCtx.SetRet(ctx, vAddr); 
-                break;
+                return Arch.SyscallImpl!.DispatchMapFramebuffer(id, isKing, ctx);
             }
 
-            // [SYSCALL 51]
+            // [PORTABLE] I/O-specific syscall 51 (get framebuffer dims) delegated to arch vtable
             case 51:
             {
                 ulong* ptrWidth = (ulong*)ArchCtx.GetArg(ctx, 1);
                 ulong* ptrHeight = (ulong*)ArchCtx.GetArg(ctx, 2);
                 ulong* ptrScanLine = (ulong*)ArchCtx.GetArg(ctx, 3);
-
-                if (ptrWidth != null && IsValidUserPtr((ulong)ptrWidth)) *ptrWidth = Terminal.width;
-                if (ptrHeight != null && IsValidUserPtr((ulong)ptrHeight)) *ptrHeight = Terminal.height;
-                if (ptrScanLine != null && IsValidUserPtr((ulong)ptrScanLine)) *ptrScanLine = Terminal.scanLine;
-
-                ArchCtx.SetRet(ctx, 1); 
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchFramebufferDims(ptrWidth, ptrHeight, ptrScanLine));
                 break;
             }
 
-            // [SYSCALL 52] ĐỔI HƯỚNG TERMINAL (VIRTUAL FRAMEBUFFER)
+            // [PORTABLE] I/O-specific syscall 52 (redirect framebuffer) delegated to arch vtable
             case 52:
             {
-                // [FIX BẢO MẬT - HIGH] Chỉ root mới được đổi hướng Terminal toàn cục -
-                // Terminal.fb/width/height/scanLine là state DÙNG CHUNG toàn hệ thống,
-                // trước đây bất kỳ process nào (kể cả jailed) cũng chiếm được nó.
-                if (!isKing) {
-                    Scheduler.Threads[id].IsPhantomDead = 1;
-                    ArchCtx.SetRet(ctx, 0);
-                    break;
-                }
-
+                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
                 ulong newFb = ArchCtx.GetArg(ctx, 1);
                 uint w = (uint)ArchCtx.GetArg(ctx, 2);
                 uint h = (uint)ArchCtx.GetArg(ctx, 3);
                 uint sl = (uint)ArchCtx.GetArg(ctx, 4);
-
-                if (IsValidUserPtr(newFb)) {
-                    Terminal.RedirectOutput((uint*)newFb, w, h, sl);
-                    ArchCtx.SetRet(ctx, 1);
-                } else {
-                    ArchCtx.SetRet(ctx, 0);
-                }
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchRedirectFramebuffer(newFb, w, h, sl, isKing));
                 break;
             }
 
