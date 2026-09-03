@@ -67,6 +67,11 @@ public sealed class ARM64SyscallImpl : IArcSyscall
         return unchecked((ulong)-1);
     }
 
+    public ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys)
+    {
+        return unchecked((ulong)-1);
+    }
+
     public ulong DispatchPrint(int threadId, char* str)
     {
         return unchecked((ulong)-1);

@@ -977,55 +977,12 @@ public static unsafe class Syscall
                 return Scheduler.SwitchTask(currentRsp);
             }
 
-            // [SYSCALL 99]: XIN VÀO KHU TỰ TRỊ (Global Shared Memory)
-            case 99: 
+            // [PORTABLE] Arch-specific syscall 99 (global shared memory) delegated to arch vtable
+            case 99:
             {
-                bool irq = Scheduler.AcquireSchedLockSafe();
-
-                if (GlobalSharedRAM_Phys == 0) {
-                    ulong allocPhys = (ulong)PMM.AllocateContiguousPages(5);
-                    if (allocPhys != 0) {
-                        GlobalSharedRAM_Phys = allocPhys; 
-                    } else {
-                        Scheduler.ReleaseSchedLockSafe(irq); 
-                        ArchCtx.SetRet(ctx, 0); 
-                        break; 
-                    }
+                fixed (ulong* physPtr = &GlobalSharedRAM_Phys) {
+                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchGlobalSharedMemory(id, physPtr));
                 }
-
-                if (Scheduler.Threads[id].SharedMemPhys == 0) {
-                    ulong allocPage = (ulong)PMM.AllocatePage();
-                    if (allocPage == 0) { 
-                        Scheduler.ReleaseSchedLockSafe(irq); 
-                        ArchCtx.SetRet(ctx, 0); 
-                        break; 
-                    }
-
-                    Scheduler.Threads[id].SharedMemPhys = allocPage;
-                    Scheduler.Threads[id].PhysPages += 1;
-                    Scheduler.Threads[id].VirtPages += 5;
-                    Scheduler.Threads[id].SharedMemVirt = Scheduler.Threads[id].AppHeapBase;
-                    
-                    // [PAGING] Use the thread's own PML4 pointer. Validate PML4 and GlobalSharedRAM_Phys
-                    ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
-                    if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                    if (GlobalSharedRAM_Phys == 0 || GlobalSharedRAM_Phys >= PMM.TotalPages * 4096UL) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                    ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                    if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                    Mem.MapPage(allocPage, Scheduler.Threads[id].SharedMemVirt, 0x07, currentPml4); 
-                    for (ulong p = 1; p < 5; p++) {
-                        ulong cand = GlobalSharedRAM_Phys + (p * 4096);
-                        if (cand >= PMM.TotalPages * 4096UL) break;
-                        Mem.MapPage(cand, Scheduler.Threads[id].SharedMemVirt + (p * 4096), 0x07, currentPml4);
-                    }
-                    
-                    Scheduler.Threads[id].AppHeapBase += (4096 * 5); 
-                }
-                
-                ulong resultVirt = Scheduler.Threads[id].SharedMemVirt;
-                Scheduler.ReleaseSchedLockSafe(irq);
-                
-                ArchCtx.SetRet(ctx, resultVirt); 
                 break;
             }
             

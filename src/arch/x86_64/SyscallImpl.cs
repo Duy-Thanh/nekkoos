@@ -218,6 +218,56 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         GDT.GrantPortAccess(port);
     }
 
+    public ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys)
+    {
+        bool irq = Scheduler.AcquireSchedLockSafe();
+        ulong globalPhys = *inOutGlobalPhys;
+
+        if (globalPhys == 0) {
+            ulong allocPhys = (ulong)PMM.AllocateContiguousPages(5);
+            if (allocPhys != 0) {
+                globalPhys = allocPhys;
+                *inOutGlobalPhys = allocPhys;
+            } else {
+                Scheduler.ReleaseSchedLockSafe(irq);
+                return 0;
+            }
+        }
+
+        if (Scheduler.Threads[threadId].SharedMemPhys == 0) {
+            ulong allocPage = (ulong)PMM.AllocatePage();
+            if (allocPage == 0) {
+                Scheduler.ReleaseSchedLockSafe(irq);
+                return 0;
+            }
+
+            Scheduler.Threads[threadId].SharedMemPhys = allocPage;
+            Scheduler.Threads[threadId].PhysPages += 1;
+            Scheduler.Threads[threadId].VirtPages += 5;
+            Scheduler.Threads[threadId].SharedMemVirt = Scheduler.Threads[threadId].AppHeapBase;
+
+            ulong* threadPml4 = (ulong*)Scheduler.Threads[threadId].AddrSpace;
+            if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4))
+            { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+            if (globalPhys == 0 || globalPhys >= PMM.TotalPages * 4096UL)
+            { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+            ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
+            if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+            Mem.MapPage(allocPage, Scheduler.Threads[threadId].SharedMemVirt, 0x07, currentPml4);
+            for (ulong p = 1; p < 5; p++) {
+                ulong cand = globalPhys + (p * 4096);
+                if (cand >= PMM.TotalPages * 4096UL) break;
+                Mem.MapPage(cand, Scheduler.Threads[threadId].SharedMemVirt + (p * 4096), 0x07, currentPml4);
+            }
+
+            Scheduler.Threads[threadId].AppHeapBase += (4096 * 5);
+        }
+
+        ulong resultVirt = Scheduler.Threads[threadId].SharedMemVirt;
+        Scheduler.ReleaseSchedLockSafe(irq);
+        return resultVirt;
+    }
+
     public ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing)
     {
         if (numPages == 0) return Scheduler.Threads[threadId].AppHeapBase;

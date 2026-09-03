@@ -122,6 +122,9 @@ public unsafe interface IArcSyscall
     // [SYSCALL 6]: Allocate heap memory (arch-specific paging)
     ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing);
 
+    // [SYSCALL 99]: Global shared memory region (arch-specific paging, uses static GlobalSharedRAM_Phys)
+    ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys);
+
     // [SYSCALL 101]: Secure shared memory pipeline (arch-specific paging, returns 2 vaddrs)
     ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr);
 
