@@ -110,6 +110,9 @@ public unsafe interface IArcSyscall
     // [SYSCALL 52]: Redirect framebuffer output (I/O-specific)
     ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing);
 
+    // [SYSCALL 7]: Grant I/O port access (I/O-specific - IOPL/IOPM bitmap)
+    void DispatchGrantPortAccess(ushort port, int threadId, bool isKing);
+
     // [SYSCALL 60]: Acquire ATA hardware lock (I/O-specific - storage)
     void DispatchAtaLockAcquire();
 

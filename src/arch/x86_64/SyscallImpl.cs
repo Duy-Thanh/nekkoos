@@ -166,6 +166,12 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         else return 0;
     }
 
+    public void DispatchGrantPortAccess(ushort port, int threadId, bool isKing)
+    {
+        if (!isKing) { Scheduler.Threads[threadId].IsPhantomDead = 1; return; }
+        GDT.GrantPortAccess(port);
+    }
+
     public void DispatchAtaLockAcquire()
     {
         Driver.ATA.AtaHardwareLock.Acquire();

@@ -53,6 +53,10 @@ public sealed class ARM64SyscallImpl : IArcSyscall
         return unchecked((ulong)-1);
     }
 
+    public void DispatchGrantPortAccess(ushort port, int threadId, bool isKing)
+    {
+    }
+
     public void DispatchAtaLockAcquire()
     {
     }

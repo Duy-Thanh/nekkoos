@@ -384,11 +384,13 @@ public static unsafe class Syscall
                 break;
             }
 
-            // [SYSCALL 7]: XIN QUYỀN TRUY CẬP CỔNG PHẦN CỨNG (Grant I/O Port)
-            case 7: 
+            // [PORTABLE] I/O-specific syscall 7 (grant I/O port access) delegated to arch vtable
+            case 7:
             {
-                if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 1); break; }
-                ushort port = (ushort)ArchCtx.GetArg(ctx, 1); GDT.GrantPortAccess(port); ArchCtx.SetRet(ctx, 1); break;
+                ushort port = (ushort)ArchCtx.GetArg(ctx, 1);
+                Arch.SyscallImpl!.DispatchGrantPortAccess(port, id, isKing);
+                ArchCtx.SetRet(ctx, 1);
+                break;
             }
 
             // ==========================================================
