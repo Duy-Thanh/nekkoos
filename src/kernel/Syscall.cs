@@ -39,6 +39,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "IsPrivilegedIpcType_Pas")]
     private static extern byte IsPrivilegedIpcType_Pas(uint msgType);
 
+    // [PASCAL PORT] Milliseconds to scheduler ticks conversion
+    [DllImport("*", EntryPoint = "MsToTicks_Pas")]
+    private static extern ulong MsToTicks_Pas(ulong ms);
+
     // [PASCAL PORT] Capped string copy (used in case 94 for username pass-through)
     [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
     private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
@@ -487,14 +491,14 @@ public static unsafe class Syscall
             case 96: { ArchCtx.SetRet(ctx, RTC.GetSeconds()); break; }
 
             // [SYSCALL 97]: NGỦ ĐÔNG CÓ HẸN GIỜ (Sleep ms)
-            case 97: 
+            case 97:
             {
-                ulong sleepMs = ArchCtx.GetArg(ctx, 1); ulong ticksToSleep = (sleepMs / 10) + 1; 
+                // [PASCAL PORT] MsToTicks_Pas replaces inline ms-to-ticks math
+                ulong ticksToSleep = MsToTicks_Pas(ArchCtx.GetArg(ctx, 1));
                 bool irq = Scheduler.AcquireSchedLockSafe();
                 Scheduler.Threads[id].WakeUpTick = currentTicks + ticksToSleep;
-                Scheduler.Threads[id].Active = 2; 
+                Scheduler.Threads[id].Active = 2;
                 Scheduler.ReleaseSchedLockSafe(irq);
-                // Context switch ngay — không spin CPU đợi timer.
                 ArchCtx.SetRet(ctx, 1);
                 return Scheduler.SwitchTask(currentRsp);
             }

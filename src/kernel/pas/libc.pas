@@ -41,6 +41,10 @@ function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas
   Stops at zero terminator or cap-1. Returns number of bytes written. }
 function WideStrToBytes(src: PWord; dest: PByte; cap: Cardinal): Cardinal; cdecl; public name 'WideStrToBytes_Pas';
 
+{ Convert milliseconds to scheduler ticks (10ms/tick granularity).
+  Adds 1 to ensure at least 1 tick even for sub-tick durations. }
+function MsToTicks(ms: UInt64): UInt64; cdecl; public name 'MsToTicks_Pas';
+
 { Compare wide string against fixed-byte ASCII buffer (e.g. Scheduler.Threads[].Name).
   Returns 1 if both strings have same length and all bytes match, 0 otherwise.
   Used by syscall 14 (find PID by name). }
@@ -362,6 +366,12 @@ begin
     Inc(i);
   end;
   WideStrToBytes := i;
+end;
+
+{ MsToTicks: convert milliseconds to scheduler ticks. }
+function MsToTicks(ms: UInt64): UInt64; cdecl;
+begin
+  MsToTicks := (ms div 10) + 1;
 end;
 
 { StrEqWideBytes: compares a wide-char string against a fixed ASCII byte buffer.
