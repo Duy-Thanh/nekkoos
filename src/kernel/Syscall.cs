@@ -31,6 +31,21 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "SplitTwoArgs_Pas")]
     private static extern byte SplitTwoArgs_Pas(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap);
 
+    // [PASCAL PORT] PASSWD / SUDOERS file parsing delegated to passwd_parser.pas
+    [DllImport("*", EntryPoint = "ParsePasswdLine_Pas")]
+    private static extern uint ParsePasswdLine_Pas(char* linePtr, char* userOut, uint userCap, char* saltOut, uint saltCap, char* hashOut, uint hashCap, char* uidOut, uint uidCap);
+
+    [DllImport("*", EntryPoint = "SudoersContains_Pas")]
+    private static extern byte SudoersContains_Pas(byte* buf, uint bufLen, char* user);
+
+    // [PASCAL PORT] Decimal string to uint (for parsing PASSWD uid field)
+    [DllImport("*", EntryPoint = "Atoi_Pas")]
+    private static extern uint Atoi_Pas(char* str);
+
+    // [PASCAL PORT] Octal string to uint (for parsing chmod mode bits)
+    [DllImport("*", EntryPoint = "OctalStrToUInt_Pas")]
+    private static extern uint OctalStrToUInt_Pas(char* str);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -767,24 +782,17 @@ public static unsafe class Syscall
                     if (passBuf != null && passSize > 0) {
                         int i = 0;
                         while (i < (int)passSize) {
-                            int u = 0, s = 0, h = 0, ud = 0; int stage = 0;
-                            while (i < (int)passSize && passBuf[i] != '\n' && passBuf[i] != '\r') {
-                                char c = (char)passBuf[i];
-                                if (c == ':') { stage++; }
-                                else {
-                                    if (stage == 0 && u < 31) lineUser[u++] = c;
-                                    else if (stage == 1 && s < 63) lineSalt[s++] = c;
-                                    else if (stage == 2 && h < 79) lineHash[h++] = c;
-                                    else if (stage == 3 && ud < 15) lineUID[ud++] = c;
-                                }
-                                i++;
-                            }
-                            lineUser[u] = '\0'; lineSalt[s] = '\0'; lineHash[h] = '\0'; lineUID[ud] = '\0';
+                            // [PASCAL PORT] Passwd line parsing delegated to passwd_parser.pas
+                            ParsePasswdLine_Pas((char*)&passBuf[i], lineUser, 32, lineSalt, 64, lineHash, 80, lineUID, 16);
 
-                            uint lineUidVal = 0;
-                            for (int k = 0; lineUID[k] != '\0'; k++) { if (lineUID[k] >= '0' && lineUID[k] <= '9') lineUidVal = lineUidVal * 10 + (uint)(lineUID[k] - '0'); else break; }
+                            // Skip past the line we just parsed
+                            while (i < (int)passSize && passBuf[i] != '\n' && passBuf[i] != '\r') i++;
+                            while (i < (int)passSize && (passBuf[i] == '\n' || passBuf[i] == '\r')) i++;
 
-                            if (u > 0 && lineUidVal == callerUidForSudo) {
+                            // [PASCAL PORT] Atoi_Pas replaces inline decimal parsing
+                            uint lineUidVal = Atoi_Pas(lineUID);
+
+                            if (lineUser[0] != '\0' && lineUidVal == callerUidForSudo) {
                                 *(uint*)0x8000UL = 3;
                                 int mm = 0; while (lineUser[mm] != '\0' && mm < 31) { matchedUser[mm] = lineUser[mm]; mm++; } matchedUser[mm] = '\0';
 
@@ -825,15 +833,8 @@ public static unsafe class Syscall
                                     byte* sudoBuf = FAT16.ReadFile(sudoersFile, &sudoSize, 0);
                                     FAT16.Cd(dirRoot, 0);
                                     if (sudoBuf != null && sudoSize > 0) {
-                                        int j = 0;
-                                        while (j < (int)sudoSize) {
-                                            char* lineSudo = stackalloc char[32]; int ls = 0;
-                                            while (j < (int)sudoSize && sudoBuf[j] != '\n' && sudoBuf[j] != '\r' && ls < 31) { lineSudo[ls++] = (char)sudoBuf[j]; j++; }
-                                            lineSudo[ls] = '\0';
-                                            while (j < (int)sudoSize && sudoBuf[j] != '\n' && sudoBuf[j] != '\r') j++;
-                                            while (j < (int)sudoSize && (sudoBuf[j] == '\n' || sudoBuf[j] == '\r')) j++;
-                                            if (ls > 0 && LibC.StrCmp(lineSudo, matchedUser)) { inSudoers = true; break; }
-                                        }
+                                        // [PASCAL PORT] SUDOERS matching delegated to passwd_parser.pas
+                                        inSudoers = SudoersContains_Pas(sudoBuf, sudoSize, matchedUser) != 0;
                                         NekkoOS.Kernel.Heap.Free(sudoBuf);
                                     }
                                 }
@@ -965,7 +966,8 @@ public static unsafe class Syscall
                                             char* modeStr = stackalloc char[16]; char* path = stackalloc char[256];
                                             if (!SplitTwoArgsSudo(rest, modeStr, 16, path, 256)) { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Usage: sudo chmod <mode> <path>\n\0") Terminal.Print(e); }
                                             else {
-                                                uint mode = 0; for (int mi = 0; modeStr[mi] != '\0'; mi++) { if (modeStr[mi] < '0' || modeStr[mi] > '7') break; mode = mode * 8 + (uint)(modeStr[mi] - '0'); }
+                                                // [PASCAL PORT] Inline OctalStrToUInt replaced with OctalStrToUInt_Pas
+                                                uint mode = OctalStrToUInt_Pas(modeStr);
                                                 int r = FAT16.Chmod(path, mode, callerThreadForSudo);
                                                 if (r == 1) { Terminal.SetColor(0x0000FF00); fixed (char* ok = "[+] Permissions Changed Successfully!\n\0") Terminal.Print(ok); }
                                                 else { Terminal.SetColor(0x00FF0000); fixed (char* e = "[!] Failed! Not Found.\n\0") Terminal.Print(e); }
@@ -1002,7 +1004,6 @@ public static unsafe class Syscall
                                 NekkoOS.Kernel.Heap.Free(passBuf);
                                 ArchCtx.SetRet(ctx, 1); break;
                             }
-                            while (i < (int)passSize && (passBuf[i] == '\n' || passBuf[i] == '\r')) i++;
                         }
                         if (!foundAccount) { NekkoOS.Kernel.Heap.Free(passBuf); ArchCtx.SetRet(ctx, 0); }
                     } else { ArchCtx.SetRet(ctx, 0); }

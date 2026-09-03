@@ -1,6 +1,6 @@
 # AGENTS.md — NekkoOS working notes for AI assistants
 
-## Trạng thái hiện tại (cập nhật 2026-08-27)
+## Trạng thái hiện tại (cập nhật 2026-09-03)
 - Toolchain x86_64 đã cài đủ trên openSUSE Tumbleweed: bflat v10 (~/bflat),
   fpc 3.2.2, mingw64-cross-binutils. Build: `./build.sh` (cần
   `export PATH="$HOME/bflat:/usr/sbin:$PATH"`).
@@ -8,26 +8,27 @@
   Hợp đồng AAL = `src/arch/Arch.cs` (+ twin `arch_interface.pas`),
   **lint gate trong build.sh cấm mọi DllImport ngoài src/arch/** (trừ shim
   `_Pas`, AppMainAsm, và boot Out8/In8 standalone). Vi phạm = build fail.
+- **PORTABLE SYSCALL DISPATCH (commit 9c9927d)**: I/O-specific syscalls
+  (4, 12, 13, 50, 51, 52) đã delegate sang `IArcSyscall` interface trong
+  `src/arch/Arch.cs`. `X86SyscallImpl` (x86_64) chứa logic thật;
+  `ARM64SyscallImpl` (skeleton) trả -1 cho mọi method. Kernel generic
+  `Syscall.cs` giờ chỉ xử lý syscall chung (IPC, heap, process, sudo).
+  `Kernel.cs` boot gán `Arch.SyscallImpl = new X86SyscallImpl()`.
+  Net: -41 dòng trong Syscall.cs, 9/9 smoke tests pass.
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
-  terminal fat16 (+ arch_interface + HAL impls). libc.pas mới thêm:
+  terminal fat16 syscall_security memmap_scan scheduler_dispatch pe_loader
+  acpi_parse (+ arch_interface + HAL impls). libc.pas helpers:
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
-  SplitTwoArgs_Pas, MemSet_Pas delegation, StrCmp_Pas, StrStartsWith_Pas.
-  fat16.pas cung cấp 6 helper protocol thuần: CheckSector_Pas,
-  ClusterLba_Pas, FatSectorForCluster_Pas, ParseBPB_Pas,
-  FindFreeCluster_Pas, IsValidCluster_Pas.
-- FAT16 protocol đã tách khỏi raw I/O path: mọi cluster-LBA/FAT-sector/BPB
-  math trong kernel FAT16.cs và userland FAT16_Driver.cs hiện gọi qua
-  fat16.pas. 25+ call sites đã wire (ClusterLba_Pas, FatSectorForCluster_Pas,
-  ParseBPB_Pas, FindFreeCluster_Pas). Kernel FindFreeCluster inner loop
-  thay thế bằng FindFreeCluster_Pas. Init/AppMain thay 3 dòng BPB math
-  bằng ParseBPB_Pas (đã xử lý BytesPerSector=0 default).
+  SplitTwoArgs_Pas, MemSet_Pas, StrCmp_Pas, StrStartsWith_Pas,
+  Atoi_Pas, AppendDecimal_Pas.
+- FAT16 protocol đã tách khỏi raw I/O path: 25+ call sites gọi qua
+  fat16.pas (ClusterLba, FatSectorForCluster, ParseBPB, FindFreeCluster,
+  GetNextCluster, FatEntryOffset).
 - Login/Shell đã normalize hết helper chuỗi lên libc.pas (roadmap #1 XONG).
-  Lưu ý: bản ClearBuffer cũ có bug ABI 2 tham số vs 3 — đã fix trong phiên
-  2026-08-27 (commit 9ac1100).
 - AddressSpaces.cs (class Mem) = facade duy nhất scheduler/loader thao tác
   address space; TCB field là `AddrSpace` (handle mờ).
-- **Test tự động**: có `test/automation/smoke_test.py` chạy QEMU headless,
-  poll serial, gõ phím, verify pass/fail, dọn dẹp.
+- **Test tự động**: `test/automation/smoke_test.py` 9/9 pass (boot→login→
+  ls→LS→cd..→root listing→write→cat→shutdown).
 
 ## Quy trình port C# → Pascal (ARCHITECTURE.md §3)
 1. Port logic sang unit .pas tương ứng, export cdecl tên `*_Pas`
