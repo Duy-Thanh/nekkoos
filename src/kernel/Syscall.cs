@@ -349,8 +349,9 @@ public static unsafe class Syscall
                 pInfo->HeapMemory = (isKing || targetId == (uint)id) ? Scheduler.Threads[targetId].AppHeapBase : 0;
                 pInfo->CpuTicks = Scheduler.Threads[targetId].CpuTicks;
                 pInfo->PhysPages = Scheduler.Threads[targetId].PhysPages;
-                pInfo->VirtPages = Scheduler.Threads[targetId].VirtPages; 
-                for (int i = 0; i < 16; i++) { pInfo->Name[i] = Scheduler.Threads[targetId].Name[i]; } 
+                pInfo->VirtPages = Scheduler.Threads[targetId].VirtPages;
+                // [PASCAL PORT] MemCopy_Pas replaces inline byte loop
+                LibC.MemCpy(pInfo->Name, Scheduler.Threads[targetId].Name, 16);
                 Scheduler.ReleaseSchedLockSafe(irq);
                 
                 ArchCtx.SetRet(ctx, 1); break;
