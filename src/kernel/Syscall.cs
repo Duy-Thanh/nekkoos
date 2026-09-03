@@ -50,6 +50,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "IsPrintableChar_Pas")]
     private static extern byte IsPrintableChar_Pas(ushort c);
 
+    // [PASCAL PORT] Compare wide string vs fixed ASCII byte buffer
+    [DllImport("*", EntryPoint = "StrEqWideBytes_Pas")]
+    private static extern byte StrEqWideBytes_Pas(char* wideStr, byte* byteStr);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -460,20 +464,16 @@ public static unsafe class Syscall
             }
 
             // [SYSCALL 14]: TÌM NGƯỜI THÂN (Get PID By Name)
-            case 14: 
+            case 14:
             {
                 if (!IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, unchecked((ulong)-1)); break; }
-                char* targetName = (char*)ArchCtx.GetArg(ctx, 1); long foundId = -1; 
+                char* targetName = (char*)ArchCtx.GetArg(ctx, 1); long foundId = -1;
 
-                bool irq = Scheduler.AcquireSchedLockSafe(); 
+                bool irq = Scheduler.AcquireSchedLockSafe();
                 for (int i = 1; i < Scheduler.ThreadCount; i++) {
                     if (Scheduler.Threads[i].Active != 0) {
-                        bool match = true;
-                        for (int j = 0; j < 15; j++) {
-                            if (targetName[j] == '\0' && Scheduler.Threads[i].Name[j] == '\0') break;
-                            if (targetName[j] != Scheduler.Threads[i].Name[j]) { match = false; break; }
-                        }
-                        if (match) { foundId = i; break; }
+                        // [PASCAL PORT] StrEqWideBytes_Pas compares wide string vs fixed byte buffer
+                        if (StrEqWideBytes_Pas(targetName, Scheduler.Threads[i].Name) != 0) { foundId = i; break; }
                     }
                 }
                 Scheduler.ReleaseSchedLockSafe(irq);

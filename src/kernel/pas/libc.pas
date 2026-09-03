@@ -37,6 +37,11 @@ function Atoi(str: PWord): Cardinal; cdecl; public name 'Atoi_Pas';
   0 if not. Used by cat builtin to filter non-printable bytes. }
 function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas';
 
+{ Compare wide string against fixed-byte ASCII buffer (e.g. Scheduler.Threads[].Name).
+  Returns 1 if both strings have same length and all bytes match, 0 otherwise.
+  Used by syscall 14 (find PID by name). }
+function StrEqWideBytes(wideStr: PWord; byteStr: PByte): Byte; cdecl; public name 'StrEqWideBytes_Pas';
+
 { Decimal conversion: converts a Cardinal to decimal string representation
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
@@ -332,6 +337,33 @@ begin
   else if c = 9 then IsPrintableChar := 1
   else if (c >= 32) and (c <= 126) then IsPrintableChar := 1
   else IsPrintableChar := 0;
+end;
+
+{ StrEqWideBytes: compares a wide-char string against a fixed ASCII byte buffer.
+  Returns 1 if lengths match and all bytes are equal, 0 otherwise. }
+function StrEqWideBytes(wideStr: PWord; byteStr: PByte): Byte; cdecl;
+var
+  wideLen, i: Integer;
+  matched: Boolean;
+begin
+  StrEqWideBytes := 0;
+  if (wideStr = nil) or (byteStr = nil) then Exit;
+
+  wideLen := 0;
+  while wideStr[wideLen] <> 0 do Inc(wideLen);
+
+  matched := True;
+  for i := 0 to wideLen - 1 do
+  begin
+    if PByte(byteStr)[i] <> PWord(wideStr)[i] then
+    begin
+      matched := False;
+      Break;
+    end;
+  end;
+  if matched and (PByte(byteStr)[wideLen] <> 0) then matched := False;
+
+  if matched then StrEqWideBytes := 1;
 end;
 
 end.
