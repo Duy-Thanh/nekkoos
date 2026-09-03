@@ -33,6 +33,10 @@ function SplitTwoArgs(rest: PWord; outFirst: PWord; firstCap: Integer; outSecond
 
 function Atoi(str: PWord): Cardinal; cdecl; public name 'Atoi_Pas';
 
+{ Char classification: returns 1 if byte is printable ASCII (32-126, \n, \t),
+  0 if not. Used by cat builtin to filter non-printable bytes. }
+function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas';
+
 { Decimal conversion: converts a Cardinal to decimal string representation
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
@@ -319,6 +323,15 @@ begin
     Atoi := Atoi * 10 + Cardinal(str[i]) - Ord('0');
     Inc(i);
   end;
+end;
+
+{ IsPrintableChar: returns 1 if char is printable ASCII (32..126, \n, \t), else 0. }
+function IsPrintableChar(c: Word): Byte; cdecl;
+begin
+  if c = 10 then IsPrintableChar := 1
+  else if c = 9 then IsPrintableChar := 1
+  else if (c >= 32) and (c <= 126) then IsPrintableChar := 1
+  else IsPrintableChar := 0;
 end;
 
 end.

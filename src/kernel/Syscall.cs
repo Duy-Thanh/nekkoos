@@ -46,6 +46,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "OctalStrToUInt_Pas")]
     private static extern uint OctalStrToUInt_Pas(char* str);
 
+    // [PASCAL PORT] Printable char classification (for cat builtin byte filter)
+    [DllImport("*", EntryPoint = "IsPrintableChar_Pas")]
+    private static extern byte IsPrintableChar_Pas(ushort c);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -566,7 +570,8 @@ public static unsafe class Syscall
                                     for(uint i = 0; i < fSize; i++) {
                                         char c = (char)fBuf[i];
                                         if (c == '\r') continue;
-                                        if ((c >= 32 && c <= 126) || c == '\n' || c == '\t') Terminal.DrawChar(c);
+                                        // [PASCAL PORT] IsPrintableChar_Pas replaces inline char filter
+                                        if (IsPrintableChar_Pas((ushort)c) != 0) Terminal.DrawChar(c);
                                         else Terminal.DrawChar('.'); 
                                     }
                                     fixed (char* nl2 = "\n\0") Terminal.Print(nl2);
@@ -923,7 +928,8 @@ public static unsafe class Syscall
                                                         for (uint k = 0; k < catSize; k++) {
                                                             char c = (char)catBuf[k];
                                                             if (c == '\r') continue;
-                                                            if ((c >= 32 && c <= 126) || c == '\n' || c == '\t') Terminal.DrawChar(c);
+                                                            // [PASCAL PORT] IsPrintableChar_Pas replaces inline char filter
+                                                            if (IsPrintableChar_Pas((ushort)c) != 0) Terminal.DrawChar(c);
                                                             else Terminal.DrawChar('.');
                                                         }
                                                         fixed (char* nl2 = "\n\0") Terminal.Print(nl2);
