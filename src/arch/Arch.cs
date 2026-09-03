@@ -110,6 +110,21 @@ public unsafe interface IArcSyscall
     // [SYSCALL 52]: Redirect framebuffer output (I/O-specific)
     ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing);
 
+    // [SYSCALL 1]: Print string (I/O-specific - terminal)
+    ulong DispatchPrint(int threadId, char* str);
+
+    // [SYSCALL 2]: Draw pixel (I/O-specific - framebuffer)
+    ulong DispatchDrawPixel(int threadId, ulong arg2, ulong arg3, ulong arg4);
+
+    // [SYSCALL 3]: Clear screen (I/O-specific - framebuffer)
+    ulong DispatchClearScreen(int threadId, ulong color);
+
+    // [SYSCALL 6]: Allocate heap memory (arch-specific paging)
+    ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing);
+
+    // [SYSCALL 101]: Secure shared memory pipeline (arch-specific paging, returns 2 vaddrs)
+    ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr);
+
     // [SYSCALL 7]: Grant I/O port access (I/O-specific - IOPL/IOPM bitmap)
     void DispatchGrantPortAccess(ushort port, int threadId, bool isKing);
 

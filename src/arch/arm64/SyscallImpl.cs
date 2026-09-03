@@ -57,6 +57,31 @@ public sealed class ARM64SyscallImpl : IArcSyscall
     {
     }
 
+    public ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing)
+    {
+        return unchecked((ulong)-1);
+    }
+
+    public ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr)
+    {
+        return unchecked((ulong)-1);
+    }
+
+    public ulong DispatchPrint(int threadId, char* str)
+    {
+        return unchecked((ulong)-1);
+    }
+
+    public ulong DispatchDrawPixel(int threadId, ulong x, ulong y, ulong color)
+    {
+        return unchecked((ulong)-1);
+    }
+
+    public ulong DispatchClearScreen(int threadId, ulong color)
+    {
+        return unchecked((ulong)-1);
+    }
+
     public void DispatchAtaLockAcquire()
     {
     }

@@ -166,10 +166,134 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         else return 0;
     }
 
+    public ulong DispatchPrint(int threadId, char* str)
+    {
+        // [MITIGATION CVE-2026-003] TOCTOU hardening
+        bool irq = Terminal.ScreenLock.AcquireSafe();
+        int maxPrint = 8192;
+        int charsSinceLastCheck = 0;
+        const int CHECK_INTERVAL = 256;
+
+        while (*str != '\0' && maxPrint > 0)
+        {
+            if (charsSinceLastCheck >= CHECK_INTERVAL)
+            {
+                if (IsValidUserPtr((ulong)str) == 0) break;
+                charsSinceLastCheck = 0;
+            }
+            Terminal.DrawCharUnsafe(*str);
+            str++;
+            maxPrint--;
+            charsSinceLastCheck++;
+        }
+
+        Terminal.ScreenLock.ReleaseSafe(irq);
+        return 1;
+    }
+
+    public ulong DispatchDrawPixel(int threadId, ulong x, ulong y, ulong color)
+    {
+        int fgTaskDraw = Scheduler.ForegroundTask;
+        bool fgValidDraw = fgTaskDraw >= 0 && fgTaskDraw < Scheduler.ThreadCount && Scheduler.Threads[fgTaskDraw].Active != 0;
+        if (fgValidDraw && fgTaskDraw != threadId) return 0;
+
+        uint ux = (uint)x; uint uy = (uint)y; uint ucolor = (uint)color;
+        if (ux >= Terminal.width || uy >= Terminal.height) return 0;
+        Terminal.fb[uy * Terminal.scanLine + ux] = ucolor;
+        return 1;
+    }
+
+    public ulong DispatchClearScreen(int threadId, ulong color)
+    {
+        int fgTaskClear = Scheduler.ForegroundTask;
+        bool fgValidClear = fgTaskClear >= 0 && fgTaskClear < Scheduler.ThreadCount && Scheduler.Threads[fgTaskClear].Active != 0;
+        if (fgValidClear && fgTaskClear != threadId) return 0;
+        Terminal.Clear((uint)color);
+        return 1;
+    }
+
     public void DispatchGrantPortAccess(ushort port, int threadId, bool isKing)
     {
         if (!isKing) { Scheduler.Threads[threadId].IsPhantomDead = 1; return; }
         GDT.GrantPortAccess(port);
+    }
+
+    public ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing)
+    {
+        if (numPages == 0) return Scheduler.Threads[threadId].AppHeapBase;
+        if (!isKing && numPages > 256) { Scheduler.Threads[threadId].IsPhantomDead = 1; return 0; }
+        if (numPages > 1024) return 0;
+
+        bool irq = Scheduler.AcquireSchedLockSafe();
+
+        ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
+        if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+
+        ulong virtAddr = Scheduler.Threads[threadId].AppHeapBase;
+
+        ulong* threadPml4 = (ulong*)Scheduler.Threads[threadId].AddrSpace;
+        if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4))
+        { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+        ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
+        if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+        for(ulong p = 0; p < numPages; p++) { Mem.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
+        Mem.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4);
+
+        Scheduler.Threads[threadId].PhysPages += (uint)numPages;
+        Scheduler.Threads[threadId].VirtPages += (uint)numPages + 1;
+        Scheduler.Threads[threadId].AppHeapBase += (numPages * 4096) + 4096;
+
+        Scheduler.ReleaseSchedLockSafe(irq);
+        return virtAddr;
+    }
+
+    public ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr)
+    {
+        if ((uint)targetPid >= Scheduler.ThreadCount || Scheduler.Threads[targetPid].Active == 0) return 0;
+        if (numPages == 0 || numPages > 4096) return 0;
+
+        bool irq = Scheduler.AcquireSchedLockSafe();
+
+        ulong myVAddr = Scheduler.Threads[callerId].AppHeapBase;
+        ulong targetVAddr = Scheduler.Threads[targetPid].AppHeapBase;
+        ulong targetPml4 = Scheduler.Threads[targetPid].AddrSpace;
+        ulong* myPml4 = (ulong*)Scheduler.Threads[callerId].AddrSpace;
+        if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)myPml4))
+        { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+        if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical(targetPml4))
+        { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+
+        ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
+        if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+
+        ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
+        if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); return 0; }
+        for(ulong p = 0; p < numPages; p++)
+        {
+            Mem.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4);
+            if ((ulong*)targetPml4 == currentPml4) {
+                Mem.MapPage(physAddr + (p * 4096), targetVAddr + (p * 4096), 0x07, (ulong*)targetPml4);
+            }
+        }
+
+        Scheduler.Threads[callerId].PhysPages += (uint)numPages;
+        Scheduler.Threads[callerId].VirtPages += (uint)numPages;
+        Scheduler.Threads[callerId].AppHeapBase += (numPages * 4096);
+
+        Scheduler.Threads[targetPid].VirtPages += (uint)numPages;
+        Scheduler.Threads[targetPid].AppHeapBase += (numPages * 4096);
+
+        Scheduler.ReleaseSchedLockSafe(irq);
+
+        ulong* currentPml4_after = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
+        if ((ulong*)myPml4 == currentPml4_after) {
+            Arch.LoadPageTable((ulong)myPml4);
+        } else {
+            return 0;
+        }
+
+        *outTargetVAddr = targetVAddr;
+        return myVAddr;
     }
 
     public void DispatchAtaLockAcquire()

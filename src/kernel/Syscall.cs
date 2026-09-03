@@ -174,72 +174,29 @@ public static unsafe class Syscall
             // [SYSCALL 0]: TỰ SÁT (Exit)
             case 0: { Scheduler.TerminateCurrentTask(); break; }
             
-            // [SYSCALL 1]: IN CHUỖI RA MÀN HÌNH (Print)
+            // [PORTABLE] I/O-specific syscall 1 (print string) delegated to arch vtable
             case 1:
             {
                 if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, 0); break; }
                 char* str = (char*)ArchCtx.GetArg(ctx, 1);
-
-                // [MITIGATION CVE-2026-003] TOCTOU hardening:
-                // Không fix hoàn toàn (gây crash/hang), nhưng validate định kỳ mỗi 256 chars
-                // để phát hiện page unmap trong hầu hết trường hợp, làm exploit khó hơn
-                bool irq = Terminal.ScreenLock.AcquireSafe();
-                int maxPrint = 8192;
-                int charsSinceLastCheck = 0;
-                const int CHECK_INTERVAL = 256;  // Validate mỗi 256 chars
-
-                while (*str != '\0' && maxPrint > 0)
-                {
-                    // Validate định kỳ để catch page unmap attacks
-                    if (charsSinceLastCheck >= CHECK_INTERVAL)
-                    {
-                        if (!IsValidUserPtr((ulong)str))
-                        {
-                            // Page đã bị unmap giữa chừng - nghi vấn attack!
-                            break;
-                        }
-                        charsSinceLastCheck = 0;
-                    }
-
-                    Terminal.DrawCharUnsafe(*str);
-                    str++;
-                    maxPrint--;
-                    charsSinceLastCheck++;
-                }
-
-                Terminal.ScreenLock.ReleaseSafe(irq);
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchPrint(id, str));
                 break;
             }
 
-            // [SYSCALL 2]: VẼ PIXEL (Draw Pixel)
+            // [PORTABLE] I/O-specific syscall 2 (draw pixel) delegated to arch vtable
             case 2:
             {
-                // [FIX BẢO MẬT - LOW] Chỉ tiến trình đang ở Foreground mới được vẽ lên màn
-                // hình dùng chung - trước đây bất kỳ process nền nào cũng vẽ đè lên UI của
-                // tiến trình đang active, cùng gốc rễ với bug tranh chấp bàn phím đã vá ở Syscall 4.
-                int fgTaskDraw = Scheduler.ForegroundTask;
-                bool fgValidDraw = fgTaskDraw >= 0 && fgTaskDraw < Scheduler.ThreadCount && Scheduler.Threads[fgTaskDraw].Active != 0;
-                if (fgValidDraw && fgTaskDraw != id) { ArchCtx.SetRet(ctx, 0); break; }
-
-                uint x = (uint)ArchCtx.GetArg(ctx, 1); uint y = (uint)ArchCtx.GetArg(ctx, 2); uint color = (uint)ArchCtx.GetArg(ctx, 3);
-
-                // [SECURITY] Prevent kernel memory overwrite by validating framebuffer coordinates
-                if (x >= Terminal.width || y >= Terminal.height) { ArchCtx.SetRet(ctx, 0); break; }
-
-                Terminal.fb[y * Terminal.scanLine + x] = color;
+                ulong x = ArchCtx.GetArg(ctx, 1); ulong y = ArchCtx.GetArg(ctx, 2); ulong color = ArchCtx.GetArg(ctx, 3);
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchDrawPixel(id, x, y, color));
                 break;
             }
 
-            // [SYSCALL 3]: XÓA MÀN HÌNH (Clear Screen)
+            // [PORTABLE] I/O-specific syscall 3 (clear screen) delegated to arch vtable
             case 3:
             {
-                // [FIX BẢO MẬT - LOW] Cùng gate Foreground như Syscall 2 - chặn tiến trình
-                // nền tự ý xóa sạch màn hình của tiến trình đang active.
-                int fgTaskClear = Scheduler.ForegroundTask;
-                bool fgValidClear = fgTaskClear >= 0 && fgTaskClear < Scheduler.ThreadCount && Scheduler.Threads[fgTaskClear].Active != 0;
-                if (fgValidClear && fgTaskClear != id) { ArchCtx.SetRet(ctx, 0); break; }
-
-                uint bgColor = (uint)ArchCtx.GetArg(ctx, 1); Terminal.Clear(bgColor); break;
+                ulong bgColor = ArchCtx.GetArg(ctx, 1);
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchClearScreen(id, bgColor));
+                break;
             }
 
             // [SYSCALL 4]: ĐỌC BÀN PHÍM (GLOBAL INTERCEPT HACK)
@@ -345,42 +302,11 @@ public static unsafe class Syscall
                 break;
             }
 
-            // [SYSCALL 6]: XIN THÊM RAM ẢO (Allocate Heap Memory)
-            case 6: 
+            // [PORTABLE] Arch-specific syscall 6 (heap allocation) delegated to arch vtable
+            case 6:
             {
                 ulong numPages = ArchCtx.GetArg(ctx, 1);
-                if (numPages == 0) { ArchCtx.SetRet(ctx, Scheduler.Threads[id].AppHeapBase); break; }
-                if (!isKing && numPages > 256) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
-                if (numPages > 1024) { ArchCtx.SetRet(ctx, 0); break; }
-
-                bool irq = Scheduler.AcquireSchedLockSafe();
-
-                ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
-                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-
-                ulong virtAddr = Scheduler.Threads[id].AppHeapBase;
-                
-                // ==========================================================
-                // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
-                // Validate the PML4 pointer thoroughly before mapping into it.
-                // ==========================================================
-                // Ensure caller maps into the currently active PML4 (CR3) to avoid dereferencing other PML4s
-                ulong* threadPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
-                if (threadPml4 == null || (ulong)threadPml4 == 0 || (ulong)threadPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)threadPml4)) {
-                    Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                // Only allow mapping when the caller's PML4 matches the currently loaded CR3.
-                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)threadPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) { Mem.MapPage(physAddr + (p * 4096), virtAddr + (p * 4096), 0x07, currentPml4); }
-                Mem.MapPage(0, virtAddr + (numPages * 4096), 0x04, currentPml4); 
-
-                Scheduler.Threads[id].PhysPages += (uint)numPages;
-                Scheduler.Threads[id].VirtPages += (uint)numPages + 1;
-                Scheduler.Threads[id].AppHeapBase += (numPages * 4096) + 4096;
-                
-                Scheduler.ReleaseSchedLockSafe(irq);
-                
-                ArchCtx.SetRet(ctx, virtAddr);
+                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchAllocateHeap(id, numPages, isKing));
                 break;
             }
 
@@ -1143,60 +1069,16 @@ public static unsafe class Syscall
                 return Scheduler.SwitchTask(currentRsp);
             }
 
-            // [SYSCALL 101] CẦU ÁNH SÁNG (SECURE SHARED MEMORY PIPELINE)
+            // [PORTABLE] Arch-specific syscall 101 (shared memory pipeline) delegated to arch vtable
             case 101:
             {
                 uint targetPid = (uint)ArchCtx.GetArg(ctx, 1);
                 ulong numPages = ArchCtx.GetArg(ctx, 2);
-
-                if (targetPid >= Scheduler.ThreadCount || Scheduler.Threads[targetPid].Active == 0) { ArchCtx.SetRet(ctx, 0); break; }
-                if (numPages == 0 || numPages > 4096) { ArchCtx.SetRet(ctx, 0); break; } 
-
-                bool irq = Scheduler.AcquireSchedLockSafe();
-
-                ulong myVAddr = Scheduler.Threads[id].AppHeapBase;
-                ulong targetVAddr = Scheduler.Threads[targetPid].AppHeapBase;
-                ulong targetPml4 = Scheduler.Threads[targetPid].AddrSpace;
-                // [PAGING] Use the thread's own PML4 pointer instead of ReadCR3()
-                ulong* myPml4 = (ulong*)Scheduler.Threads[id].AddrSpace;
-                if (myPml4 == null || (ulong)myPml4 == 0 || (ulong)myPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical((ulong)myPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                if (targetPml4 == 0 || targetPml4 >= PMM.TotalPages * 4096UL || !Mem.IsCanonical(targetPml4)) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-
-                ulong physAddr = (ulong)PMM.AllocateContiguousPages(numPages);
-                if (physAddr == 0) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-
-                // Require current CR3 to match caller's PML4 before mapping into caller space.
-                ulong* currentPml4 = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)myPml4 != currentPml4) { Scheduler.ReleaseSchedLockSafe(irq); ArchCtx.SetRet(ctx, 0); break; }
-                for(ulong p = 0; p < numPages; p++) {
-                    Mem.MapPage(physAddr + (p * 4096), myVAddr + (p * 4096), 0x07, currentPml4); 
-                    // Only map into target PML4 if it matches current CR3 (otherwise skip to avoid unsafe deref)
-                    if ((ulong*)targetPml4 == currentPml4) {
-                        Mem.MapPage(physAddr + (p * 4096), targetVAddr + (p * 4096), 0x07, (ulong*)targetPml4);
-                    }
-                }
-
-                Scheduler.Threads[id].PhysPages += (uint)numPages;
-                Scheduler.Threads[id].VirtPages += (uint)numPages;
-                Scheduler.Threads[id].AppHeapBase += (numPages * 4096);
-
-                Scheduler.Threads[targetPid].VirtPages += (uint)numPages;
-                Scheduler.Threads[targetPid].AppHeapBase += (numPages * 4096);
-
-                Scheduler.ReleaseSchedLockSafe(irq);
-
-                // [PAGING] Only load PML4 if it matches current CR3 to avoid loading
-                // an attacker-controlled or stale PML4 (hard-block unsafe loads).
-                ulong* currentPml4_after = (ulong*)(Arch.ReadPageTable() & 0x000FFFFFFFFFF000UL);
-                if ((ulong*)myPml4 == currentPml4_after) {
-                    Arch.LoadPageTable((ulong)myPml4);
-                } else {
-                    // Unsafe to load other PML4 — fail the syscall rather than risk instability.
-                    ArchCtx.SetRet(ctx, 0); ArchCtx.SetRet2(ctx, 0); return currentRsp;
-                }
-
-                ArchCtx.SetRet(ctx, myVAddr); 
-                ArchCtx.SetRet2(ctx, targetVAddr); 
+                ulong targetVAddr = 0;
+                ulong myVAddr = Arch.SyscallImpl!.DispatchSharedMemoryPipeline(id, (int)targetPid, numPages, &targetVAddr);
+                if (myVAddr == 0) { ArchCtx.SetRet(ctx, 0); ArchCtx.SetRet2(ctx, 0); break; }
+                ArchCtx.SetRet(ctx, myVAddr);
+                ArchCtx.SetRet2(ctx, targetVAddr);
                 break;
             }
 
