@@ -8,13 +8,13 @@
   Hợp đồng AAL = `src/arch/Arch.cs` (+ twin `arch_interface.pas`),
   **lint gate trong build.sh cấm mọi DllImport ngoài src/arch/** (trừ shim
   `_Pas`, AppMainAsm, và boot Out8/In8 standalone). Vi phạm = build fail.
-- **PORTABLE SYSCALL DISPATCH (commit 9c9927d)**: I/O-specific syscalls
-  (4, 12, 13, 50, 51, 52) đã delegate sang `IArcSyscall` interface trong
-  `src/arch/Arch.cs`. `X86SyscallImpl` (x86_64) chứa logic thật;
-  `ARM64SyscallImpl` (skeleton) trả -1 cho mọi method. Kernel generic
+- **PORTABLE SYSCALL DISPATCH (commits 9c9927d..5329ea8)**: I/O-specific syscalls
+  (4, 7, 12, 13, 50, 51, 52, 60, 61, 399) đã delegate sang `IArcSyscall` interface
+  trong `src/arch/Arch.cs`. `X86SyscallImpl` (x86_64) chứa logic thật;
+  `ARM64SyscallImpl` (skeleton) trả -1/no-op cho mọi method. Kernel generic
   `Syscall.cs` giờ chỉ xử lý syscall chung (IPC, heap, process, sudo).
   `Kernel.cs` boot gán `Arch.SyscallImpl = new X86SyscallImpl()`.
-  Net: -41 dòng trong Syscall.cs, 9/9 smoke tests pass.
+  Net: ~100 dòng I/O-specific code đã move out, 9/9 smoke tests pass.
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
   terminal fat16 syscall_security memmap_scan scheduler_dispatch pe_loader
   acpi_parse passwd_parser (+ arch_interface + HAL impls). libc.pas helpers:
@@ -100,8 +100,6 @@ Hiện tại `Syscall.cs` chứa rất nhiều logic I/O và phần cứng cụp
 4. RISC-V port sẽ inherit ARM64 stubs
 5. Refactor Syscall.cs: generic cases ở lại, I/O-specific cases gọi qua `ArchCtx.SyscallImpl`
 6. Build + smoke test để đảm bảo x86_64 vẫn hoạt động
-
-
 ## Việc tiếp theo (đề xuất, thứ tự ưu tiên)
 1. ~~Chuẩn hóa helper chuỗi còn lại giữa Login/Shell vên libc.pas~~ ✅ XONG
 2. ~~Tách protocol FAT16 daemon khỏi port-I/O raw path~~ ✅ XONG
