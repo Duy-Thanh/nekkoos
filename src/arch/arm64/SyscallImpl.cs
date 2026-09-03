@@ -72,6 +72,16 @@ public sealed class ARM64SyscallImpl : IArcSyscall
         return unchecked((ulong)-1);
     }
 
+    public ulong DispatchSetUID(int threadId, uint targetUID, ulong* inOutMpuTrapPhys)
+    {
+        return unchecked((ulong)-1);
+    }
+
+    public ulong DispatchSetGID(int threadId, uint targetGID, ulong* inOutMpuTrapPhys)
+    {
+        return unchecked((ulong)-1);
+    }
+
     public ulong DispatchPrint(int threadId, char* str)
     {
         return unchecked((ulong)-1);

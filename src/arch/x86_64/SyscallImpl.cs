@@ -218,6 +218,40 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         GDT.GrantPortAccess(port);
     }
 
+    public ulong DispatchSetUID(int threadId, uint targetUID, ulong* inOutMpuTrapPhys)
+    {
+        uint currentUID = Scheduler.Threads[threadId].UID;
+        if (currentUID == 0 || targetUID == currentUID) {
+            Scheduler.Threads[threadId].UID = targetUID;
+            return 1;
+        }
+        if (*inOutMpuTrapPhys == 0) *inOutMpuTrapPhys = (ulong)PMM.AllocatePage();
+        if (Scheduler.Threads[threadId].SharedMemVirt != 0) {
+            ulong pml4tmp = Scheduler.Threads[threadId].AddrSpace;
+            if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
+                Mem.MapPage(*inOutMpuTrapPhys, Scheduler.Threads[threadId].SharedMemVirt, 0x05, (ulong*)pml4tmp);
+            }
+        }
+        return 0;
+    }
+
+    public ulong DispatchSetGID(int threadId, uint targetGID, ulong* inOutMpuTrapPhys)
+    {
+        uint currentGID = Scheduler.Threads[threadId].GID;
+        if (currentGID == 0 || Scheduler.Threads[threadId].UID == 0 || targetGID == currentGID) {
+            Scheduler.Threads[threadId].GID = targetGID;
+            return 1;
+        }
+        if (*inOutMpuTrapPhys == 0) *inOutMpuTrapPhys = (ulong)PMM.AllocatePage();
+        if (Scheduler.Threads[threadId].SharedMemVirt != 0) {
+            ulong pml4tmp = Scheduler.Threads[threadId].AddrSpace;
+            if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
+                Mem.MapPage(*inOutMpuTrapPhys, Scheduler.Threads[threadId].SharedMemVirt, 0x05, (ulong*)pml4tmp);
+            }
+        }
+        return 0;
+    }
+
     public ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys)
     {
         bool irq = Scheduler.AcquireSchedLockSafe();

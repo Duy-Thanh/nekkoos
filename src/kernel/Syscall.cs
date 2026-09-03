@@ -617,46 +617,31 @@ public static unsafe class Syscall
                 break;
             }
 
-            // [SYSCALL 91]: TỰ RỚT ĐÀI (Set UID - Drop Privilege)
-            case 91: 
+            // [PORTABLE] Arch-specific syscall 91 (set UID with MPU trap) delegated to arch vtable
+            case 91:
             {
-                uint targetUID = (uint)ArchCtx.GetArg(ctx, 0); uint currentUID = Scheduler.Threads[id].UID;
-                if (currentUID == 0 || targetUID == currentUID) { Scheduler.Threads[id].UID = targetUID; ArchCtx.SetRet(ctx, 1); } 
-                else {
-                    if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
-                    if (Scheduler.Threads[id].SharedMemVirt != 0) {
-                        ulong pml4tmp = Scheduler.Threads[id].AddrSpace;
-                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
-                            Mem.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
-                        }
-                    }
-                    ArchCtx.SetRet(ctx, 0); 
+                uint targetUID = (uint)ArchCtx.GetArg(ctx, 0);
+                fixed (ulong* trapPtr = &MpuTrapPage_Phys) {
+                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchSetUID(id, targetUID, trapPtr));
                 }
                 break;
             }
 
             // [SYSCALL 92 & 93]: ĐIỀU TRA & XÉT DUYỆT GROUP ID (Get/Set GID)
-            case 92: 
+            case 92:
             {
                 uint targetThreadForGID = (uint)ArchCtx.GetArg(ctx, 0);
-                if (targetThreadForGID < Scheduler.ThreadCount) { ArchCtx.SetRet(ctx, Scheduler.Threads[targetThreadForGID].GID); } 
+                if (targetThreadForGID < Scheduler.ThreadCount) { ArchCtx.SetRet(ctx, Scheduler.Threads[targetThreadForGID].GID); }
                 else { ArchCtx.SetRet(ctx, 9999); }
                 break;
             }
 
-            case 93: 
+            // [PORTABLE] Arch-specific syscall 93 (set GID with MPU trap) delegated to arch vtable
+            case 93:
             {
-                uint targetGID = (uint)ArchCtx.GetArg(ctx, 0); uint currentGID = Scheduler.Threads[id].GID;
-                if (currentGID == 0 || Scheduler.Threads[id].UID == 0 || targetGID == currentGID) { Scheduler.Threads[id].GID = targetGID; ArchCtx.SetRet(ctx, 1); } 
-                else {
-                    if (MpuTrapPage_Phys == 0) MpuTrapPage_Phys = (ulong)PMM.AllocatePage();
-                    if (Scheduler.Threads[id].SharedMemVirt != 0) {
-                        ulong pml4tmp = Scheduler.Threads[id].AddrSpace;
-                        if (pml4tmp != 0 && pml4tmp < PMM.TotalPages * 4096UL && Mem.IsCanonical(pml4tmp)) {
-                            Mem.MapPage(MpuTrapPage_Phys, Scheduler.Threads[id].SharedMemVirt, 0x05, (ulong*)pml4tmp);
-                        }
-                    }
-                    ArchCtx.SetRet(ctx, 0); 
+                uint targetGID = (uint)ArchCtx.GetArg(ctx, 0);
+                fixed (ulong* trapPtr = &MpuTrapPage_Phys) {
+                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchSetGID(id, targetGID, trapPtr));
                 }
                 break;
             }

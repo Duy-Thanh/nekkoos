@@ -122,6 +122,12 @@ public unsafe interface IArcSyscall
     // [SYSCALL 6]: Allocate heap memory (arch-specific paging)
     ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing);
 
+    // [SYSCALL 91]: Set UID with MPU trap on privilege drop (arch-specific paging)
+    ulong DispatchSetUID(int threadId, uint targetUID, ulong* inOutMpuTrapPhys);
+
+    // [SYSCALL 93]: Set GID with MPU trap on privilege drop (arch-specific paging)
+    ulong DispatchSetGID(int threadId, uint targetGID, ulong* inOutMpuTrapPhys);
+
     // [SYSCALL 99]: Global shared memory region (arch-specific paging, uses static GlobalSharedRAM_Phys)
     ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys);
 
