@@ -1207,30 +1207,27 @@ public static unsafe class Syscall
             // MOUSE.EXE). Nếu không có khóa này, 2 lõi CPU có thể cùng lúc
             // đụng vào chung bộ thanh ghi IDE -> dữ liệu đọc đĩa bị rác ngẫu nhiên
             // -> GPF / Page Fault / "file not found" thoắt ẩn thoắt hiện.
+            // [PORTABLE] I/O-specific syscall 60 (ATA lock acquire) delegated to arch vtable
             case 60:
             {
-                Driver.ATA.AtaHardwareLock.Acquire();
+                Arch.SyscallImpl!.DispatchAtaLockAcquire();
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }
 
-            // [SYSCALL 61] MỞ KHÓA PHẦN CỨNG ATA DÙNG CHUNG
+            // [PORTABLE] I/O-specific syscall 61 (ATA lock release) delegated to arch vtable
             case 61:
             {
-                Driver.ATA.AtaHardwareLock.Release();
+                Arch.SyscallImpl!.DispatchAtaLockRelease();
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }
 
-            // [SYSCALL 399]: DỌN DẸP BÃI CHIẾN TRƯỜNG (Reset Cursor)
-            case 399: 
+            // [PORTABLE] I/O-specific syscall 399 (reset cursor) delegated to arch vtable
+            case 399:
             {
-                bool irq = Terminal.ScreenLock.AcquireSafe();
-                Terminal.CursorX = 0; 
-                Terminal.CursorY = 0;
-                Terminal.ScreenLock.ReleaseSafe(irq);
-                
-                ArchCtx.SetRet(ctx, 1); 
+                Arch.SyscallImpl!.DispatchResetCursor();
+                ArchCtx.SetRet(ctx, 1);
                 break;
             }
 

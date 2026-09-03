@@ -109,4 +109,13 @@ public unsafe interface IArcSyscall
 
     // [SYSCALL 52]: Redirect framebuffer output (I/O-specific)
     ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing);
+
+    // [SYSCALL 60]: Acquire ATA hardware lock (I/O-specific - storage)
+    void DispatchAtaLockAcquire();
+
+    // [SYSCALL 61]: Release ATA hardware lock (I/O-specific - storage)
+    void DispatchAtaLockRelease();
+
+    // [SYSCALL 399]: Reset cursor position (I/O-specific - terminal)
+    void DispatchResetCursor();
 }

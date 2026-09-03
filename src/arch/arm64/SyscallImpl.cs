@@ -52,4 +52,16 @@ public sealed class ARM64SyscallImpl : IArcSyscall
     {
         return unchecked((ulong)-1);
     }
+
+    public void DispatchAtaLockAcquire()
+    {
+    }
+
+    public void DispatchAtaLockRelease()
+    {
+    }
+
+    public void DispatchResetCursor()
+    {
+    }
 }

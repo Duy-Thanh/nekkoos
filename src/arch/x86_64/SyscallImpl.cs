@@ -165,4 +165,22 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         }
         else return 0;
     }
+
+    public void DispatchAtaLockAcquire()
+    {
+        Driver.ATA.AtaHardwareLock.Acquire();
+    }
+
+    public void DispatchAtaLockRelease()
+    {
+        Driver.ATA.AtaHardwareLock.Release();
+    }
+
+    public void DispatchResetCursor()
+    {
+        bool irq = Terminal.ScreenLock.AcquireSafe();
+        Terminal.CursorX = 0;
+        Terminal.CursorY = 0;
+        Terminal.ScreenLock.ReleaseSafe(irq);
+    }
 }
