@@ -37,6 +37,10 @@ function Atoi(str: PWord): Cardinal; cdecl; public name 'Atoi_Pas';
   0 if not. Used by cat builtin to filter non-printable bytes. }
 function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas';
 
+{ Convert wide-char string to byte buffer (UTF-16 high byte dropped, low byte used).
+  Stops at zero terminator or cap-1. Returns number of bytes written. }
+function WideStrToBytes(src: PWord; dest: PByte; cap: Cardinal): Cardinal; cdecl; public name 'WideStrToBytes_Pas';
+
 { Compare wide string against fixed-byte ASCII buffer (e.g. Scheduler.Threads[].Name).
   Returns 1 if both strings have same length and all bytes match, 0 otherwise.
   Used by syscall 14 (find PID by name). }
@@ -341,6 +345,23 @@ begin
   else if c = 9 then IsPrintableChar := 1
   else if (c >= 32) and (c <= 126) then IsPrintableChar := 1
   else IsPrintableChar := 0;
+end;
+
+{ WideStrToBytes: copy wide-char string to byte buffer, taking low byte of each char. }
+function WideStrToBytes(src: PWord; dest: PByte; cap: Cardinal): Cardinal; cdecl;
+var
+  i: Cardinal;
+begin
+  WideStrToBytes := 0;
+  if (src = nil) or (dest = nil) or (cap = 0) then Exit;
+
+  i := 0;
+  while (i < cap - 1) and (PWord(src)[i] <> 0) do
+  begin
+    PByte(dest)[i] := PWord(src)[i] and $FF;
+    Inc(i);
+  end;
+  WideStrToBytes := i;
 end;
 
 { StrEqWideBytes: compares a wide-char string against a fixed ASCII byte buffer.

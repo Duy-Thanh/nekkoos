@@ -32,7 +32,15 @@ public unsafe class Login
     [DllImport("*", EntryPoint = "StrCmp_Pas")]
     private static extern byte StrCmp_Pas(char* a, char* b);
     public static bool StrCmp(char* a, char* b) { return StrCmp_Pas(a, b) != 0; }
-    public static void StringToSharedBuffer(char* source, char* dest) { int i = 0; while (source[i] != '\0') { dest[i] = source[i]; i++; } dest[i] = '\0'; }
+
+    // [PASCAL PORT] Wide-string copy now in libc.pas (StrCpyLimited_Pas).
+    [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
+    private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
+
+    public static void StringToSharedBuffer(char* source, char* dest) {
+        // Conservative cap: 4096 is the max buffer size in SharedMemoryBlock
+        StrCpyLimited_Pas(dest, source, 4096);
+    }
     // [PASCAL PORT] String-to-uint conversion (decimal base 10) now in libc.pas.
     // Shared implementation with kernel, avoids divergent base-10 parsers.
     [DllImport("*", EntryPoint = "Atoi_Pas")]

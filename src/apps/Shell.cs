@@ -84,12 +84,28 @@ public unsafe class Shell
     public static bool SplitTwoArgs(char* rest, char* outFirst, int firstCap, char* outSecond, int secondCap)
         => SplitTwoArgs_Pas(rest, outFirst, firstCap, outSecond, secondCap) == 1;
 
-    // [CHMOD] Chuyen chuoi so nguoi dung go (vd "755") - hieu la OCTAL giong UNIX
+    // [PASCAL PORT] Chuyen chuoi so nguoi dung go (vd "755") - hieu la OCTAL giong UNIX
     // chmod that su - thanh gia tri Permissions dang so thap phan luu tren dia
     // (vd 0755 octal = 493 decimal).
     // [PASCAL PORT] Logic da chuyen sang libc.pas (dung chung moi arch)
     [DllImport("*", EntryPoint = "OctalStrToUInt_Pas")]
     public static extern uint OctalStrToUInt(char* str);
+
+    // [PASCAL PORT] Copy wide string to byte buffer (Shell uses this for
+    // converting user-provided UTF-16 paths to ASCII bytes for FAT16 IPC payload)
+    [DllImport("*", EntryPoint = "WideStrToBytes_Pas")]
+    public static extern uint WideStrToBytes(char* src, byte* dest, int cap);
+
+    // [PASCAL PORT] Capped string copy (used for path strings)
+    [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
+    public static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
+
+    // [PASCAL PORT] Helper: copy wide-char path into shared FAT16 name buffer
+    // (replaces the 7+ inline `while (... != '\0' && n < 255) { ... = ...; n++; }` loops)
+    public static void CopyPathToShared(char* src, char* sharedNameBuf, int cap) {
+        StrCpyLimited_Pas(sharedNameBuf, src, (uint)cap);
+        sharedNameBuf[cap - 1] = '\0';
+    }
 
     // [STACK ISOLATION] Tach ra ham rieng de tranh stack overflow trong Main.
     // bflat AOT allocate TẤT CẢ stackalloc cua 1 ham upfront - neu de inline trong
@@ -126,9 +142,10 @@ public unsafe class Shell
 
     // Xu ly lenh "write <path>" - doc noi dung roi gui IPC toi FAT16 daemon.
     public static void DoWriteCmd(char* fileName, SharedMemoryBlock* SharedMem) {
+        // [PASCAL PORT] WideStrToBytes_Pas replaces inline char copy loop
         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
-        int n = 0; while(fileName[n] != '\0' && n < 255) { sharedNameBuf[n] = fileName[n]; n++; }
-        sharedNameBuf[n] = '\0';
+        WideStrToBytes(fileName, (byte*)sharedNameBuf, 256);
+        sharedNameBuf[255] = '\0';
 
         fixed(char* wmsg = "[*] Enter content. End with a single '.' on its own line:\n\0") ShellPrint(wmsg);
 
@@ -357,11 +374,10 @@ public unsafe class Shell
                     }
                     else if (StrStartsWith(sharedCmdBuffer, cmdCat))
                     {
-                        SweepMailbox(); 
+                        SweepMailbox();
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* fileName = sharedCmdBuffer + 4;
-                        int n = 0; while(fileName[n] != '\0' && n < 255) { sharedNameBuf[n] = fileName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
+                        CopyPathToShared(fileName, sharedNameBuf, 256);
 
                         SyscallSendIPC(FAT16_PID, 30, 0);
                         
@@ -404,11 +420,10 @@ public unsafe class Shell
                     }
                     else if (StrStartsWith(sharedCmdBuffer, cmdCd))
                     {
-                        SweepMailbox(); 
+                        SweepMailbox();
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* dirName = sharedCmdBuffer + 3;
-                        int n = 0; while(dirName[n] != '\0' && n < 255) { sharedNameBuf[n] = dirName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
+                        CopyPathToShared(dirName, sharedNameBuf, 256);
 
                         SyscallSendIPC(FAT16_PID, 36, 0);
                         Message res = default;
@@ -442,11 +457,10 @@ public unsafe class Shell
                     }
                     else if (StrStartsWith(sharedCmdBuffer, cmdMkdir))
                     {
-                        SweepMailbox(); 
+                        SweepMailbox();
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* dirName = sharedCmdBuffer + 6;
-                        int n = 0; while(dirName[n] != '\0' && n < 255) { sharedNameBuf[n] = dirName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
+                        CopyPathToShared(dirName, sharedNameBuf, 256);
 
                         SyscallSendIPC(FAT16_PID, 44, 0); 
                         Message res = default;
@@ -468,13 +482,12 @@ public unsafe class Shell
                     }
                     else if (StrStartsWith(sharedCmdBuffer, cmdRm))
                     {
-                        SweepMailbox(); 
+                        SweepMailbox();
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* fileName = sharedCmdBuffer + 3;
-                        int n = 0; while(fileName[n] != '\0' && n < 255) { sharedNameBuf[n] = fileName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
+                        CopyPathToShared(fileName, sharedNameBuf, 256);
 
-                        SyscallSendIPC(FAT16_PID, 46, 0); 
+                        SyscallSendIPC(FAT16_PID, 46, 0);
                         Message res = default;
                         while(true) {
                             if (SyscallReceiveIPC(&res) == 1 && res.Sender == FAT16_PID) {
@@ -495,13 +508,12 @@ public unsafe class Shell
                     }
                     else if (StrStartsWith(sharedCmdBuffer, cmdRmdir))
                     {
-                        SweepMailbox(); 
+                        SweepMailbox();
                         char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                         char* dirName = sharedCmdBuffer + 6;
-                        int n = 0; while(dirName[n] != '\0' && n < 255) { sharedNameBuf[n] = dirName[n]; n++; }
-                        sharedNameBuf[n] = '\0';
+                        CopyPathToShared(dirName, sharedNameBuf, 256);
 
-                        SyscallSendIPC(FAT16_PID, 48, 0); 
+                        SyscallSendIPC(FAT16_PID, 48, 0);
                         Message res = default;
                         while(true) {
                             if (SyscallReceiveIPC(&res) == 1 && res.Sender == FAT16_PID) {
@@ -531,8 +543,8 @@ public unsafe class Shell
                         } else {
                             uint mode = OctalStrToUInt(modeStr);
                             char* sharedNameBuf = (char*)SharedMem->FatRequestName;
-                            int idx = 0; while(path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
-                            sharedNameBuf[idx] = '\0'; idx++;
+                            StrCpyLimited_Pas(sharedNameBuf, path, 256);
+                            int idx = 0; while (sharedNameBuf[idx] != '\0' && idx < 255) idx++;
                             AppendDecimalToBuffer(mode, sharedNameBuf, ref idx);
                             sharedNameBuf[idx] = '\0';
 
@@ -564,9 +576,11 @@ public unsafe class Shell
                             fixed(char* err = "[!] Usage: chown <uid>:<gid> <path>\n\0") ShellPrint(err);
                         } else {
                             char* sharedNameBuf = (char*)SharedMem->FatRequestName;
-                            int idx = 0; while(path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
-                            sharedNameBuf[idx] = '\0'; idx++;
-                            int oi = 0; while(ownerStr[oi] != '\0' && idx < 4095) { sharedNameBuf[idx] = ownerStr[oi]; idx++; oi++; }
+                            StrCpyLimited_Pas(sharedNameBuf, path, 256);
+                            int idx = 0; while (sharedNameBuf[idx] != '\0' && idx < 255) idx++;
+                            // Append ownerStr (Pascal has no copy for char-after-content;
+                            // use inline loop here for the second append since it's a different shape)
+                            int oi = 0; while(ownerStr[oi] != '\0' && idx < 4095) { sharedNameBuf[idx++] = ownerStr[oi++]; }
                             sharedNameBuf[idx] = '\0';
 
                             SyscallSendIPC(FAT16_PID, 60, 0);
