@@ -55,6 +55,11 @@ function IPC_Receive(queue: Pointer; maxMessages: Integer;
 procedure IPC_ClearMailbox(queue: Pointer; maxMessages: Integer; threadId: Cardinal);
   cdecl; public name 'IPC_ClearMailbox_Pas';
 
+{ IsPrivilegedIpcType: returns 1 if msgType is a privileged kill signal
+  (SIGTERM=$DEAD, shutdown=$BEEF) that only root may send. 0 otherwise.
+  Used by syscall 5 (IPC send) for security gate. }
+function IsPrivilegedIpcType(msgType: Cardinal): Byte; cdecl; public name 'IsPrivilegedIpcType_Pas';
+
 implementation
 
 { External atomic primitives from Hardware.asm (x86_64 LOCK XCHG + fences) }
@@ -298,6 +303,15 @@ begin
       end;
     end;
   end;
+end;
+
+{ IsPrivilegedIpcType: checks if msgType is a privileged kill signal. }
+function IsPrivilegedIpcType(msgType: Cardinal): Byte; cdecl;
+begin
+  if (msgType = $DEAD) or (msgType = $BEEF) then
+    IsPrivilegedIpcType := 1
+  else
+    IsPrivilegedIpcType := 0;
 end;
 
 end.

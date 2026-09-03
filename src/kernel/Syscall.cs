@@ -35,6 +35,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "StrEqWideBytes_Pas")]
     private static extern byte StrEqWideBytes_Pas(char* wideStr, byte* byteStr);
 
+    // [PASCAL PORT] Privileged IPC type check (security gate for SIGTERM/shutdown msgs)
+    [DllImport("*", EntryPoint = "IsPrivilegedIpcType_Pas")]
+    private static extern byte IsPrivilegedIpcType_Pas(uint msgType);
+
     // [PASCAL PORT] Capped string copy (used in case 94 for username pass-through)
     [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
     private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
@@ -223,7 +227,8 @@ public static unsafe class Syscall
                 // shutdown, reboot) chỉ root (UID==0) mới được gửi. Nếu không, bất kỳ
                 // user thường nào cũng bắn thẳng 0xDEAD/0xBEEF cho ACPI/ATA/FAT16 Daemon
                 // để tắt máy/reboot/kill daemon, bỏ qua hoàn toàn kiểm tra isKing ở case 88.
-                bool isPrivilegedType = (msgType == 0xDEAD || msgType == 0xBEEF);
+                // [PASCAL PORT] IsPrivilegedIpcType_Pas replaces inline magic-constant check
+                bool isPrivilegedType = IsPrivilegedIpcType_Pas(msgType) != 0;
                 if (isPrivilegedType && Scheduler.Threads[id].UID != 0) {
                     ArchCtx.SetRet(ctx, 0); break;
                 }
