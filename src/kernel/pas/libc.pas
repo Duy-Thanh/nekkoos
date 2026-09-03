@@ -42,6 +42,10 @@ function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas
   Used by syscall 14 (find PID by name). }
 function StrEqWideBytes(wideStr: PWord; byteStr: PByte): Byte; cdecl; public name 'StrEqWideBytes_Pas';
 
+{ Copy wide string from src to dest up to cap-1 chars, then null-terminate.
+  Returns number of chars copied (not counting terminator). }
+function StrCpyLimited(dest: PWord; src: PWord; cap: Cardinal): Cardinal; cdecl; public name 'StrCpyLimited_Pas';
+
 { Decimal conversion: converts a Cardinal to decimal string representation
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
@@ -364,6 +368,24 @@ begin
   if matched and (PByte(byteStr)[wideLen] <> 0) then matched := False;
 
   if matched then StrEqWideBytes := 1;
+end;
+
+{ StrCpyLimited: copy wide string from src to dest, capped at cap-1 chars + null terminator. }
+function StrCpyLimited(dest: PWord; src: PWord; cap: Cardinal): Cardinal; cdecl;
+var
+  i: Cardinal;
+begin
+  StrCpyLimited := 0;
+  if (dest = nil) or (src = nil) or (cap = 0) then Exit;
+
+  i := 0;
+  while (i < cap - 1) and (PWord(src)[i] <> 0) do
+  begin
+    PWord(dest)[i] := PWord(src)[i];
+    Inc(i);
+  end;
+  PWord(dest)[i] := 0;
+  StrCpyLimited := i;
 end;
 
 end.

@@ -54,6 +54,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "StrEqWideBytes_Pas")]
     private static extern byte StrEqWideBytes_Pas(char* wideStr, byte* byteStr);
 
+    // [PASCAL PORT] Capped string copy (used in case 94 for username pass-through)
+    [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
+    private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
+
     public static ulong GlobalSharedRAM_Phys = 0;
     public static ulong MpuTrapPage_Phys = 0;
     public static Spinlock SharedMemLock;
@@ -799,7 +803,8 @@ public static unsafe class Syscall
 
                             if (lineUser[0] != '\0' && lineUidVal == callerUidForSudo) {
                                 *(uint*)0x8000UL = 3;
-                                int mm = 0; while (lineUser[mm] != '\0' && mm < 31) { matchedUser[mm] = lineUser[mm]; mm++; } matchedUser[mm] = '\0';
+                                // [PASCAL PORT] StrCpyLimited_Pas replaces inline char-by-char copy
+                                StrCpyLimited_Pas(matchedUser, lineUser, 32);
 
                                 int saltLen = KernHexUtil.HexToBytes(lineSalt, saltBytes, 32);
                                 int passLen = 0; while (inputPass[passLen] != '\0') passLen++;
