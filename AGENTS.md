@@ -16,6 +16,9 @@
     99 (global shmem), 101 (shmem pipeline)
   `X86SyscallImpl` chứa logic thật; `ARM64SyscallImpl` trả -1/no-op. Net: -180 dòng
   từ Syscall.cs, 9/9 smoke tests pass.
+- **MEGA-CASE EXTRACTION (commits 21ce67a, b8d730a)**: Syscall 88 (Internal Shell)
+  tách ra `src/kernel/InternalShell.cs` (197 dòng), Syscall 94 (Sudo) tách ra
+  `src/kernel/Sudo.cs` (288 dòng). Syscall.cs giờ chỉ 611 dòng — chỉ làm dispatcher.
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
   terminal fat16 syscall_security memmap_scan scheduler_dispatch pe_loader
   acpi_parse passwd_parser (+ arch_interface + HAL impls). libc.pas helpers:
