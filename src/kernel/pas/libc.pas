@@ -41,9 +41,13 @@ function IsPrintableChar(c: Word): Byte; cdecl; public name 'IsPrintableChar_Pas
   Stops at zero terminator or cap-1. Returns number of bytes written. }
 function WideStrToBytes(src: PWord; dest: PByte; cap: Cardinal): Cardinal; cdecl; public name 'WideStrToBytes_Pas';
 
-{ Convert milliseconds to scheduler ticks (10ms/tick granularity).
-  Adds 1 to ensure at least 1 tick even for sub-tick durations. }
+{ Milliseconds to scheduler ticks conversion. Adds 1 to ensure at least 1 tick
+  even for sub-tick durations. }
 function MsToTicks(ms: UInt64): UInt64; cdecl; public name 'MsToTicks_Pas';
+
+{ Append wide string src to dest, writing at *idx and advancing it. Stops at
+  zero terminator or when cap reached. Returns new value of *idx. }
+procedure StrAppend_Pas(dest: PWord; src: PWord; idx: PInteger; cap: Integer); cdecl; public name 'StrAppend_Pas';
 
 { Compare wide string against fixed-byte ASCII buffer (e.g. Scheduler.Threads[].Name).
   Returns 1 if both strings have same length and all bytes match, 0 otherwise.
@@ -372,6 +376,21 @@ end;
 function MsToTicks(ms: UInt64): UInt64; cdecl;
 begin
   MsToTicks := (ms div 10) + 1;
+end;
+
+{ StrAppend_Pas: append wide string to dest at given index. }
+procedure StrAppend_Pas(dest: PWord; src: PWord; idx: PInteger; cap: Integer); cdecl;
+var
+  i: Integer;
+begin
+  if (dest = nil) or (src = nil) or (idx = nil) then Exit;
+  i := 0;
+  while (idx^ < cap) and (PWord(src)[i] <> 0) do
+  begin
+    PWord(dest)[idx^] := PWord(src)[i];
+    Inc(idx^);
+    Inc(i);
+  end;
 end;
 
 { StrEqWideBytes: compares a wide-char string against a fixed ASCII byte buffer.

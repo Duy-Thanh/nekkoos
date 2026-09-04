@@ -21,14 +21,20 @@ public static unsafe class NekkoTop
     // [DllImport("*", EntryPoint = "SyscallResetCursor")] public static extern void ResetCursor();
 
     public static int BufIndex = 0;
-    
+
+    // [PASCAL PORT] Append char string to buffer (delegated to libc.pas)
+    [DllImport("*", EntryPoint = "StrAppend_Pas")]
+    private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
+
     public static void AppendChar(char* buf, char c) {
         if (BufIndex < 4000) buf[BufIndex++] = c;
     }
 
     public static void AppendStr(char* buf, char* str) {
-        int i = 0;
-        while (str[i] != '\0' && BufIndex < 4000) { buf[BufIndex++] = str[i++]; }
+        // BufIndex is a static int - need a local copy to take its address for the shim
+        int localIdx = BufIndex;
+        StrAppend_Pas(buf, str, &localIdx, 4000);
+        BufIndex = localIdx;
     }
 
     public static void AppendNumAligned(char* buf, ulong num, char* suffix, int width) {
