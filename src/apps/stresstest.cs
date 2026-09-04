@@ -77,10 +77,13 @@ public static unsafe class StressTest
         if (*idx < 500) { buf[*idx] = c; (*idx)++; }
     }
 
+    // [PASCAL PORT] Append char string to buffer (delegated to libc.pas)
+    [DllImport("*", EntryPoint = "StrAppend_Pas")]
+    private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
+
     public static void AppendStr(char* buf, int* idx, char* str)
     {
-        int i = 0;
-        while (str[i] != '\0' && *idx < 500) { buf[*idx] = str[i]; (*idx)++; i++; }
+        StrAppend_Pas(buf, str, idx, 500);
     }
 
     public static void AppendHex(char* buf, int* idx, uint v)
