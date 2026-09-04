@@ -25,11 +25,14 @@
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
   SplitTwoArgs_Pas, MemSet_Pas, StrCmp_Pas, StrStartsWith_Pas,
   Atoi_Pas, AppendDecimal_Pas, IsPrintableChar_Pas, StrEqWideBytes_Pas,
-  StrCpyLimited_Pas. passwd_parser.pas:
-  ParsePasswdLine_Pas, SudoersContains_Pas.
+  StrCpyLimited_Pas, WideStrToBytes_Pas, MsToTicks_Pas, StrAppend_Pas.
+  ipc.pas adds: IsPrivilegedIpcType_Pas, HasMessageForReceiver_Pas.
+  passwd_parser.pas: ParsePasswdLine_Pas, SudoersContains_Pas.
 - Syscall.cs case 94 (sudo) parser loop + inline Atoi/OctalStrToUInt
   + inline StrCmp/char-copy/byte-filter đã chuyển sang Pascal.
 - Syscall.cs case 14 (PID-by-name) char loop → StrEqWideBytes_Pas.
+- Shell.cs 7+ inline path-copy loops → StrCpyLimited_Pas.
+- top.cs/stresstest.cs AppendStr loops → StrAppend_Pas.
 - FAT16 protocol đã tách khỏi raw I/O path: 25+ call sites gọi qua
   fat16.pas (ClusterLba, FatSectorForCluster, ParseBPB, FindFreeCluster,
   GetNextCluster, FatEntryOffset).
