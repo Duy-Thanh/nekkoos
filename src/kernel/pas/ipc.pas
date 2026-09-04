@@ -60,6 +60,11 @@ procedure IPC_ClearMailbox(queue: Pointer; maxMessages: Integer; threadId: Cardi
   Used by syscall 5 (IPC send) for security gate. }
 function IsPrivilegedIpcType(msgType: Cardinal): Byte; cdecl; public name 'IsPrivilegedIpcType_Pas';
 
+{ HasMessageForReceiver: scans the IPC queue and returns 1 if any non-empty
+  message is addressed to receiverId. Used by syscall 100 (non-blocking IPC wait). }
+function HasMessageForReceiver(queue: Pointer; maxMessages: Integer; receiverId: Cardinal): Byte;
+  cdecl; public name 'HasMessageForReceiver_Pas';
+
 implementation
 
 { External atomic primitives from Hardware.asm (x86_64 LOCK XCHG + fences) }
@@ -312,6 +317,31 @@ begin
     IsPrivilegedIpcType := 1
   else
     IsPrivilegedIpcType := 0;
+end;
+
+{ HasMessageForReceiver: scans IPC queue for messages addressed to receiverId. }
+function HasMessageForReceiver(queue: Pointer; maxMessages: Integer; receiverId: Cardinal): Byte; cdecl;
+var
+  i: Integer;
+  msgType: Cardinal;
+  msgReceiver: Cardinal;
+begin
+  HasMessageForReceiver := 0;
+  if queue = nil then Exit;
+
+  for i := 0 to maxMessages - 1 do
+  begin
+    msgType := PCardinal(queue + i * MSG_SIZE + MSG_TYPE_OFFSET)^;
+    if msgType <> 0 then
+    begin
+      msgReceiver := PCardinal(queue + i * MSG_SIZE + MSG_RECEIVER_OFFSET)^;
+      if msgReceiver = receiverId then
+      begin
+        HasMessageForReceiver := 1;
+        Exit;
+      end;
+    end;
+  end;
 end;
 
 end.

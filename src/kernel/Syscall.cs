@@ -43,6 +43,10 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "MsToTicks_Pas")]
     private static extern ulong MsToTicks_Pas(ulong ms);
 
+    // [PASCAL PORT] Check if IPC queue has any message for receiver
+    [DllImport("*", EntryPoint = "HasMessageForReceiver_Pas")]
+    private static extern byte HasMessageForReceiver_Pas(void* queue, int maxMessages, uint receiverId);
+
     // [PASCAL PORT] Capped string copy (used in case 94 for username pass-through)
     [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
     private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
@@ -523,42 +527,22 @@ public static unsafe class Syscall
                 break;
             }
             
-            case 100: 
+            case 100:
             {
-                // 1. Khóa Scheduler Lock an toàn xuyên đa nhân
                 bool irq = Scheduler.AcquireSchedLockSafe();
-                
-                // 2. [CHẸN HỌNG RACE CONDITION GIÂY CUỐI]
-                bool hasMessage = false;
-                if (IPC.queue != null)
-                {
-                    for (int i = 0; i < IPC.MAX_MESSAGES; i++)
-                    {
-                        if (IPC.queue[i].Type != 0 && IPC.queue[i].Receiver == (uint)id)
-                        {
-                            hasMessage = true;
-                            break;
-                        }
-                    }
-                }
 
-                if (hasMessage)
+                // [PASCAL PORT] HasMessageForReceiver_Pas replaces inline scan loop
+                if (HasMessageForReceiver_Pas(IPC.queue, IPC.MAX_MESSAGES, (uint)id) != 0)
                 {
-                    // Thỏ vào chuồng! Quay lại bốc thư cày tiếp kịch tốc độ
                     Scheduler.ReleaseSchedLockSafe(irq);
-                    ArchCtx.SetRet(ctx, 1); 
+                    ArchCtx.SetRet(ctx, 1);
                     break;
                 }
 
-                // 3. [CHIẾN LƯỢC HẠ NHIỆT KHÔN NGOAN] 
-                // Thay vì ngủ cứng hay ngủ vô thời hạn, ta dùng cơ chế ngủ nhịp ngắn 
-                // giúp giữ luồng ở trạng thái Chờ thực sự, ép KernelIdleLoop phải HLT lâu hơn.
-                Scheduler.Threads[id].Active = 2; // CHỜ NGẮT / IPC
-                Scheduler.Threads[id].WakeUpTick = currentTicks + 2; 
-
+                Scheduler.Threads[id].Active = 2;
+                Scheduler.Threads[id].WakeUpTick = currentTicks + 2;
                 Scheduler.ReleaseSchedLockSafe(irq);
 
-                // Context switch ngay — không spin CPU vô tận chờ IPC.
                 ArchCtx.SetRet(ctx, 1);
                 return Scheduler.SwitchTask(currentRsp);
             }
