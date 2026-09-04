@@ -43,3 +43,5 @@ sudoers
 *.s
 src/arch/hal/README.md
 kilo.sh
+kilo/
+build/asm/ppas.sh
