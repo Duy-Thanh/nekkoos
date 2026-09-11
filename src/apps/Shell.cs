@@ -190,6 +190,10 @@ public unsafe class Shell
         idx = localIdx;
     }
 
+    // [PASCAL PORT] Append string to buffer
+    [DllImport("*", EntryPoint = "StrAppend_Pas")]
+    private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
+
     // [SUDO] Doc mat khau an ky tu - copy y het logic ReadInput cua Login.cs
     // (khong the dung chung vi Shell.exe va SysLogon.exe build rieng, khong link chung).
     public static void ReadInput(char* buffer, int maxLen, bool isPassword) {
@@ -283,7 +287,7 @@ public unsafe class Shell
                 GuiVAddr = targetDwmVAddr; GuiPixels = (uint*)(myBuffer + 256);
                 WindowHeader* header = (WindowHeader*)myBuffer;
                 header->X = 150; header->Y = 150; header->Width = (uint)GuiWidth; header->Height = (uint)GuiHeight;
-                fixed(char* t = "Nekko CMD\0") { int idx = 0; while (t[idx] != 0) { header->Title[idx] = (byte)t[idx]; idx++; } header->Title[idx] = 0; }
+                fixed(char* t = "Nekko CMD\0") { StrCpyLimited_Pas((char*)header->Title, t, 31); }
                 for(int i = 0; i < GuiWidth * GuiHeight; i++) GuiPixels[i] = 0; // Đổ nền Đen
                 
                 SyscallSendIPC((uint)DWM_PID, 11, GuiVAddr);
@@ -544,7 +548,7 @@ public unsafe class Shell
                             uint mode = OctalStrToUInt(modeStr);
                             char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                             StrCpyLimited_Pas(sharedNameBuf, path, 256);
-                            int idx = 0; while (sharedNameBuf[idx] != '\0' && idx < 255) idx++;
+                            int idx = (int)StrCpyLimited_Pas(sharedNameBuf, path, 256);
                             AppendDecimalToBuffer(mode, sharedNameBuf, ref idx);
                             sharedNameBuf[idx] = '\0';
 
@@ -577,10 +581,8 @@ public unsafe class Shell
                         } else {
                             char* sharedNameBuf = (char*)SharedMem->FatRequestName;
                             StrCpyLimited_Pas(sharedNameBuf, path, 256);
-                            int idx = 0; while (sharedNameBuf[idx] != '\0' && idx < 255) idx++;
-                            // Append ownerStr (Pascal has no copy for char-after-content;
-                            // use inline loop here for the second append since it's a different shape)
-                            int oi = 0; while(ownerStr[oi] != '\0' && idx < 4095) { sharedNameBuf[idx++] = ownerStr[oi++]; }
+                            int idx = (int)StrCpyLimited_Pas(sharedNameBuf, path, 256);
+                            StrAppend_Pas(sharedNameBuf, ownerStr, &idx, 4096);
                             sharedNameBuf[idx] = '\0';
 
                             SyscallSendIPC(FAT16_PID, 60, 0);

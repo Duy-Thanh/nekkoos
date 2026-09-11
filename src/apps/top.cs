@@ -26,6 +26,10 @@ public static unsafe class NekkoTop
     [DllImport("*", EntryPoint = "StrAppend_Pas")]
     private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
 
+    // [PASCAL PORT] Append decimal number to buffer
+    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
+    private static extern void AppendDecimal_Pas(uint num, byte* buf, int* idx);
+
     public static void AppendChar(char* buf, char c) {
         if (BufIndex < 4000) buf[BufIndex++] = c;
     }
@@ -42,14 +46,11 @@ public static unsafe class NekkoTop
         int idx = 0;
         if (num == 0) { temp[idx++] = '0'; }
         else {
-            char* rev = stackalloc char[20]; int c = 0;
-            while (num > 0) { rev[c++] = (char)('0' + (num % 10)); num /= 10; }
-            while (c > 0) { temp[idx++] = rev[--c]; }
+            AppendDecimal_Pas((uint)num, (byte*)temp, &idx);
         }
         
         if (suffix != null) {
-            int sIdx = 0;
-            while(suffix[sIdx] != '\0') temp[idx++] = suffix[sIdx++];
+            StrAppend_Pas(temp, suffix, &idx, 32);
         }
         
         temp[idx] = '\0';

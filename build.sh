@@ -52,9 +52,9 @@ $BF build src/apps/top.cs src/apps/API.cs -Ot --no-pie --deterministic --map map
 $BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj build/libc.o"
 
 # Additional userland apps from build.bat
-$BF build src/apps/dsrv.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain"
+$BF build src/apps/dsrv.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain build/libc.o"
 $BF build src/apps/Mouse.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Mouse.map --os windows --arch x64 --stdlib zero -o Mouse.exe --ldflags "-export:AppMain"
-$BF build src/apps/explorer.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain"
+$BF build src/apps/explorer.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain build/libc.o"
 
 echo "[*] Waiting for FS to flush..."
 sync

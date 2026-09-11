@@ -10,6 +10,9 @@ using static NekkoApp.API;
 
 public static unsafe class Explorer
 {
+    // [PASCAL PORT] String length (delegated to libc.pas)
+    [DllImport("*", EntryPoint = "StrLen_Pas")]
+    private static extern int StrLen_Pas(char* str);
     const uint DESKTOP_COLOR = 0x00008080U; 
     const uint TASKBAR_COLOR = 0x00C0C0C0U;
     const uint START_BTN_COLOR = 0x00C0C0C0U;
@@ -87,7 +90,7 @@ public static unsafe class Explorer
         DrawRect(buffer, scanLine, maxPixels, x, y, 32, 32, BORDER_LIGHT);      // Viền ngoài Trắng
         DrawRect(buffer, scanLine, maxPixels, x+2, y+2, 28, 28, ICON_COLOR);    // Ruột Vàng Khè
         
-        int nameLen = 0; while(name[nameLen] != '\0') nameLen++;
+        int nameLen = StrLen_Pas(name);
         ulong textWidth = (ulong)nameLen * 8;
         
         // Tính nhẩm để chữ nằm ngay giữa cái Icon (Icon rộng 32)

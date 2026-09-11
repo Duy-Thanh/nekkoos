@@ -58,6 +58,9 @@ function StrEqWideBytes(wideStr: PWord; byteStr: PByte): Byte; cdecl; public nam
   Returns number of chars copied (not counting terminator). }
 function StrCpyLimited(dest: PWord; src: PWord; cap: Cardinal): Cardinal; cdecl; public name 'StrCpyLimited_Pas';
 
+{ String length: returns number of characters before null terminator }
+function StrLen(str: PWord): Cardinal; cdecl; public name 'StrLen_Pas';
+
 { Decimal conversion: converts a Cardinal to decimal string representation
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
@@ -434,8 +437,20 @@ begin
     PWord(dest)[i] := PWord(src)[i];
     Inc(i);
   end;
-  PWord(dest)[i] := 0;
+PWord(dest)[i] := 0;
   StrCpyLimited := i;
+end;
+
+{ StrLen: returns number of characters before null terminator }
+function StrLen(str: PWord): Cardinal; cdecl;
+var
+  len: Cardinal;
+begin
+  StrLen := 0;
+  if str = nil then Exit;
+  len := 0;
+  while str[len] <> 0 do Inc(len);
+  StrLen := len;
 end;
 
 end.

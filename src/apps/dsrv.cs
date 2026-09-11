@@ -29,6 +29,10 @@ public static unsafe class DWM
     public static int mouseX = 0; public static int mouseY = 0; public static byte mouseClicks = 0;
     public static int draggedWindow = -1; public static int dragOffsetX = 0; public static int dragOffsetY = 0;
 
+    // [PASCAL PORT] MemCopy for block copies (delegated to libc.pas)
+    [DllImport("*", EntryPoint = "MemCopy_Pas")]
+    private static extern void MemCopy_Pas(void* dest, void* src, ulong count);
+
     const uint TASKBAR_COLOR = 0x00C0C0C0U; const uint TITLE_BAR_COLOR = 0x00000080U; 
     const uint BORDER_LIGHT = 0x00FFFFFFU;  const uint BORDER_DARK = 0x00000000U;   
 
@@ -108,8 +112,8 @@ public static unsafe class DWM
         if (Windows[0].IsActive != 0) {
             ulong* finalDst = (ulong*)Backbuffer; ulong* finalSrc = (ulong*)Windows[0].BackingStore;
             ulong maxF = (ScanLine * ScreenHeight) / 2; ulong blks = maxF / 8; ulong r = maxF % 8;
-            while(blks-- > 0) { *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; *finalDst++ = *finalSrc++; }
-            while(r-- > 0) { *finalDst++ = *finalSrc++; }
+            MemCopy_Pas(finalDst, finalSrc, blks * 8 * 8); // 8 ulongs per block, 8 bytes per ulong
+            MemCopy_Pas(finalDst + blks * 8, finalSrc + blks * 8, r * 8);
         }
 
         for(int i = 1; i < 32; i++) {
@@ -153,8 +157,8 @@ public static unsafe class DWM
         
         ulong* d = (ulong*)Framebuffer; ulong* s = (ulong*)Backbuffer; ulong maxFast = (ScanLine * ScreenHeight) / 2; 
         ulong blocks = maxFast / 8; ulong rem = maxFast % 8;
-        while(blocks-- > 0) { *d++ = *s++; *d++ = *s++; *d++ = *s++; *d++ = *s++; *d++ = *s++; *d++ = *s++; *d++ = *s++; *d++ = *s++; }
-        while(rem-- > 0) { *d++ = *s++; }
+        MemCopy_Pas(d, s, blocks * 8 * 8);
+        MemCopy_Pas(d + blocks * 8, s + blocks * 8, rem * 8);
         DrawCrosshairDirect(mouseX, mouseY, (mouseClicks & 1) != 0 ? 0x00FF0000U : 0x00FFFFFFU);
     }
 
@@ -171,7 +175,8 @@ public static unsafe class DWM
         for (int y = startY; y < endY; y++) {
             ulong offset = (ulong)y * ScanLine + (ulong)startX;
             uint* dst = Framebuffer + offset; uint* src = Backbuffer + offset;
-            int widthToCopy = endX - startX; for(int x = 0; x < widthToCopy; x++) { *dst++ = *src++; }
+            int widthToCopy = endX - startX;
+            MemCopy_Pas(dst, src, (ulong)widthToCopy * 4); // 4 bytes per uint
         }
     }
 
