@@ -21,7 +21,7 @@
   `src/kernel/Sudo.cs` (288 dòng). Syscall.cs giờ chỉ 611 dòng — chỉ làm dispatcher.
 - Đã port Pascal: heap ipc kerncrypto libc pmm prng rtc strandscheduler
   terminal fat16 syscall_security memmap_scan scheduler_dispatch pe_loader
-  acpi_parse passwd_parser (+ arch_interface + HAL impls). libc.pas helpers:
+  acpi_parse passwd_parser internal_shell (+ arch_interface + HAL impls). libc.pas helpers:
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
   SplitTwoArgs_Pas, MemSet_Pas, StrCmp_Pas, StrStartsWith_Pas,
   Atoi_Pas, AppendDecimal_Pas, IsPrintableChar_Pas, StrEqWideBytes_Pas,
@@ -29,6 +29,7 @@
   StrLen_Pas, MemCopy_Pas.
   ipc.pas adds: IsPrivilegedIpcType_Pas, HasMessageForReceiver_Pas.
   passwd_parser.pas: ParsePasswdLine_Pas, SudoersContains_Pas.
+  internal_shell.pas: InternalShell_ParseCommand_Pas.
 - Syscall.cs case 94 (sudo) parser loop + inline Atoi/OctalStrToUInt
   + inline StrCmp/char-copy/byte-filter đã chuyển sang Pascal.
 - Syscall.cs case 14 (PID-by-name) char loop → StrEqWideBytes_Pas.
