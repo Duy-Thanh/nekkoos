@@ -194,6 +194,18 @@ public static unsafe class FAT16
     [DllImport("*", EntryPoint = "FAT16_FatEntryOffset_Pas")]
     private static extern uint FatEntryOffset_Pas(ushort cluster);
 
+    // [PASCAL PORT] Capped string copy (replaces inline while loops)
+    [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
+    private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
+
+    // [PASCAL PORT] Append decimal number to buffer
+    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
+    private static extern void AppendDecimal_Pas(char* buf, int* idx, int cap, uint value);
+
+    // [PASCAL PORT] Append string to buffer
+    [DllImport("*", EntryPoint = "StrAppend_Pas")]
+    private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr)
     {
         if (buf == null || formattedName == null || outCluster == null || outSize == null || outAttr == null) {
@@ -353,12 +365,7 @@ public static unsafe class FAT16
             char* sharedNameBuf = (char*)shared->FatRequestName;
             // Protect shared memory write with kernel-side lock
             bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-            int nameIdx = 0;
-            while (filename[nameIdx] != '\0' && nameIdx < 255) {
-                sharedNameBuf[nameIdx] = filename[nameIdx];
-                nameIdx++;
-            }
-            sharedNameBuf[nameIdx] = '\0';
+            StrCpyLimited_Pas(sharedNameBuf, filename, 255);
             Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
             IPC.Send(30, (uint)callerThread, DaemonId, 0);
@@ -662,8 +669,7 @@ if (DaemonWaitTimedOut(&dspinRf)) {
 
         char* sharedNameBuf = (char*)shared->FatRequestName;
         bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-        int nameIdx = 0; while (filename[nameIdx] != '\0' && nameIdx < 255) { sharedNameBuf[nameIdx] = filename[nameIdx]; nameIdx++; }
-        sharedNameBuf[nameIdx] = '\0';
+        StrCpyLimited_Pas(sharedNameBuf, filename, 255);
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
         IPC.Send(32, (uint)callerThread, DaemonId, size);
@@ -722,12 +728,7 @@ if (DaemonWaitTimedOut(&dspinWf)) {
             
             // Protect shared memory write with kernel-side lock
             bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-            int nameIdx = 0;
-            while (filename[nameIdx] != '\0' && nameIdx < 255) {
-                sharedNameBuf[nameIdx] = filename[nameIdx];
-                nameIdx++;
-            }
-            sharedNameBuf[nameIdx] = '\0';
+            StrCpyLimited_Pas(sharedNameBuf, filename, 255);
             Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
             IPC.Send(32, (uint)callerThread, DaemonId, size);
@@ -918,8 +919,7 @@ if (DaemonWaitTimedOut(&dspinWf)) {
             if (IPC.ReceiveForRaw((uint)callerThread, &rType, &rSender, &rPayload) && rType == 41) {
                 char* listing = (char*)shared->FatResponseData;
                 bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-                int i = 0; while (listing[i] != '\0' && i < outCap - 1) { outBuf[i] = listing[i]; i++; }
-                outBuf[i] = '\0';
+                StrCpyLimited_Pas(outBuf, listing, (uint)outCap - 1);
                 Syscall.SharedMemLock.ReleaseSafe(sm_irq);
                 ReleaseVfs();
                 return true;
@@ -971,8 +971,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
 
         char* sharedNameBuf = (char*)shared->FatRequestName;
         bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-        int i = 0; while (filename[i] != '\0' && i < 255) { sharedNameBuf[i] = filename[i]; i++; }
-        sharedNameBuf[i] = '\0';
+        StrCpyLimited_Pas(sharedNameBuf, filename, 255);
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
         IPC.Send(46, (uint)callerThread, DaemonId, 0);
@@ -997,8 +996,10 @@ if (DaemonWaitTimedOut(&dspinLs)) {
 
         char* sharedNameBuf = (char*)shared->FatRequestName;
         bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-        int i = 0; while (dirname[i] != '\0' && i < 255) { sharedNameBuf[i] = dirname[i]; i++; }
-        sharedNameBuf[i] = '\0';
+        StrCpyLimited_Pas(sharedNameBuf, dirname, 255);
+        Syscall.SharedMemLock.ReleaseSafe(sm_irq);
+
+        IPC.Send(48, (uint)callerThread, DaemonId, 0);
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
         IPC.Send(48, (uint)callerThread, DaemonId, 0);
@@ -1023,16 +1024,11 @@ if (DaemonWaitTimedOut(&dspinLs)) {
 
         char* sharedNameBuf = (char*)shared->FatRequestName;
         bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-        int idx = 0; while (path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
+        int idx = (int)StrCpyLimited_Pas(sharedNameBuf, path, 255);
         sharedNameBuf[idx] = '\0'; idx++;
         // Ma hoa mode (so thap phan) noi tiep sau ten file, cach nhau boi '\0' -
         // dung y het quy uoc FAT16_Driver.cs case 58 mong doi (giong Shell.cs chmod).
-        if (mode == 0) { sharedNameBuf[idx++] = '0'; }
-        else {
-            char* digits = stackalloc char[16]; int dc = 0; uint tmp = mode;
-            while (tmp > 0 && dc < 16) { digits[dc++] = (char)('0' + (tmp % 10)); tmp /= 10; }
-            for (int k = dc - 1; k >= 0; k--) sharedNameBuf[idx++] = digits[k];
-        }
+        AppendDecimal_Pas(sharedNameBuf, &idx, 4096, mode);
         sharedNameBuf[idx] = '\0';
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
@@ -1058,9 +1054,9 @@ if (DaemonWaitTimedOut(&dspinLs)) {
 
         char* sharedNameBuf = (char*)shared->FatRequestName;
         bool sm_irq = Syscall.SharedMemLock.AcquireSafe();
-        int idx = 0; while (path[idx] != '\0' && idx < 255) { sharedNameBuf[idx] = path[idx]; idx++; }
+        int idx = (int)StrCpyLimited_Pas(sharedNameBuf, path, 255);
         sharedNameBuf[idx] = '\0'; idx++;
-        int oi = 0; while (ownerStr[oi] != '\0' && idx < 4095) { sharedNameBuf[idx] = ownerStr[oi]; idx++; oi++; }
+        StrAppend_Pas(sharedNameBuf, ownerStr, &idx, 4096);
         sharedNameBuf[idx] = '\0';
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 
