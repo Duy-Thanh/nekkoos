@@ -47,6 +47,14 @@ public unsafe class Login
     private static extern uint Atoi_Pas(char* str);
     public static uint Atoi(char* str) { return Atoi_Pas(str); }
 
+    // [PASCAL PORT] Append decimal number to buffer
+    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
+    private static extern void AppendDecimal_Pas(char* buf, int* idx, int cap, uint value);
+
+    // [PASCAL PORT] Append string to buffer
+    [DllImport("*", EntryPoint = "StrAppend_Pas")]
+    private static extern void StrAppend_Pas(char* dest, char* src, int* idx, int cap);
+
     // ==========================================================
     // [FIX BẢO MẬT] Helper hex cho định dạng PASSWD mới: user:salt:hash:UID:GID
     // salt/hash lưu dạng chuỗi hex - không còn plaintext password trên đĩa.
@@ -92,9 +100,7 @@ public unsafe class Login
 
     public static void PrintLineWithNum(char* prefix, uint num) {
         char* buf = stackalloc char[128];
-        int idx = 0;
-        
-        while (*prefix != '\0') { buf[idx++] = *prefix++; }
+        int idx = (int)StrCpyLimited_Pas(buf, prefix, 128);
         
         if (num == 0) { buf[idx++] = '0'; }
         else {
@@ -165,21 +171,13 @@ public unsafe class Login
     // noi long permission cua /HOME hay dua vao byte rac tren dia.
     public static bool MkdirAsIPC(char* dirName, uint targetUID, uint targetGID) {
         char* buf = (char*)SharedMem->FatRequestName;
-        int n = 0; while (dirName[n] != '\0') { buf[n] = dirName[n]; n++; }
-        buf[n] = '\0'; n++;
-
-        char* numBuf = stackalloc char[16];
-        int ni = 0; uint u = targetUID;
-        if (u == 0) { numBuf[ni++] = '0'; } else { char* rev = stackalloc char[16]; int c = 0; while (u > 0) { rev[c++] = (char)('0' + (u % 10)); u /= 10; } while (c > 0) numBuf[ni++] = rev[--c]; }
-        numBuf[ni] = '\0';
-        int m = 0; while (numBuf[m] != '\0') { buf[n] = numBuf[m]; n++; m++; }
-        buf[n] = ':'; n++;
-
-        ni = 0; u = targetGID;
-        if (u == 0) { numBuf[ni++] = '0'; } else { char* rev = stackalloc char[16]; int c = 0; while (u > 0) { rev[c++] = (char)('0' + (u % 10)); u /= 10; } while (c > 0) numBuf[ni++] = rev[--c]; }
-        numBuf[ni] = '\0';
-        m = 0; while (numBuf[m] != '\0') { buf[n] = numBuf[m]; n++; m++; }
-        buf[n] = '\0';
+        int idx = (int)StrCpyLimited_Pas(buf, dirName, 4096);
+        buf[idx] = '\0'; idx++;
+        
+        AppendDecimal_Pas(buf, &idx, 4096, targetUID);
+        buf[idx] = ':'; idx++;
+        AppendDecimal_Pas(buf, &idx, 4096, targetGID);
+        buf[idx] = '\0';
 
         SyscallSendIPC(FAT16_PID, 56, 0);
         Message res = default;

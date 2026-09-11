@@ -296,6 +296,14 @@ public unsafe class Program
     [DllImport("*", EntryPoint = "FAT16_ParseBPB_Pas")]
     private static extern void ParseBPB_Pas(byte* bpb, uint* outRootDirSectors, uint* outRootDirLba, uint* outFirstDataSector);
 
+    // [PASCAL PORT] Capped string copy (replaces inline while loops)
+    [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
+    private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
+
+    // [PASCAL PORT] Atoi for decimal parsing (replaces inline digit loops)
+    [DllImport("*", EntryPoint = "Atoi_Pas")]
+    private static extern int Atoi_Pas(char* str);
+
     private static int CheckSectorInline(byte* buf, byte* formattedName, ushort* outCluster, uint* outSize, byte* outAttr, ushort* outOwnerUID, ushort* outOwnerGID, ushort* outPerms) {
         return CheckSector_Pas(buf, formattedName, outCluster, outSize, outAttr, outOwnerUID, outOwnerGID, outPerms);
     }
@@ -918,8 +926,7 @@ public unsafe class Program
                 if (msg.Type == 30) // READ
                 {
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
 
                     ushort cluster = 0; uint fileSize = 0; byte attr = 0; 
                     ushort ownerUID = 0; ushort ownerGID = 0; ushort perms = 0;
@@ -985,8 +992,7 @@ public unsafe class Program
                     }
 
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
 
                     bool canCreateHere = false;
                     if (CurrentDirCluster == 0) {
@@ -1134,8 +1140,7 @@ public unsafe class Program
                 else if (msg.Type == 36) // CD
                 {
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
 
                     if (privateName[0] == '\\' && privateName[1] == '\0') { CurrentDirCluster = 0; SyscallSendIPC(client, 37, 1); continue; }
                     ushort cluster = 0; uint size = 0; byte attr = 0; 
@@ -1173,8 +1178,7 @@ public unsafe class Program
                 else if (msg.Type == 44) // MKDIR
                 {
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
                     DoMkdir(privateName, callerUID, callerGID, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, 45);
                 }
                 else if (msg.Type == 56) // MKDIR_AS - chi root duoc phep chi dinh owner khac cho thu muc moi
@@ -1185,48 +1189,43 @@ public unsafe class Program
                     }
 
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    uint nameLen = StrCpyLimited_Pas(privateName, sharedName, 255);
 
-                    int p = n + 1; uint targetUID = 0, targetGID = 0;
-                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetUID = targetUID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    int p = (int)nameLen + 1; uint targetUID = 0, targetGID = 0;
+                    targetUID = (uint)Atoi_Pas(sharedName + p);
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') p++;
                     if (sharedName[p] == ':') p++;
-                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetGID = targetGID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    targetGID = (uint)Atoi_Pas(sharedName + p);
 
                     DoMkdir(privateName, targetUID, targetGID, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, 57);
                 }
                 else if (msg.Type == 58) // CHMOD - path\0mode(decimal)\0
                 {
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    uint nameLen = StrCpyLimited_Pas(privateName, sharedName, 255);
 
-                    int p = n + 1; uint mode = 0;
-                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { mode = mode * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    int p = (int)nameLen + 1; uint mode = 0;
+                    mode = (uint)Atoi_Pas(sharedName + p);
 
                     DoChmod(privateName, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, (ushort)mode);
                 }
                 else if (msg.Type == 60) // CHOWN - path\0uid:gid\0
                 {
                     char* sharedName = (char*)SharedMem->FatRequestName;
-                    int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; }
-                    privateName[n] = '\0';
+                    uint nameLen = StrCpyLimited_Pas(privateName, sharedName, 255);
 
-                    int p = n + 1; uint targetUID = 0, targetGID = 0;
-                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetUID = targetUID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    int p = (int)nameLen + 1; uint targetUID = 0, targetGID = 0;
+                    targetUID = (uint)Atoi_Pas(sharedName + p);
+                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') p++;
                     if (sharedName[p] == ':') p++;
-                    while (sharedName[p] != '\0' && sharedName[p] >= '0' && sharedName[p] <= '9') { targetGID = targetGID * 10 + (uint)(sharedName[p] - '0'); p++; }
+                    targetGID = (uint)Atoi_Pas(sharedName + p);
 
                     DoChown(privateName, callerUID, callerGID, client, sectorBuf, fatBuf, formattedName, targetUID, targetGID);
                 }
                 else if (msg.Type == 46) // RM
                 {
-                    char* sharedName = (char*)SharedMem->FatRequestName; int n = 0;
-                    // [FIX BẢO MẬT - CRITICAL] Chặn tràn bộ nhớ: các handler khác đều giới hạn
-                    // n < 255 khi copy tên file từ shared memory (client-controlled, tối đa 4096
-                    // byte) vào privateName (chỉ 256 phần tử) - riêng RM trước đây thiếu điều
-                    // kiện này, cho phép ghi tràn ra ngoài buffer và phá hỏng vùng nhớ kế cận.
-                    while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; } privateName[n] = '\0';
+                    char* sharedName = (char*)SharedMem->FatRequestName;
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
                     FormatFATName(privateName, formattedName);
 
                     bool deleted = false; bool isDirError = false; bool accessDenied = false;
@@ -1242,7 +1241,8 @@ public unsafe class Program
                 }
                 else if (msg.Type == 48) // RM -RF
                 {
-                    char* sharedName = (char*)SharedMem->FatRequestName; int n = 0; while(sharedName[n] != '\0' && n < 255) { privateName[n] = sharedName[n]; n++; } privateName[n] = '\0';
+char* sharedName = (char*)SharedMem->FatRequestName;
+                    StrCpyLimited_Pas(privateName, sharedName, 255);
                     FormatFATName(privateName, formattedName);
                     if (formattedName[0] == (byte)'.') { SyscallSendIPC(client, 49, 0); SyscallYieldApp(); continue; }
 
