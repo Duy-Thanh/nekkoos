@@ -25,7 +25,8 @@
   FormatFATName_Pas, FatNameValid_Pas, OctalStrToUInt_Pas,
   SplitTwoArgs_Pas, MemSet_Pas, StrCmp_Pas, StrStartsWith_Pas,
   Atoi_Pas, AppendDecimal_Pas, IsPrintableChar_Pas, StrEqWideBytes_Pas,
-  StrCpyLimited_Pas, WideStrToBytes_Pas, MsToTicks_Pas, StrAppend_Pas.
+  StrCpyLimited_Pas, WideStrToBytes_Pas, MsToTicks_Pas, StrAppend_Pas,
+  StrLen_Pas, MemCopy_Pas.
   ipc.pas adds: IsPrivilegedIpcType_Pas, HasMessageForReceiver_Pas.
   passwd_parser.pas: ParsePasswdLine_Pas, SudoersContains_Pas.
 - Syscall.cs case 94 (sudo) parser loop + inline Atoi/OctalStrToUInt
@@ -35,6 +36,11 @@
 - top.cs/stresstest.cs AppendStr loops → StrAppend_Pas.
 - FAT16_Driver.cs 9 inline copy loops + 3 Atoi digit loops → StrCpyLimited_Pas/Atoi_Pas.
 - Login.cs PrintLineWithNum + MkdirAsIPC path builder → StrCpyLimited_Pas/AppendDecimal_Pas.
+- FAT16.cs 11 inline copy loops + mode/owner encoding → StrCpyLimited_Pas/AppendDecimal_Pas/StrAppend_Pas.
+- Shell.cs const copy + get len + append → StrCpyLimited_Pas/StrAppend_Pas.
+- top.cs number-to-string + suffix → AppendDecimal_Pas/StrAppend_Pas.
+- dsrv.cs 3 block copy loops → MemCopy_Pas.
+- explorer.cs string length → StrLen_Pas.
 - FAT16 protocol đã tách khỏi raw I/O path: 25+ call sites gọi qua
   fat16.pas (ClusterLba, FatSectorForCluster, ParseBPB, FindFreeCluster,
   GetNextCluster, FatEntryOffset).
