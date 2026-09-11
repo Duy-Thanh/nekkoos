@@ -33,6 +33,8 @@
 - Syscall.cs case 14 (PID-by-name) char loop → StrEqWideBytes_Pas.
 - Shell.cs 7+ inline path-copy loops → StrCpyLimited_Pas.
 - top.cs/stresstest.cs AppendStr loops → StrAppend_Pas.
+- FAT16_Driver.cs 9 inline copy loops + 3 Atoi digit loops → StrCpyLimited_Pas/Atoi_Pas.
+- Login.cs PrintLineWithNum + MkdirAsIPC path builder → StrCpyLimited_Pas/AppendDecimal_Pas.
 - FAT16 protocol đã tách khỏi raw I/O path: 25+ call sites gọi qua
   fat16.pas (ClusterLba, FatSectorForCluster, ParseBPB, FindFreeCluster,
   GetNextCluster, FatEntryOffset).
