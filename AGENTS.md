@@ -1,5 +1,8 @@
 # AGENTS.md — NekkoOS working notes for AI assistants
 
+## Yêu cầu cốt lõi
+- Khi làm bất cứ việc gì, phải tạo ra các agents riêng và giao việc cụ thể cho các agents đó. Bạn làm sếp của các agents, các agents sẽ được phân công các nhiệm vụ cụ thể và hiệu quả cao
+
 ## Trạng thái hiện tại (cập nhật 2026-09-03)
 - Toolchain x86_64 đã cài đủ trên openSUSE Tumbleweed: bflat v10 (~/bflat),
   fpc 3.2.2, mingw64-cross-binutils. Build: `./build.sh` (cần
