@@ -5,7 +5,7 @@
 - Lưu ý, các agents có thể bị sập do upstream limit, cần handle chuẩn chỉ. Khi agents bị lỗi, phải nghiệm thu kết quả tới thời điểm agents xảy ra lỗi
 - Chia nhỏ đầu việc và phân công công việc hợp lý cho từng agents để đạt hiệu quả cao nhất
 
-## Trạng thái hiện tại (cập nhật 2026-09-03)
+## Trạng thái hiện tại (cập nhật 2026-09-14)
 - Toolchain x86_64 đã cài đủ trên openSUSE Tumbleweed: bflat v10 (~/bflat),
   fpc 3.2.2, mingw64-cross-binutils. Build: `./build.sh` (cần
   `export PATH="$HOME/bflat:/usr/sbin:$PATH"`).
@@ -55,6 +55,22 @@
   address space; TCB field là `AddrSpace` (handle mờ).
 - **Test tự động**: `test/automation/smoke_test.py` 9/9 pass (boot→login→
   ls→LS→cd..→root listing→write→cat→shutdown).
+- **PE Export Table Parsing Bug Fixed (2026-09-14)**: Bootloader nhảy sai vào
+  0xB0000 (VGA memory) thay vì KernelMain do logic đọc ordinal table sai.
+  Đã sửa GetKernelRealEntryPoint: ordinal phải là index vào addressOfFunctions,
+  không phải trực tiếp dùng addressOfNameOrdinals[i] làm index.
+  
+  **ROOT CAUSE & SOLUTION**: Crash thực sự xảy ra khi tạo `new X86SyscallImpl()`.
+  Lỗi là do vtable interface dispatch cần runtime function `RhpInitialDynamicInterfaceDispatch`
+  nhưng build với `--stdlib zero` không có runtime này. Địa chỉ 0xB0000 là vtable pointer
+  chưa được relocated hoặc uninitialized.
+  
+  **FIX APPLIED**: Đã xóa interface IArcSyscall và chuyển X86SyscallImpl sang static class
+  với static methods. Syscall.cs gọi trực tiếp X86SyscallImpl.DispatchXXX() thay vì qua
+  interface polymorphism. Kernel boot thành công, tất cả subsystems khởi tạo đúng.
+  
+  **LESSON LEARNED**: Với --stdlib zero trong bflat, KHÔNG dùng C# interface vì cần
+  runtime support. Chỉ dùng static dispatch, function pointers hoặc manual vtable.
 
 ## Quy trình port C# → Pascal (ARCHITECTURE.md §3)
 1. Port logic sang unit .pas tương ứng, export cdecl tên `*_Pas`

@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 
 namespace NekkoOS.Kernel;
 
-public sealed unsafe class X86SyscallImpl : IArcSyscall
+public static unsafe class X86SyscallImpl
 {
     [DllImport("*", EntryPoint = "IsValidUserPtr_Pas")]
     private static extern byte IsValidUserPtr_Pas(int threadId, ulong virtAddr, ulong pml4Phys, ulong totalPages);
@@ -28,7 +28,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
     }
     // [SYSCALL 4]: Keyboard read (I/O-specific)
     // Được xử lý trực tiếp trên x86_64 thông qua IPC messages từ Keyboard ISR.
-    public ulong DispatchKeyboardRead(int threadId, bool isKing, RegisterContext* ctx, ulong currentRsp)
+    public static ulong DispatchKeyboardRead(int threadId, bool isKing, RegisterContext* ctx, ulong currentRsp)
     {
         bool found = false;
         char c = '\0';
@@ -78,7 +78,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
 
     // [SYSCALL 12]: Map physical memory (I/O-specific - paging hardware)
     // Yêu cầu root privilege để ánh xạ physical memory.
-    public ulong DispatchMapPhysicalMemory(int threadId, bool isKing, RegisterContext* ctx)
+    public static ulong DispatchMapPhysicalMemory(int threadId, bool isKing, RegisterContext* ctx)
     {
         if (!isKing) { Scheduler.Threads[threadId].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); return 0; }
         ulong physAddr = ArchCtx.GetArg(ctx, 1); ulong numPages = ArchCtx.GetArg(ctx, 2);
@@ -104,7 +104,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
     }
 
     // [SYSCALL 13]: Hardware reporting (I/O-specific - APIC/MADT)
-    public ulong DispatchHardwareReport(uint hwType, ulong payload, bool isKing)
+    public static ulong DispatchHardwareReport(uint hwType, ulong payload, bool isKing)
     {
         if (!isKing) return 0;
         if (hwType == 1) { APIC.Init(payload); return 1; }
@@ -114,7 +114,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
     }
 
     // [SYSCALL 50]: Map framebuffer (I/O-specific - FB hardware)
-    public ulong DispatchMapFramebuffer(int threadId, bool isKing, RegisterContext* ctx)
+    public static ulong DispatchMapFramebuffer(int threadId, bool isKing, RegisterContext* ctx)
     {
         if (!isKing) { Scheduler.Threads[threadId].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); return 0; }
 
@@ -145,7 +145,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
     }
 
     // [SYSCALL 51]: Get framebuffer dimensions (I/O-specific)
-    public ulong DispatchFramebufferDims(ulong* ptrWidth, ulong* ptrHeight, ulong* ptrScanLine)
+    public static ulong DispatchFramebufferDims(ulong* ptrWidth, ulong* ptrHeight, ulong* ptrScanLine)
     {
         if (ptrWidth != null && IsValidUserPtr((ulong)ptrWidth) != 0) *ptrWidth = Terminal.width;
         if (ptrHeight != null && IsValidUserPtr((ulong)ptrHeight) != 0) *ptrHeight = Terminal.height;
@@ -155,7 +155,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
     }
 
     // [SYSCALL 52]: Redirect framebuffer output (I/O-specific)
-    public ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing)
+    public static ulong DispatchRedirectFramebuffer(ulong newFb, uint w, uint h, uint sl, bool isKing)
     {
         if (!isKing) return 0;
         if (IsValidUserPtr(newFb) != 0)
@@ -166,7 +166,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         else return 0;
     }
 
-    public ulong DispatchPrint(int threadId, char* str)
+    public static ulong DispatchPrint(int threadId, char* str)
     {
         // [MITIGATION CVE-2026-003] TOCTOU hardening
         bool irq = Terminal.ScreenLock.AcquireSafe();
@@ -191,7 +191,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return 1;
     }
 
-    public ulong DispatchDrawPixel(int threadId, ulong x, ulong y, ulong color)
+    public static ulong DispatchDrawPixel(int threadId, ulong x, ulong y, ulong color)
     {
         int fgTaskDraw = Scheduler.ForegroundTask;
         bool fgValidDraw = fgTaskDraw >= 0 && fgTaskDraw < Scheduler.ThreadCount && Scheduler.Threads[fgTaskDraw].Active != 0;
@@ -203,7 +203,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return 1;
     }
 
-    public ulong DispatchClearScreen(int threadId, ulong color)
+    public static ulong DispatchClearScreen(int threadId, ulong color)
     {
         int fgTaskClear = Scheduler.ForegroundTask;
         bool fgValidClear = fgTaskClear >= 0 && fgTaskClear < Scheduler.ThreadCount && Scheduler.Threads[fgTaskClear].Active != 0;
@@ -212,13 +212,13 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return 1;
     }
 
-    public void DispatchGrantPortAccess(ushort port, int threadId, bool isKing)
+    public static void DispatchGrantPortAccess(ushort port, int threadId, bool isKing)
     {
         if (!isKing) { Scheduler.Threads[threadId].IsPhantomDead = 1; return; }
         GDT.GrantPortAccess(port);
     }
 
-    public ulong DispatchSetUID(int threadId, uint targetUID, ulong* inOutMpuTrapPhys)
+    public static ulong DispatchSetUID(int threadId, uint targetUID, ulong* inOutMpuTrapPhys)
     {
         uint currentUID = Scheduler.Threads[threadId].UID;
         if (currentUID == 0 || targetUID == currentUID) {
@@ -235,7 +235,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return 0;
     }
 
-    public ulong DispatchSetGID(int threadId, uint targetGID, ulong* inOutMpuTrapPhys)
+    public static ulong DispatchSetGID(int threadId, uint targetGID, ulong* inOutMpuTrapPhys)
     {
         uint currentGID = Scheduler.Threads[threadId].GID;
         if (currentGID == 0 || Scheduler.Threads[threadId].UID == 0 || targetGID == currentGID) {
@@ -252,7 +252,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return 0;
     }
 
-    public ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys)
+    public static ulong DispatchGlobalSharedMemory(int threadId, ulong* inOutGlobalPhys)
     {
         bool irq = Scheduler.AcquireSchedLockSafe();
         ulong globalPhys = *inOutGlobalPhys;
@@ -302,7 +302,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return resultVirt;
     }
 
-    public ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing)
+    public static ulong DispatchAllocateHeap(int threadId, ulong numPages, bool isKing)
     {
         if (numPages == 0) return Scheduler.Threads[threadId].AppHeapBase;
         if (!isKing && numPages > 256) { Scheduler.Threads[threadId].IsPhantomDead = 1; return 0; }
@@ -331,7 +331,7 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return virtAddr;
     }
 
-    public ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr)
+    public static ulong DispatchSharedMemoryPipeline(int callerId, int targetPid, ulong numPages, ulong* outTargetVAddr)
     {
         if ((uint)targetPid >= Scheduler.ThreadCount || Scheduler.Threads[targetPid].Active == 0) return 0;
         if (numPages == 0 || numPages > 4096) return 0;
@@ -380,17 +380,17 @@ public sealed unsafe class X86SyscallImpl : IArcSyscall
         return myVAddr;
     }
 
-    public void DispatchAtaLockAcquire()
+    public static void DispatchAtaLockAcquire()
     {
         Driver.ATA.AtaHardwareLock.Acquire();
     }
 
-    public void DispatchAtaLockRelease()
+    public static void DispatchAtaLockRelease()
     {
         Driver.ATA.AtaHardwareLock.Release();
     }
 
-    public void DispatchResetCursor()
+    public static void DispatchResetCursor()
     {
         bool irq = Terminal.ScreenLock.AcquireSafe();
         Terminal.CursorX = 0;

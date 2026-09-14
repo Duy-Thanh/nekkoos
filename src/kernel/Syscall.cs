@@ -172,7 +172,7 @@ public static unsafe class Syscall
             {
                 if (ArchCtx.GetArg(ctx, 1) == 0 || !IsValidUserPtr(ArchCtx.GetArg(ctx, 1))) { ArchCtx.SetRet(ctx, 0); break; }
                 char* str = (char*)ArchCtx.GetArg(ctx, 1);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchPrint(id, str));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchPrint(id, str));
                 break;
             }
 
@@ -180,7 +180,7 @@ public static unsafe class Syscall
             case 2:
             {
                 ulong x = ArchCtx.GetArg(ctx, 1); ulong y = ArchCtx.GetArg(ctx, 2); ulong color = ArchCtx.GetArg(ctx, 3);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchDrawPixel(id, x, y, color));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchDrawPixel(id, x, y, color));
                 break;
             }
 
@@ -188,7 +188,7 @@ public static unsafe class Syscall
             case 3:
             {
                 ulong bgColor = ArchCtx.GetArg(ctx, 1);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchClearScreen(id, bgColor));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchClearScreen(id, bgColor));
                 break;
             }
 
@@ -218,7 +218,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 4 (keyboard read) delegated to arch vtable
             case 4:
             {
-                return Arch.SyscallImpl!.DispatchKeyboardRead(id, isKing, ctx, currentRsp);
+                return X86SyscallImpl.DispatchKeyboardRead(id, isKing, ctx, currentRsp);
             }
             
             // [SYSCALL 5]: GỬI TIN NHẮN IPC (Send IPC)
@@ -300,7 +300,7 @@ public static unsafe class Syscall
             case 6:
             {
                 ulong numPages = ArchCtx.GetArg(ctx, 1);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchAllocateHeap(id, numPages, isKing));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchAllocateHeap(id, numPages, isKing));
                 break;
             }
 
@@ -308,7 +308,7 @@ public static unsafe class Syscall
             case 7:
             {
                 ushort port = (ushort)ArchCtx.GetArg(ctx, 1);
-                Arch.SyscallImpl!.DispatchGrantPortAccess(port, id, isKing);
+                X86SyscallImpl.DispatchGrantPortAccess(port, id, isKing);
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }
@@ -377,7 +377,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 12 (map physical memory) delegated to arch vtable
             case 12:
             {
-                return Arch.SyscallImpl!.DispatchMapPhysicalMemory(id, isKing, ctx);
+                return X86SyscallImpl.DispatchMapPhysicalMemory(id, isKing, ctx);
             }
 
             // [PORTABLE] I/O-specific syscall 13 (hardware reporting) delegated to arch vtable
@@ -386,7 +386,7 @@ public static unsafe class Syscall
                 uint hwType = (uint)ArchCtx.GetArg(ctx, 1);
                 ulong payload = ArchCtx.GetArg(ctx, 2);
                 if (!isKing) { Scheduler.Threads[id].IsPhantomDead = 1; ArchCtx.SetRet(ctx, 0); break; }
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchHardwareReport(hwType, payload, isKing));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchHardwareReport(hwType, payload, isKing));
                 break;
             }
 
@@ -411,7 +411,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 50 (map framebuffer) delegated to arch vtable
             case 50:
             {
-                return Arch.SyscallImpl!.DispatchMapFramebuffer(id, isKing, ctx);
+                return X86SyscallImpl.DispatchMapFramebuffer(id, isKing, ctx);
             }
 
             // [PORTABLE] I/O-specific syscall 51 (get framebuffer dims) delegated to arch vtable
@@ -420,7 +420,7 @@ public static unsafe class Syscall
                 ulong* ptrWidth = (ulong*)ArchCtx.GetArg(ctx, 1);
                 ulong* ptrHeight = (ulong*)ArchCtx.GetArg(ctx, 2);
                 ulong* ptrScanLine = (ulong*)ArchCtx.GetArg(ctx, 3);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchFramebufferDims(ptrWidth, ptrHeight, ptrScanLine));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchFramebufferDims(ptrWidth, ptrHeight, ptrScanLine));
                 break;
             }
 
@@ -432,7 +432,7 @@ public static unsafe class Syscall
                 uint w = (uint)ArchCtx.GetArg(ctx, 2);
                 uint h = (uint)ArchCtx.GetArg(ctx, 3);
                 uint sl = (uint)ArchCtx.GetArg(ctx, 4);
-                ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchRedirectFramebuffer(newFb, w, h, sl, isKing));
+                ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchRedirectFramebuffer(newFb, w, h, sl, isKing));
                 break;
             }
 
@@ -460,7 +460,7 @@ public static unsafe class Syscall
             {
                 uint targetUID = (uint)ArchCtx.GetArg(ctx, 0);
                 fixed (ulong* trapPtr = &MpuTrapPage_Phys) {
-                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchSetUID(id, targetUID, trapPtr));
+                    ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchSetUID(id, targetUID, trapPtr));
                 }
                 break;
             }
@@ -479,7 +479,7 @@ public static unsafe class Syscall
             {
                 uint targetGID = (uint)ArchCtx.GetArg(ctx, 0);
                 fixed (ulong* trapPtr = &MpuTrapPage_Phys) {
-                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchSetGID(id, targetGID, trapPtr));
+                    ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchSetGID(id, targetGID, trapPtr));
                 }
                 break;
             }
@@ -522,7 +522,7 @@ public static unsafe class Syscall
             case 99:
             {
                 fixed (ulong* physPtr = &GlobalSharedRAM_Phys) {
-                    ArchCtx.SetRet(ctx, Arch.SyscallImpl!.DispatchGlobalSharedMemory(id, physPtr));
+                    ArchCtx.SetRet(ctx, X86SyscallImpl.DispatchGlobalSharedMemory(id, physPtr));
                 }
                 break;
             }
@@ -553,7 +553,7 @@ public static unsafe class Syscall
                 uint targetPid = (uint)ArchCtx.GetArg(ctx, 1);
                 ulong numPages = ArchCtx.GetArg(ctx, 2);
                 ulong targetVAddr = 0;
-                ulong myVAddr = Arch.SyscallImpl!.DispatchSharedMemoryPipeline(id, (int)targetPid, numPages, &targetVAddr);
+                ulong myVAddr = X86SyscallImpl.DispatchSharedMemoryPipeline(id, (int)targetPid, numPages, &targetVAddr);
                 if (myVAddr == 0) { ArchCtx.SetRet(ctx, 0); ArchCtx.SetRet2(ctx, 0); break; }
                 ArchCtx.SetRet(ctx, myVAddr);
                 ArchCtx.SetRet2(ctx, targetVAddr);
@@ -572,7 +572,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 60 (ATA lock acquire) delegated to arch vtable
             case 60:
             {
-                Arch.SyscallImpl!.DispatchAtaLockAcquire();
+                X86SyscallImpl.DispatchAtaLockAcquire();
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }
@@ -580,7 +580,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 61 (ATA lock release) delegated to arch vtable
             case 61:
             {
-                Arch.SyscallImpl!.DispatchAtaLockRelease();
+                X86SyscallImpl.DispatchAtaLockRelease();
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }
@@ -588,7 +588,7 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 399 (reset cursor) delegated to arch vtable
             case 399:
             {
-                Arch.SyscallImpl!.DispatchResetCursor();
+                X86SyscallImpl.DispatchResetCursor();
                 ArchCtx.SetRet(ctx, 1);
                 break;
             }

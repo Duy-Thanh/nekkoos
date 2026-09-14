@@ -117,13 +117,41 @@ public static unsafe class Program
     [UnmanagedCallersOnly(EntryPoint = "KernelMain")]
     public static void KernelMain(NekkoBootInfo* bootInfo)
     {
+        // Early debug: write 'K' to COM1 (0x3F8) to verify kernel entry
+        Arch.WritePort8(0x3F8, (byte)'K');
+        Arch.WritePort8(0x3F8, (byte)'M');
+        Arch.WritePort8(0x3F8, (byte)'\r');
+        Arch.WritePort8(0x3F8, (byte)'\n');
+
+        // DEBUG: Print address of UnlockScheduler before calling
+        void* unlockAddr = (void*)(delegate*<void>)&Arch.UnlockScheduler;
+        ulong addrVal = (ulong)unlockAddr;
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            byte nibble = (byte)((addrVal >> shift) & 0xF);
+            byte ch = (byte)(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+            Arch.WritePort8(0x3F8, ch);
+        }
+        Arch.WritePort8(0x3F8, (byte)'\r');
+        Arch.WritePort8(0x3F8, (byte)'\n');
+
+        // DEBUG: Try calling directly instead of through wrapper
+        Arch.WritePort8(0x3F8, (byte)'D');
+        Arch.WritePort8(0x3F8, (byte)'I');
+        Arch.WritePort8(0x3F8, (byte)'R');
+        Arch.WritePort8(0x3F8, (byte)'\r');
+        Arch.WritePort8(0x3F8, (byte)'\n');
+
+        // Call Arch.UnlockScheduler directly instead of via wrapper
+        Arch.UnlockScheduler();
+
+        Arch.WritePort8(0x3F8, (byte)'O');
+        Arch.WritePort8(0x3F8, (byte)'K');
+        Arch.WritePort8(0x3F8, (byte)'\r');
+        Arch.WritePort8(0x3F8, (byte)'\n');
+
         // =====================================================================
         // PHASE 1: KHỞI TẠO NỀN TẢNG BAREMETAL & BẢO MẬT
         // =====================================================================
-        UnlockScheduler_ASM();
-
-        // [PORTABLE SYSCALL] Bind arch-specific syscall implementation
-        Arch.SyscallImpl = new X86SyscallImpl();
 
         if (NekkoInt.isDebug) {
             fixed (char* dbg1 = "[DBG] KM: after UnlockScheduler\n\0") Serial.WriteString(dbg1);
