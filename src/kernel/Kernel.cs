@@ -347,10 +347,26 @@ public static unsafe class Program
         Terminal.SetColor(0x00FFFF00);
         fixed (char* waitAcpi = "[*] Kernel: Waiting for ACPI Daemon to discover IOAPIC...\n\0") Terminal.Print(waitAcpi);
 
-        while (APIC.IOApicBase == 0 || APIC.LocalApicBaseVirt == 0) { 
-            CompilerFence(); 
-            Scheduler.Yield(); 
+        // [SAFETY] Timeout để tránh infinite loop nếu ACPI daemon crash
+        ulong acpiWaitStart = PIT.Ticks;
+        const ulong ACPI_TIMEOUT_MS = 10000; // 10 seconds
+        bool acpiSuccess = false;
+
+        while (APIC.IOApicBase == 0 || APIC.LocalApicBaseVirt == 0) {
+            CompilerFence();
+
+            // Check timeout
+            if (PIT.Ticks - acpiWaitStart > ACPI_TIMEOUT_MS) {
+                Terminal.SetColor(0x00FF0000);
+                fixed (char* timeoutMsg = "[!] TIMEOUT: ACPI Daemon failed to discover IOAPIC after 10s\n\0") Terminal.Print(timeoutMsg);
+                fixed (char* haltMsg = "[!] System halted. Check ACPI.EXE for errors.\n\0") Terminal.Print(haltMsg);
+                while(true) IO.Cli();
+            }
+
+            Scheduler.Yield();
         }
+
+        acpiSuccess = true;
 
         Terminal.SetColor(0x0000FF00);
         fixed (char* acpiOk = "[+] ACPI Discovery Complete! Initializing SMP and IOAPIC...\n\0") Terminal.Print(acpiOk);

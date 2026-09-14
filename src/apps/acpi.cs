@@ -192,21 +192,42 @@ public unsafe class Program
 
         // Lấy RSDP với hàm bọc thép!
         ulong rsdpVirt = MapACPI(rsdpPhys, (uint)sizeof(RSDPDescriptor20));
+        if (rsdpVirt == 0) {
+            fixed(char* e = "[!] ACPI FATAL: Failed to map RSDP physical address!\n\0") SyscallPrint(e);
+            SyscallExit();
+        }
         RSDPDescriptor20* rsdp = (RSDPDescriptor20*)rsdpVirt;
 
         bool useXsdt = (rsdp->FirstPart.Revision >= 2) && (rsdp->XsdtAddress != 0);
         ulong sdtPhys = useXsdt ? rsdp->XsdtAddress : rsdp->FirstPart.RsdtAddress;
+        if (sdtPhys == 0) {
+            fixed(char* e = "[!] ACPI FATAL: RSDP points to null XSDT/RSDT!\n\0") SyscallPrint(e);
+            SyscallExit();
+        }
 
         // Đọc Header trước để lấy chiều dài thật của Bảng!
         ulong sdtVirtTemp = MapACPI(sdtPhys, (uint)sizeof(ACPISDTHeader));
+        if (sdtVirtTemp == 0) {
+            fixed(char* e = "[!] ACPI FATAL: Failed to map SDT header!\n\0") SyscallPrint(e);
+            SyscallExit();
+        }
         uint sdtRealLength = ((ACPISDTHeader*)sdtVirtTemp)->Length;
-        
+        if (sdtRealLength < (uint)sizeof(ACPISDTHeader) || sdtRealLength > 0x100000) {
+            fixed(char* e = "[!] ACPI FATAL: SDT length invalid!\n\0") SyscallPrint(e);
+            SyscallExit();
+        }
+
         // Map lại với chiều dài đúng 100%!
         ulong sdtVirt = MapACPI(sdtPhys, sdtRealLength);
+        if (sdtVirt == 0) {
+            fixed(char* e = "[!] ACPI FATAL: Failed to map full SDT!\n\0") SyscallPrint(e);
+            SyscallExit();
+        }
         ACPISDTHeader* sdtHeader = (ACPISDTHeader*)sdtVirt;
 
-        // CỰC KỲ AN TOÀN!
-        int entriesCount = (int)((sdtRealLength - sizeof(ACPISDTHeader)) / (useXsdt ? 8 : 4));
+        // CỰC KỲ AN TOÀN! Guard against underflow
+        uint headerSz = (uint)sizeof(ACPISDTHeader);
+        int entriesCount = (sdtRealLength > headerSz) ? (int)((sdtRealLength - headerSz) / (useXsdt ? 8u : 4u)) : 0;
         
         // [VALIDATION] Prevent buffer overflow if ACPI table is corrupted
         if (entriesCount > 500) {
@@ -223,9 +244,12 @@ public unsafe class Program
 
             // Đọc Header để lấy Length
             ulong tempEntryVirt = MapACPI(entryPhys, (uint)sizeof(ACPISDTHeader));
+            if (tempEntryVirt == 0) continue;
             uint entryLen = ((ACPISDTHeader*)tempEntryVirt)->Length;
-            
+            if (entryLen < (uint)sizeof(ACPISDTHeader) || entryLen > 0x10000) continue;
+
             ulong entryVirt = MapACPI(entryPhys, entryLen);
+            if (entryVirt == 0) continue;
             ACPISDTHeader* header = (ACPISDTHeader*)entryVirt;
 
             if (header->Signature[0] == 'A' && header->Signature[1] == 'P' && header->Signature[2] == 'I' && header->Signature[3] == 'C')

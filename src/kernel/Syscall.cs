@@ -377,7 +377,8 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 12 (map physical memory) delegated to arch vtable
             case 12:
             {
-                return X86SyscallImpl.DispatchMapPhysicalMemory(id, isKing, ctx);
+                X86SyscallImpl.DispatchMapPhysicalMemory(id, isKing, ctx);
+                break;
             }
 
             // [PORTABLE] I/O-specific syscall 13 (hardware reporting) delegated to arch vtable
@@ -411,7 +412,8 @@ public static unsafe class Syscall
             // [PORTABLE] I/O-specific syscall 50 (map framebuffer) delegated to arch vtable
             case 50:
             {
-                return X86SyscallImpl.DispatchMapFramebuffer(id, isKing, ctx);
+                X86SyscallImpl.DispatchMapFramebuffer(id, isKing, ctx);
+                break;
             }
 
             // [PORTABLE] I/O-specific syscall 51 (get framebuffer dims) delegated to arch vtable
