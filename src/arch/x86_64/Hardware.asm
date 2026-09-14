@@ -219,7 +219,18 @@ global UnlockScheduler
 Arch_UnlockScheduler:
 UnlockScheduler:
     lea rcx, [rel GlobalSchedLock]
-    jmp AsmSpinlockRelease
+    ; DEBUG: Print address to COM1 before calling spinlock release
+    push rax
+    push rdx
+    mov rax, rcx
+    mov dx, 0x3F8
+    ; Print high 32 bits
+    mov al, ah
+    shr rax, 32
+    out dx, al
+    pop rdx
+    pop rax
+    jmp Arch_SpinlockRelease
 
 Arch_ReadVolatile64:
 ReadVolatile64:
