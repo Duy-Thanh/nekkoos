@@ -2,7 +2,8 @@
 
 ## Yêu cầu cốt lõi
 - Khi làm bất cứ việc gì, phải tạo ra các agents riêng và giao việc cụ thể cho các agents đó. Bạn làm sếp của các agents, các agents sẽ được phân công các nhiệm vụ cụ thể và hiệu quả cao
-- Lưu ý, các agents có thể bị sập do upstream limit, cần handle chuẩn
+- Lưu ý, các agents có thể bị sập do upstream limit, cần handle chuẩn chỉ. Khi agents bị lỗi, phải nghiệm thu kết quả tới thời điểm agents xảy ra lỗi
+- Chia nhỏ đầu việc và phân công công việc hợp lý cho từng agents để đạt hiệu quả cao nhất
 
 ## Trạng thái hiện tại (cập nhật 2026-09-03)
 - Toolchain x86_64 đã cài đủ trên openSUSE Tumbleweed: bflat v10 (~/bflat),
