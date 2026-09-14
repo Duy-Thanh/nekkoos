@@ -72,6 +72,21 @@
   **LESSON LEARNED**: Với --stdlib zero trong bflat, KHÔNG dùng C# interface vì cần
   runtime support. Chỉ dùng static dispatch, function pointers hoặc manual vtable.
 
+- **AUTO-REBOOT BUG FIXED (commit f2d002f, 2026-09-14)**: Hệ thống tự khởi động lại
+  sau khi kernel boot thành công và ACPI daemon khởi động.
+  
+  **ROOT CAUSE**: Syscall.cs case 12 và case 50 dùng `return X86SyscallImpl.Dispatch...()`
+  — hàm Dispatch trả về `1` (success code). IsrSyscall thực hiện `mov rsp, rax` → RSP=1
+  → `iretq` crash → triple fault → CPU reset. Xảy ra ngay khi ACPI daemon gọi syscall 12
+  (MapPhys) lần đầu tiên để map RSDP.
+  
+  **FIX**: Đổi `return DispatchMapPhysicalMemory(...)` và `return DispatchMapFramebuffer(...)`
+  thành gọi hàm + `break` để SyscallHandler trả về `currentRsp` hợp lệ.
+  
+  **LESSON LEARNED**: Trong SyscallHandler, chỉ được `return` một giá trị là RSP hợp lệ
+  (để IsrSyscall thực hiện `mov rsp, rax`). Chỉ `DispatchKeyboardRead` được phép return
+  RSP thật vì nó có thể context switch. Mọi Dispatch khác phải dùng `break` không `return`.
+
 ## Quy trình port C# → Pascal (ARCHITECTURE.md §3)
 1. Port logic sang unit .pas tương ứng, export cdecl tên `*_Pas`
 2. compile_pascal.sh tự build (module nằm trong PASCAL_MODULES)
