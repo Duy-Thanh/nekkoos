@@ -8,89 +8,69 @@ namespace NekkoOS.Kernel;
 
 public unsafe struct Spinlock
 {
-    // [AAL] Mọi primitive khóa/fence đi qua Arch.* - không tự khai báo DllImport
-    private static void AsmSpinlockAcquire(uint* lockVar) => Arch.SpinlockAcquire(lockVar);
-    private static void AsmSpinlockRelease(uint* lockVar) => Arch.SpinlockRelease(lockVar);
+    private uint _lockStatus;
+
+    public Spinlock()
+    {
+        _lockStatus = 0;
+    }
+
+    [DllImport("*", EntryPoint = "Spinlock_AcquireSafe_Pas")]
+    private static extern byte Spinlock_AcquireSafe_Pas(uint* lockVar);
+
+    [DllImport("*", EntryPoint = "Spinlock_ReleaseSafe_Pas")]
+    private static extern void Spinlock_ReleaseSafe_Pas(uint* lockVar, byte intsWereEnabled);
+
+    [DllImport("*", EntryPoint = "Spinlock_IsLocked_Pas")]
+    private static extern byte Spinlock_IsLocked_Pas(uint* lockVar);
+
+    [DllImport("*", EntryPoint = "Spinlock_Acquire_Pas")]
+    private static extern void Spinlock_Acquire_Pas(uint* lockVar);
+
+    [DllImport("*", EntryPoint = "Spinlock_Release_Pas")]
+    private static extern void Spinlock_Release_Pas(uint* lockVar);
+
     public static ulong GetRflags() => Arch.GetFlags();
     public static void CompilerFence() => Arch.CompilerFence();
     public static void StoreFence() => Arch.StoreFence();
 
-    private uint _lockStatus;
-
-    // Thêm constructor để đảm bảo initialization
-    public Spinlock()
-    {
-        _lockStatus = 0; // Đảm bảo lock được khởi tạo ở trạng thái unlocked
-    }
-
-    // ==========================================================
-    // [SYNCHRONIZATION] Interrupt-safe lock acquisition
-    // Disables interrupts to prevent deadlocks from interrupt handlers (e.g. Timer, Keyboard)
-    // ==========================================================
     public bool AcquireSafe()
     {
-        bool intsEnabled = (GetRflags() & 0x200) != 0;
-        IO.Cli(); // Khóa tịt ngắt
-        // Kiểm tra xem con trỏ có null không
-        fixed (uint* ptr = &_lockStatus) {
-            if (ptr == null) {
-                Terminal.SetColor(0x00FF0000);
-                fixed (char* err = "[!] FATAL: Null pointer in Spinlock AcquireSafe!\n\0") Terminal.Print(err);
-                if (intsEnabled) IO.EnableInterrupts();
-                return false;
-            }
-            AsmSpinlockAcquire(ptr);
+        fixed (uint* ptr = &_lockStatus)
+        {
+            return Spinlock_AcquireSafe_Pas(ptr) != 0;
         }
-        // [CỬA VÀO VÙNG CẤM] 
-        // Báo cho LLVM: "Từ dòng này trở đi là Critical Section! Đéo được đảo lệnh!"
-        CompilerFence();
-        return intsEnabled;
     }
 
     public void ReleaseSafe(bool intsEnabled)
     {
-        // [CỬA RA VÙNG CẤM] 
-        // 1. Ép LLVM không được mang lệnh từ trong vùng cấm lọt ra ngoài.
-        CompilerFence();
-        
-        // 2. Ép CPU xả toàn bộ Store Buffer xuống RAM thực tế.
-        // Cứu mạng OS khỏi trường hợp Lõi 2 thấy cửa mở nhưng data chưa kịp ghi xong!
-        StoreFence();
-        
-        fixed (uint* ptr = &_lockStatus) {
-            if (ptr == null) {
-                Terminal.SetColor(0x00FF0000);
-                fixed (char* err = "[!] FATAL: Null pointer in Spinlock ReleaseSafe!\n\0") Terminal.Print(err);
-                if (intsEnabled) IO.EnableInterrupts();
-                return;
-            }
-            AsmSpinlockRelease(ptr);
+        fixed (uint* ptr = &_lockStatus)
+        {
+            Spinlock_ReleaseSafe_Pas(ptr, (byte)(intsEnabled ? 1 : 0));
         }
-        if (intsEnabled) IO.EnableInterrupts(); // Trả lại y nguyên lúc đầu!
     }
 
-    // [FIX AN TOÀN SHUTDOWN] Peek trạng thái khóa, không chiếm khóa - dùng để
-    // kiểm tra "có lõi nào đang giữ khóa PIO không" trước khi bắn INIT IPI cưỡng ép,
-    // tránh cắt ngang giữa chừng 1 sector ATA đang ghi dở dang.
     public bool IsLocked()
     {
-        fixed (uint* ptr = &_lockStatus) { return *ptr != 0; }
+        fixed (uint* ptr = &_lockStatus)
+        {
+            return Spinlock_IsLocked_Pas(ptr) != 0;
+        }
     }
 
-    // Giữ lại 2 hàm gốc cho các trường hợp đặc biệt
-    // ==========================================================
-    // BỌC THÉP LUÔN CHO 2 HÀM GỐC!
-    // ==========================================================
-    public void Acquire() 
-    { 
-        fixed (uint* ptr = &_lockStatus) { AsmSpinlockAcquire(ptr); } 
-        CompilerFence(); // Chốt cửa vào!
+    public void Acquire()
+    {
+        fixed (uint* ptr = &_lockStatus)
+        {
+            Spinlock_Acquire_Pas(ptr);
+        }
     }
-    
-    public void Release() 
-    { 
-        CompilerFence(); // Chốt cửa ra!
-        StoreFence();    // Xả Cache RAM!
-        fixed (uint* ptr = &_lockStatus) { AsmSpinlockRelease(ptr); } 
+
+    public void Release()
+    {
+        fixed (uint* ptr = &_lockStatus)
+        {
+            Spinlock_Release_Pas(ptr);
+        }
     }
 }

@@ -91,10 +91,26 @@ const
     ======================================================================== }
   THREAD_SIZE: Cardinal = 656;
   THREAD_ACTIVE_OFFSET: Cardinal = 8;
+  THREAD_ISJAILED_OFFSET: Cardinal = 9;
+  THREAD_ISPANTOMDEAD_OFFSET: Cardinal = 10;
+  THREAD_PARENTID_OFFSET: Cardinal = 12;
   THREAD_EXEC_CORE_OFFSET: Cardinal = 16;
+  THREAD_APPHEAPBASE_OFFSET: Cardinal = 32;
+  THREAD_KERNELSTACKTOP_OFFSET: Cardinal = 40;
+  THREAD_ADDRSPACE_OFFSET: Cardinal = 48;
+  THREAD_UID_OFFSET: Cardinal = 56;
+  THREAD_GID_OFFSET: Cardinal = 60;
+  THREAD_SHAREDMEMPHYS_OFFSET: Cardinal = 64;
+  THREAD_SHAREDMEMVIRT_OFFSET: Cardinal = 72;
+  THREAD_NAME_OFFSET: Cardinal = 80;
+  THREAD_CPUTICKS_OFFSET: Cardinal = 96;
+  THREAD_PHYSPAGES_OFFSET: Cardinal = 104;
+  THREAD_VIRTPAGES_OFFSET: Cardinal = 108;
   THREAD_WAKEUP_TICK_OFFSET: Cardinal = 112;
   THREAD_VRUNTIME_OFFSET: Cardinal = 120;
   THREAD_PRIORITY_OFFSET: Cardinal = 128;
+  THREAD_TEXTCOLOR_OFFSET: Cardinal = 129;
+  THREAD_FPUSTATE_OFFSET: Cardinal = 144;
   THREAD_RSP_OFFSET: Cardinal = 0;
 
   { EFI_MEMORY_DESCRIPTOR layout (LayoutKind.Sequential, no Pack)
