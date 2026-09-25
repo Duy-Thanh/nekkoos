@@ -65,6 +65,7 @@ function StrLen(str: PWord): Cardinal; cdecl; public name 'StrLen_Pas';
   writing into buf starting at position *idx, advancing idx. Returns nothing.
   Ported from Shell.cs AppendDecimalToBuffer — shared across kernel and apps. }
 procedure AppendDecimal_Pas(num: Cardinal; buf: PByte; idx: PInteger); cdecl; public name 'AppendDecimal_Pas';
+procedure AppendDecimalWide_Pas(buf: PWord; idx: PInteger; cap: Integer; val: Cardinal); cdecl; public name 'AppendDecimalWide_Pas';
 
 implementation
 
@@ -330,6 +331,40 @@ begin
   begin
     buf[idx^] := rev[i];
     Inc(idx^);
+  end;
+end;
+
+procedure AppendDecimalWide_Pas(buf: PWord; idx: PInteger; cap: Integer; val: Cardinal); cdecl;
+var
+  rev: array[0..15] of Word;
+  c, i: Integer;
+  digit: Word;
+begin
+  if (buf = nil) or (idx = nil) then Exit;
+  c := 0;
+  if val = 0 then
+  begin
+    if idx^ < cap - 1 then
+    begin
+      buf[idx^] := Ord('0');
+      Inc(idx^);
+    end;
+    Exit;
+  end;
+  while val > 0 do
+  begin
+    digit := Word(val mod 10);
+    rev[c] := Ord('0') + digit;
+    Inc(c);
+    val := val div 10;
+  end;
+  for i := c - 1 downto 0 do
+  begin
+    if idx^ < cap - 1 then
+    begin
+      buf[idx^] := rev[i];
+      Inc(idx^);
+    end;
   end;
 end;
 

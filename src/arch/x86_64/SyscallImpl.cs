@@ -64,7 +64,7 @@ public static unsafe class X86SyscallImpl
         if (found)
         {
             if (c != '\0') { ArchCtx.SetRet(ctx, (ulong)c); } else { ArchCtx.SetRet(ctx, 0); }
-            return 1;
+            return currentRsp;
         }
 
         bool irq = Scheduler.AcquireSchedLockSafe();

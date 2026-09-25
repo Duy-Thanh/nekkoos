@@ -199,8 +199,8 @@ public static unsafe class FAT16
     private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
 
     // [PASCAL PORT] Append decimal number to buffer
-    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
-    private static extern void AppendDecimal_Pas(char* buf, int* idx, int cap, uint value);
+    [DllImport("*", EntryPoint = "AppendDecimalWide_Pas")]
+    private static extern void AppendDecimalWide_Pas(char* buf, int* idx, int cap, uint value);
 
     // [PASCAL PORT] Append string to buffer
     [DllImport("*", EntryPoint = "StrAppend_Pas")]
@@ -1028,7 +1028,7 @@ if (DaemonWaitTimedOut(&dspinLs)) {
         sharedNameBuf[idx] = '\0'; idx++;
         // Ma hoa mode (so thap phan) noi tiep sau ten file, cach nhau boi '\0' -
         // dung y het quy uoc FAT16_Driver.cs case 58 mong doi (giong Shell.cs chmod).
-        AppendDecimal_Pas(sharedNameBuf, &idx, 4096, mode);
+        AppendDecimalWide_Pas(sharedNameBuf, &idx, 4096, mode);
         sharedNameBuf[idx] = '\0';
         Syscall.SharedMemLock.ReleaseSafe(sm_irq);
 

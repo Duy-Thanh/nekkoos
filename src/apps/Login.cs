@@ -48,8 +48,8 @@ public unsafe class Login
     public static uint Atoi(char* str) { return Atoi_Pas(str); }
 
     // [PASCAL PORT] Append decimal number to buffer
-    [DllImport("*", EntryPoint = "AppendDecimal_Pas")]
-    private static extern void AppendDecimal_Pas(char* buf, int* idx, int cap, uint value);
+    [DllImport("*", EntryPoint = "AppendDecimalWide_Pas")]
+    private static extern void AppendDecimalWide_Pas(char* buf, int* idx, int cap, uint value);
 
     // [PASCAL PORT] Append string to buffer
     [DllImport("*", EntryPoint = "StrAppend_Pas")]
@@ -174,9 +174,9 @@ public unsafe class Login
         int idx = (int)StrCpyLimited_Pas(buf, dirName, 4096);
         buf[idx] = '\0'; idx++;
         
-        AppendDecimal_Pas(buf, &idx, 4096, targetUID);
+        AppendDecimalWide_Pas(buf, &idx, 4096, targetUID);
         buf[idx] = ':'; idx++;
-        AppendDecimal_Pas(buf, &idx, 4096, targetGID);
+        AppendDecimalWide_Pas(buf, &idx, 4096, targetGID);
         buf[idx] = '\0';
 
         SyscallSendIPC(FAT16_PID, 56, 0);
@@ -234,7 +234,7 @@ public unsafe class Login
         char* inputPass = stackalloc char[32];
         byte* passFileBuf = stackalloc byte[4096];
         char* lineUser = stackalloc char[32];
-        char* lineSalt = stackalloc char[64];
+        char* lineSalt = stackalloc char[80];
         char* lineHash = stackalloc char[80];
         char* lineUID = stackalloc char[16];
         char* lineGID = stackalloc char[16];
@@ -280,8 +280,8 @@ public unsafe class Login
                         if (c == ':') { stage++; }
                         else {
                             if (stage == 0 && u < 31) lineUser[u++] = c;
-                            else if (stage == 1 && s < 63) lineSalt[s++] = c;
-                            else if (stage == 2 && h < 79) lineHash[h++] = c;
+                            else if (stage == 1 && s < 64) lineSalt[s++] = c;
+                            else if (stage == 2 && h < 64) lineHash[h++] = c;
                             else if (stage == 3 && id < 15) lineUID[id++] = c;
                             else if (stage == 4 && gd < 15) lineGID[gd++] = c;
                             else if (stage == 5 && hm < 63) lineHome[hm++] = c;
@@ -319,7 +319,7 @@ public unsafe class Login
                 // (password nhập vào, salt/hash đọc từ đĩa, buffer băm tạm) ngay khi vòng
                 // thử này kết thúc, bất kể thành công hay thất bại.
                 ZeroMemChar(inputPass, 32);
-                ZeroMemChar(lineSalt, 64);
+                ZeroMemChar(lineSalt, 80);
                 ZeroMemChar(lineHash, 80);
                 ZeroMemByte(saltBytes, 32);
                 ZeroMemByte(hashInputBuf, 64);
