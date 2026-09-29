@@ -41,6 +41,13 @@ procedure Sched_Init_Pas(
 
 function Sched_GetFreeSlot_Pas(threads: Pointer; threadCount: Integer): Integer; cdecl;
 
+{ Read a live thread's address-space root (physical PML4), or 0 when the
+  index is out of range or the thread is inactive. The APIC uses this to map
+  its MMIO window into every live address space. TThread's layout stays
+  private to this unit, which is why the field is reached through an
+  accessor instead of a shared struct. }
+function Sched_GetThreadAddrSpace_Pas(index: Integer): QWord; cdecl;
+
 procedure Sched_CreateIdleTask_Pas(
   coreId: Cardinal;
   threads: Pointer; var threadCount: Integer;
@@ -90,7 +97,7 @@ procedure Sched_TerminateTask_Pas(
 
 implementation
 
-uses libc, prng;
+uses libc, prng, kstate;
 
 { ── TThread record — implementation only, no RTTI ──────────────────────── }
 type
@@ -404,6 +411,20 @@ begin
     if t[i].Active = 0 then begin Result := i; Exit; end;
   if threadCount < 256 then Result := threadCount
   else Result := -1;
+end;
+
+{ ── Sched_GetThreadAddrSpace_Pas ───────────────────────────────────────── }
+function Sched_GetThreadAddrSpace_Pas(index: Integer): QWord; cdecl;
+  public name 'Sched_GetThreadAddrSpace_Pas';
+var
+  t: PThread;
+begin
+  Result := 0;
+  if index < 0 then Exit;
+  if (kstate_Threads = nil) or (index >= kstate_ThreadCount) then Exit;
+  t := PThread(kstate_Threads);
+  if t[index].Active = 0 then Exit;
+  Result := t[index].AddrSpace;
 end;
 
 { ── Sched_CreateIdleTask_Pas ────────────────────────────────────────────── }

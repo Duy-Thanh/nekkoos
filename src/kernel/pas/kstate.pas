@@ -45,6 +45,41 @@ var
   { Number of pages in the shared window. 0 = not allocated. }
   kstate_SharedRAM_Pages: QWord = 0;
 
+{ ── Scheduler state that non-scheduler modules need to observe ─────────────
+
+  The APIC initialisation pass must map its MMIO window into every live
+  thread's address space, so it has to walk the thread table. But the
+  scheduler already calls into the APIC (to read it and to check whether it
+  is awake), so a direct dependency would be a cycle.
+
+  The thread table pointer and its live count are therefore published here by
+  the scheduler and read by the APIC. The record layout stays private to the
+  scheduler; callers that need to inspect a thread use the accessors below,
+  which keeps the layout in one place. }
+
+var
+  kstate_Threads: Pointer = nil;
+  kstate_ThreadCount: Integer = 0;
+
+  { The global scheduler lock. APIC init walks the thread table while
+    holding it, exactly as the scheduler's own paths do. }
+  kstate_SchedLock: Cardinal = 0;
+
+function Kstate_AcquireSchedLock: Byte;
+procedure Kstate_ReleaseSchedLock(irq: Byte);
+
 implementation
+
+uses spinlock;
+
+function Kstate_AcquireSchedLock: Byte;
+begin
+  Kstate_AcquireSchedLock := Spinlock_AcquireSafe_Pas(@kstate_SchedLock);
+end;
+
+procedure Kstate_ReleaseSchedLock(irq: Byte);
+begin
+  Spinlock_ReleaseSafe_Pas(@kstate_SchedLock, irq);
+end;
 
 end.
