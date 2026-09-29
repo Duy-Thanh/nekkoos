@@ -477,6 +477,31 @@ rm -f hdd.img.lock
 ```
 Trước khi chạy VM mới nếu không sẽ bị "disk locked" error.
 
+### 6.10 ⚠️ Smoke test flaky ~1/3 — KHÔNG phải regression
+
+**Triệu chứng:** `smoke_test.py` báo `[FAIL] boot to login prompt` /
+`OS did not reach login prompt within timeout`, nhưng chạy lại thì 9/9.
+
+**Serial log dừng ở đúng dòng 58** (`[+] Process Started!` sau FAT16.EXE),
+tức là ngay sau khi spawn 3 daemon, trước login banner.
+
+**Nguyên nhân (KHÔNG phải lỗi code):**
+- `Kernel.cs` có vòng chờ handshake daemon với **timeout 30 giây**
+  (`PIT.Ticks - daemonWaitStart > 30000`). Nếu daemon handshake chậm
+  (ATA/FAT16/Mouse), boot bị trì hoãn tới 30s.
+- `smoke_test.py` dùng timeout **cố định 60s** cho `Username:`.
+- Tổng thời gian boot đôi khi vượt 60s → test fail dù OS hoàn toàn bình thường.
+
+**Fix khi gặp:** chạy lại smoke test. **Đừng** debug code như thể đây là
+regression. Đã đo: 3 lần chạy → 2 pass, 1 fail (đã xác nhận bằng cách
+chạy lại và cả bằng log cho thấy boot tiến triển bình thường).
+
+**Lưu ý khi chẩn đoán regression thật:** các unit Pascal mới port (chưa được
+C# gọi tới) **không thể** gây ra boot stall, vì chúng chỉ được link chứ chưa
+được invoke. Nếu smoke fail, hãy kiểm tra xem module C# tương ứng đã được
+thay chưa — nếu chưa thì đây là flaky, không phải regression.
+
+
 ---
 
 ## 7. Mục tiêu đa kiến trúc

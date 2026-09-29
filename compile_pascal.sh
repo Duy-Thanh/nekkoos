@@ -20,7 +20,7 @@ mod_src() {
 }
 
 PASCAL_MODULES=(libc kstring kstate prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser spinlock ata_driver sudo_dispatch scheduler io serial)
-ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic)
+ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."
