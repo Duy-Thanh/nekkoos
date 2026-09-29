@@ -13,14 +13,14 @@ mkdir -p build
 mod_src() {
     case "$1" in
         arch_interface) echo "src/arch/$1.pas" ;;
-        gdt|idt|context|vmm|apic|ioapic|pit|pic|isr|vdso|smp)
+        gdt|idt|context|vmm|apic|ioapic|pit|pic|isr|vdso|smp|platform_bootstrap)
             echo "src/arch/x86_64/$1.pas" ;;
         *)              echo "src/kernel/pas/$1.pas" ;;
     esac
 }
 
-PASCAL_MODULES=(libc kstring kstate prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser spinlock ata_driver sudo_dispatch scheduler io serial)
-ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic)
+PASCAL_MODULES=(libc kstring kstate ata_hw prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser spinlock ata_driver sudo_dispatch scheduler io serial)
+ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."

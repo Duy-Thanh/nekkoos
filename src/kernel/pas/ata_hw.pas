@@ -118,6 +118,13 @@ procedure AtaHw_SetKernelHooks(aCurrentThreadIdFn: Pointer; aThreads: Pointer;
     aScreenLockReleaseFn: Pointer; aIpcQueue: Pointer;
     aIpcMaxMessages: Integer); cdecl;
 
+{ Syscall.SharedMemLock - a separate lock from the screen lock. It guards
+  the KernelSharedMemBlock window, which the userland daemons write to
+  concurrently with the kernel. }
+procedure AtaHw_SetSharedMemLock(acquireFn: Pointer; releaseFn: Pointer); cdecl;
+function  AtaHw_SharedMemLockAcquire: Byte; cdecl;
+procedure AtaHw_SharedMemLockRelease(irq: Byte); cdecl;
+
 { Publish Syscall.GlobalSharedRAM_Phys into this unit (0 = not allocated). }
 procedure AtaHw_SetSharedRamPhys(phys: QWord); cdecl;
 function  AtaHw_GetSharedRamPhys: QWord; cdecl;
@@ -231,6 +238,8 @@ var
   cb_ThreadCount:       PInteger = nil;
   cb_ScreenLockAcquire: Pointer = nil;
   cb_ScreenLockRelease: Pointer = nil;
+  cb_SharedLockAcquire: Pointer = nil;
+  cb_SharedLockRelease: Pointer = nil;
   cb_IpcQueue:          Pointer = nil;
   cb_IpcMaxMessages:    Integer = 0;
 
@@ -269,6 +278,18 @@ begin
   TFn(cb_ScreenLockRelease)(irq);
 end;
 
+function CallSharedLockAcquire: Byte; inline;
+type TFn = function: Byte; cdecl;
+begin
+  Result := TFn(cb_SharedLockAcquire)();
+end;
+
+procedure CallSharedLockRelease(irq: Byte); inline;
+type TFn = procedure(irq: Byte); cdecl;
+begin
+  TFn(cb_SharedLockRelease)(irq);
+end;
+
 { ═══════════════════════════════════════════════════════════════════════
   BINDINGS
   ═══════════════════════════════════════════════════════════════════════ }
@@ -285,6 +306,28 @@ begin
   cb_ScreenLockRelease := aScreenLockReleaseFn;
   cb_IpcQueue          := aIpcQueue;
   cb_IpcMaxMessages    := aIpcMaxMessages;
+end;
+
+procedure AtaHw_SetSharedMemLock(acquireFn: Pointer; releaseFn: Pointer); cdecl;
+begin
+  cb_SharedLockAcquire := acquireFn;
+  cb_SharedLockRelease := releaseFn;
+end;
+
+function AtaHw_SharedMemLockAcquire: Byte; cdecl;
+begin
+  if cb_SharedLockAcquire = nil then
+  begin
+    AtaHw_SharedMemLockAcquire := 0;
+    Exit;
+  end;
+  AtaHw_SharedMemLockAcquire := CallSharedLockAcquire;
+end;
+
+procedure AtaHw_SharedMemLockRelease(irq: Byte); cdecl;
+begin
+  if cb_SharedLockRelease = nil then Exit;
+  CallSharedLockRelease(irq);
 end;
 
 procedure AtaHw_SetSharedRamPhys(phys: QWord); cdecl;
@@ -618,16 +661,17 @@ procedure Ata_AcquireAsync; cdecl;
 var
   irq: Byte;
 begin
+  { Spinlock + yield, exactly like ATA.cs AcquireAtaAsync. }
   while true do
   begin
-    irq := AtaHw_AcquireSchedLockSafe;
+    irq := Spinlock_AcquireSafe_Pas(@AtaHw_AtaStateLock);
     if AtaHw_AtaIsBusy = 0 then
     begin
       AtaHw_AtaIsBusy := 1;
-      AtaHw_ReleaseSchedLockSafe(irq);
+      Spinlock_ReleaseSafe_Pas(@AtaHw_AtaStateLock, irq);
       Exit;
     end;
-    AtaHw_ReleaseSchedLockSafe(irq);
+    Spinlock_ReleaseSafe_Pas(@AtaHw_AtaStateLock, irq);
     AtaHw_Yield;
   end;
 end;
@@ -636,9 +680,9 @@ procedure Ata_ReleaseAsync; cdecl;
 var
   irq: Byte;
 begin
-  irq := AtaHw_AcquireSchedLockSafe;
+  irq := Spinlock_AcquireSafe_Pas(@AtaHw_AtaStateLock);
   AtaHw_AtaIsBusy := 0;
-  AtaHw_ReleaseSchedLockSafe(irq);
+  Spinlock_ReleaseSafe_Pas(@AtaHw_AtaStateLock, irq);
 end;
 
 { ═══════════════════════════════════════════════════════════════════════
@@ -716,9 +760,10 @@ function Ata_IsLbaInRange(lba: Cardinal): Boolean; cdecl;
 var
   irq: Byte;
 begin
-  irq := AtaHw_AcquireSchedLockSafe;
+  { The C# takes AtaHardwareLock (not the scheduler lock) around detection. }
+  irq := Spinlock_AcquireSafe_Pas(@AtaHw_HardwareLock);
   if AtaHw_DetectedSectors = 0 then Ata_DetectDiskSize;
-  AtaHw_ReleaseSchedLockSafe(irq);
+  Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, irq);
 
   if AtaHw_DetectedSectors <> 0 then
     Ata_IsLbaInRange := lba < AtaHw_DetectedSectors
@@ -736,7 +781,7 @@ var
   raw: PByte;
   msgType, sender: Cardinal;
   payload: QWord;
-  irq: Byte;
+  hwIrq, smIrq: Byte;
 begin
   if buffer = nil then
   begin
@@ -793,9 +838,9 @@ begin
             Exit;
           end;
 
-          irq := AtaHw_ScreenLockAcquire;
+          smIrq := AtaHw_SharedMemLockAcquire;
           MemCopy(buffer, raw, ATA_SECTOR_SIZE);
-          AtaHw_ScreenLockRelease(irq);
+          AtaHw_SharedMemLockRelease(smIrq);
           Ata_ReleaseAsync;
           Exit;
         end
@@ -812,12 +857,7 @@ begin
     end;
   end;
 
-  irq := AtaHw_AcquireSchedLockSafe;
-  if cb_Threads <> nil then
-  begin
-    Arch_DisableInterrupts;
-    Arch_SpinlockAcquire(@AtaHw_HardwareLock);
-  end;
+  hwIrq := Spinlock_AcquireSafe_Pas(@AtaHw_HardwareLock);
 
   Io_Out8(ATA_PORT_DRIVE, Byte($E0 or ((lba shr 24) and $0F)));
 
@@ -826,14 +866,7 @@ begin
     AtaHw_SetColor($00FF0000);
     AtaHw_Print(W('[!] ATA HW Read Error: Drive Select Timeout!'#13#10));
     AtaHw_SetColor($00FFFFFF);
-    if cb_Threads <> nil then
-    begin
-      Arch_CompilerFence;
-      Arch_StoreFence;
-      Arch_SpinlockRelease(@AtaHw_HardwareLock);
-      Arch_EnableInterrupts;
-    end;
-    AtaHw_ReleaseSchedLockSafe(irq);
+    Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
     Exit;
   end;
 
@@ -854,14 +887,7 @@ begin
       AtaHw_SetColor($00FF0000);
       AtaHw_Print(W('[!] ATA HW Read Error!'#13#10));
       AtaHw_SetColor($00FFFFFF);
-      if cb_Threads <> nil then
-      begin
-        Arch_CompilerFence;
-        Arch_StoreFence;
-        Arch_SpinlockRelease(@AtaHw_HardwareLock);
-        Arch_EnableInterrupts;
-      end;
-      AtaHw_ReleaseSchedLockSafe(irq);
+      Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
       Exit;
     end;
 
@@ -875,14 +901,7 @@ begin
     Inc(ptr);
   end;
 
-  if cb_Threads <> nil then
-  begin
-    Arch_CompilerFence;
-    Arch_StoreFence;
-    Arch_SpinlockRelease(@AtaHw_HardwareLock);
-    Arch_EnableInterrupts;
-  end;
-  AtaHw_ReleaseSchedLockSafe(irq);
+  Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
 end;
 
 procedure Ata_WriteSector(lba: Cardinal; buffer: PByte); cdecl;
@@ -894,7 +913,7 @@ var
   raw: PByte;
   msgType, sender: Cardinal;
   payload: QWord;
-  irq: Byte;
+  hwIrq, smIrq: Byte;
 begin
   if buffer = nil then
   begin
@@ -937,9 +956,9 @@ begin
       Exit;
     end;
 
-    irq := AtaHw_ScreenLockAcquire;
+    smIrq := AtaHw_SharedMemLockAcquire;
     MemCopy(raw, buffer, ATA_SECTOR_SIZE);
-    AtaHw_ScreenLockRelease(irq);
+    AtaHw_SharedMemLockRelease(smIrq);
 
     AtaHw_IpcSend(12, Cardinal(callerThread), AtaHw_DaemonId, QWord(lba));
     AtaHw_WakeDaemon;
@@ -966,23 +985,11 @@ begin
     end;
   end;
 
-  irq := AtaHw_AcquireSchedLockSafe;
-  if cb_Threads <> nil then
-  begin
-    Arch_DisableInterrupts;
-    Arch_SpinlockAcquire(@AtaHw_HardwareLock);
-  end;
+  hwIrq := Spinlock_AcquireSafe_Pas(@AtaHw_HardwareLock);
 
   if not Ata_WaitHardware then
   begin
-    if cb_Threads <> nil then
-    begin
-      Arch_CompilerFence;
-      Arch_StoreFence;
-      Arch_SpinlockRelease(@AtaHw_HardwareLock);
-      Arch_EnableInterrupts;
-    end;
-    AtaHw_ReleaseSchedLockSafe(irq);
+    Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
     Exit;
   end;
 
@@ -993,14 +1000,7 @@ begin
     AtaHw_SetColor($00FF0000);
     AtaHw_Print(W('[!] ATA HW Write Error: Drive Select Timeout!'#13#10));
     AtaHw_SetColor($00FFFFFF);
-    if cb_Threads <> nil then
-    begin
-      Arch_CompilerFence;
-      Arch_StoreFence;
-      Arch_SpinlockRelease(@AtaHw_HardwareLock);
-      Arch_EnableInterrupts;
-    end;
-    AtaHw_ReleaseSchedLockSafe(irq);
+    Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
     Exit;
   end;
 
@@ -1020,14 +1020,7 @@ begin
       AtaHw_SetColor($00FF0000);
       AtaHw_Print(W('[!] ATA HW Write error: DRQ Timeout!'#13#10));
       AtaHw_SetColor($00FFFFFF);
-      if cb_Threads <> nil then
-      begin
-        Arch_CompilerFence;
-        Arch_StoreFence;
-        Arch_SpinlockRelease(@AtaHw_HardwareLock);
-        Arch_EnableInterrupts;
-      end;
-      AtaHw_ReleaseSchedLockSafe(irq);
+      Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
       Exit;
     end;
     if (status and ATA_ST_DRQ) <> 0 then Break;
@@ -1052,27 +1045,13 @@ begin
       AtaHw_SetColor($00FF0000);
       AtaHw_Print(W('[!] ATA HW Write error: Platter write/flush failed!'#13#10));
       AtaHw_SetColor($00FFFFFF);
-      if cb_Threads <> nil then
-      begin
-        Arch_CompilerFence;
-        Arch_StoreFence;
-        Arch_SpinlockRelease(@AtaHw_HardwareLock);
-        Arch_EnableInterrupts;
-      end;
-      AtaHw_ReleaseSchedLockSafe(irq);
+      Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
       Exit;
     end;
     Break;
   end;
 
-  if cb_Threads <> nil then
-  begin
-    Arch_CompilerFence;
-    Arch_StoreFence;
-    Arch_SpinlockRelease(@AtaHw_HardwareLock);
-    Arch_EnableInterrupts;
-  end;
-  AtaHw_ReleaseSchedLockSafe(irq);
+  Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
 end;
 
 procedure Ata_FlushCache; cdecl;
@@ -1081,7 +1060,7 @@ var
   callerThread: Integer;
   msgType, sender: Cardinal;
   payload: QWord;
-  irq: Byte;
+  hwIrq: Byte;
 begin
   callerThread := AtaHw_CurrentThreadId;
 
@@ -1115,12 +1094,7 @@ begin
     end;
   end;
 
-  irq := AtaHw_AcquireSchedLockSafe;
-  if cb_Threads <> nil then
-  begin
-    Arch_DisableInterrupts;
-    Arch_SpinlockAcquire(@AtaHw_HardwareLock);
-  end;
+  hwIrq := Spinlock_AcquireSafe_Pas(@AtaHw_HardwareLock);
 
   Io_Out8(ATA_PORT_STATUS, ATA_CMD_CACHE_FLUSH);
 
@@ -1133,26 +1107,12 @@ begin
       AtaHw_SetColor($00FF0000);
       AtaHw_Print(W('[!] ATA HW Write error: Cache flush failed!'#13#10));
       AtaHw_SetColor($00FFFFFF);
-      if cb_Threads <> nil then
-      begin
-        Arch_CompilerFence;
-        Arch_StoreFence;
-        Arch_SpinlockRelease(@AtaHw_HardwareLock);
-        Arch_EnableInterrupts;
-      end;
-      AtaHw_ReleaseSchedLockSafe(irq);
+      Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
       Exit;
     end;
   end;
 
-  if cb_Threads <> nil then
-  begin
-    Arch_CompilerFence;
-    Arch_StoreFence;
-    Arch_SpinlockRelease(@AtaHw_HardwareLock);
-    Arch_EnableInterrupts;
-  end;
-  AtaHw_ReleaseSchedLockSafe(irq);
+  Spinlock_ReleaseSafe_Pas(@AtaHw_HardwareLock, hwIrq);
 end;
 
 end.
