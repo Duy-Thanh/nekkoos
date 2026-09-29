@@ -47,10 +47,21 @@ function PMM_AllocatePageBelow4GBIndex: QWord; cdecl; public name 'PMM_AllocateP
 function PMM_AllocateContiguousIndex(count: QWord): QWord; cdecl; public name 'PMM_AllocateContiguousIndex_Pas';
 
 { [FREE] Trả về: 0 = no-op (trang bảo vệ / ngoài phạm vi), 1 = free thành công,
-  2 = double-free / trang chưa được cấp phát (C# sẽ in cảnh báo). }
+  2 = double-free / trang chưa được cấp phát (caller sẽ in cảnh báo). }
 function PMM_FreePageByIndex(index: QWord): Byte; cdecl; public name 'PMM_FreePageByIndex_Pas';
 
+{ [HIGH-LEVEL API] Bọc các primitive index ở trên bằng spinlock + zero-fill
+  và trả về con trỏ thật. Đây là API mà code kernel dùng (thay cho PMM.cs).
+  Zero-fill nằm NGOÀI khoá để không giữ lock trong lúc memset 4 KiB. }
+
+function Pmm_AllocatePage: Pointer;
+function Pmm_AllocatePageBelow4GB: Pointer;
+function Pmm_AllocateContiguousPages(count: QWord): Pointer;
+procedure Pmm_FreePage(ptr: Pointer);
+
 implementation
+
+uses spinlock, libc, kstring, terminal;
 
 var
   Bitmap: PByte = nil;
@@ -294,6 +305,134 @@ begin
   if index < LastUsedIndex then LastUsedIndex := index;
 
   PMM_FreePageByIndex := 1;
+end;
+
+{ ═══════════════════════════════════════════════════════════════════════
+  HIGH-LEVEL API
+  ═══════════════════════════════════════════════════════════════════════ }
+
+var
+  { Serialises bitmap mutation across cores. The lock word itself lives in
+    .bss-like data, so it is safe to use from the very first allocation
+    (KernelMain resets it before any other subsystem runs). }
+  PmmLock: Cardinal = 0;
+
+function Pmm_AllocatePage: Pointer;
+var
+  irq: Byte;
+  index: QWord;
+begin
+  irq := Spinlock_AcquireSafe_Pas(@PmmLock);
+  index := PMM_AllocatePageIndex;
+  Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
+
+  if index = PMM_INVALID_INDEX then
+  begin
+    Pmm_AllocatePage := nil;
+    Exit;
+  end;
+
+  Pmm_AllocatePage := Pointer(index * 4096);
+  { Zero outside the lock: a 4 KiB memset must not hold the allocator. }
+  MemSet(Pmm_AllocatePage, 0, 4096);
+end;
+
+{ [MEMORY CONSTRAINT] SMP trampoline runs in Protected Mode, where CR3 is
+  effectively 32-bit. If the PML4 lives above 4 GiB the trampoline truncates
+  the address and jumps to garbage, so the allocation must stay under 4 GiB. }
+function Pmm_AllocatePageBelow4GB: Pointer;
+var
+  irq: Byte;
+  index: QWord;
+begin
+  irq := Spinlock_AcquireSafe_Pas(@PmmLock);
+  index := PMM_AllocatePageBelow4GBIndex;
+  Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
+
+  if index = PMM_INVALID_INDEX then
+  begin
+    Pmm_AllocatePageBelow4GB := nil;
+    Exit;
+  end;
+
+  Pmm_AllocatePageBelow4GB := Pointer(index * 4096);
+  MemSet(Pmm_AllocatePageBelow4GB, 0, 4096);
+end;
+
+{ Contiguous allocation for large blocks (framebuffer, TSS). Never falls
+  back to address 0 - returning nil must be handled by the caller, and
+  handing back the null page would fault the kernel instantly. }
+function Pmm_AllocateContiguousPages(count: QWord): Pointer;
+const
+  UIntMax: QWord = $FFFFFFFF;
+var
+  irq: Byte;
+  index: QWord;
+  result_: Pointer;
+  remaining: QWord;
+  chunk: Cardinal;
+  cursor: PByte;
+begin
+  if count = 0 then
+  begin
+    Pmm_AllocateContiguousPages := nil;
+    Exit;
+  end;
+
+  irq := Spinlock_AcquireSafe_Pas(@PmmLock);
+  index := PMM_AllocateContiguousIndex(count);
+  Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
+
+  if index = PMM_INVALID_INDEX then
+  begin
+    Pmm_AllocateContiguousPages := nil;
+    Exit;
+  end;
+
+  result_ := Pointer(index * 4096);
+
+  { Zero in bounded chunks: (count * 4096) can exceed 32 bits on very large
+    reservations, and MemSet's length is a Cardinal. The cursor advances as a
+    byte pointer so the arithmetic cannot overflow a QWord. }
+  remaining := count * 4096;
+  cursor := PByte(result_);
+  while remaining > 0 do
+  begin
+    if remaining > UIntMax then chunk := Cardinal(UIntMax)
+    else chunk := Cardinal(remaining);
+    MemSet(Pointer(cursor), 0, chunk);
+    Inc(cursor, chunk);
+    Dec(remaining, QWord(chunk));
+  end;
+
+  Pmm_AllocateContiguousPages := Pointer(index * 4096);
+end;
+
+procedure Pmm_FreePage(ptr: Pointer);
+var
+  irq: Byte;
+  addr: QWord;
+  index: QWord;
+  status: Byte;
+begin
+  if ptr = nil then Exit;
+
+  addr := QWord(PByte(ptr));
+
+  { Only page-aligned addresses are page descriptors. }
+  if (addr mod 4096) <> 0 then Exit;
+
+  index := addr div 4096;
+
+  irq := Spinlock_AcquireSafe_Pas(@PmmLock);
+  status := PMM_FreePageByIndex(index);
+  Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
+
+  if status = 2 then
+  begin
+    Terminal_SetColor_Pas($00FF0000);
+    Terminal_Print_Pas(W('[!] PMM WARNING: Attempt to free unallocated page!'#13#10));
+  end;
 end;
 
 end.

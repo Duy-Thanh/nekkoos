@@ -384,9 +384,49 @@ Serial log: QEMU redirect serial → `/tmp/serial.log` (dùng để debug).
 **Triệu chứng:** `lld: error: undefined symbol: RTTI_$SYSTEM_TGUID$indirect` hoặc tương tự
 **Nguyên nhân:** FPC tự động sinh RTTI cho record types và type aliases
 **Fix:**
-- Thêm `{$TYPEINFO OFF}` ở đầu unit
+- Thêm `{$TYPEINFO OFF}` ở đầu mổi unit
 - Dùng `-CD` flag trong compile command
 - Dùng built-in types trong export signatures (`Pointer` không phải custom alias)
+
+**⚠️ QUAN TRỌNG — `{$TYPEINFO OFF}` KHÔNG đủ nếu record nằm ở `interface`:**
+
+FPC vẫn sinh RTTI cho **bất kỳ record type nào khai báo trong `interface` section**,
+kể cả khi `{$TYPEINFO OFF}` được đặt đúng chỗ. Thứ tự directive không có tác dụng —
+đã test cả `{$TYPEINFO OFF}` trước và sau `{$ASMMODE Intel}`.
+
+Kết quả: `lld: error: undefined symbol: RTTI_$SYSTEM_$$_WORD$indirect`
+
+**Fix bắt buộc:** record + pointer typedef **chỉ** khai báo trong `implementation`.
+Interface chỉ expose `Pointer`:
+
+```pascal
+interface
+function Gdt_GetTss: Pointer;          // ← Pointer, không phải PTssEntry
+
+implementation
+type
+  PTssEntry = ^TTssEntry;             // ← chỉ ở đây
+  TTssEntry = packed record ... end;
+```
+
+Xem `src/arch/x86_64/gdt.pas`, `idt.pas`, `context.pas` làm mẫu chuẩn.
+
+### 6.3b ❌ RTTI do `unit` khác export record ở interface
+
+Ngay cả khi unit của bạn tự khai báo đúng, **một unit khác** expose record ở
+`interface` sẽ kéo RTTI vào link. Kiểm tra trước khi build:
+
+```bash
+objdump -t build/<module>.o | grep -i rtti    # phải = 0
+```
+
+### 6.3c ❌ Module Pascal mới chưa được strip relocation
+
+Unit mới thêm vào `build/` **phải** được liệt kê trong `compile_pascal.sh`
+(`PASCAL_MODULES` hoặc `ARCH_X86_64_MODULES`). Nếu chỉ thêm vào `build.sh` mà
+quên `compile_pascal.sh`, reloc type-0 chưa được strip →
+`lld: error: unsupported relocation type 0x0 in build/<mod>.o`
+
 
 ### 6.4 ❌ Pascal export signature mismatch → stack corruption
 
