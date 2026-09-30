@@ -846,24 +846,39 @@ dụng: daemon chết (hoặc mất IPC) trước khi tới lệnh gửi.
 **Bài học:** daemon nào kernel chờ handshake thì phải gửi handshake là việc
 *đầu tiên*, trước mọi syscall khác — kể cả syscall trông vô hại.
 
-### 12.3 🔴 ĐANG MỞ: login `ACCESS DENIED` khi dùng FAT16.exe viết bằng Pascal
+### 12.3 🔴 ĐANG MỞ: login chập chờn khi FAT16.exe viết bằng Pascal
 
-**Triệu chứng (hiện tại, chưa sửa):** boot tới `Username:` OK, nhưng
-`root` + mật khẩu đúng vẫn bị `[!] ACCESS DENIED! Incorrect Username or
-Password.` Smoke test dừng ở bước "login success".
+**Triệu chứng:** boot tới `Username:` ổn định. Nhưng `root` + mật khẩu đúng
+thỉnh thoảng bị `[!] ACCESS DENIED!`, và thỉnh thoảng thì
+`[+] AUTHENTICATED!`.
 
-**Phạm vi:** xuất hiện **sau khi** thay `FAT16.exe` từ C# sang Pascal.
-ATA.exe Pascal vẫn báo online, FAT16.exe Pascal cũng báo
-`Online & Listening`, nhưng nội dung file trả về có vẻ sai — `/ETC/PASSWD`
-đọc ra không khớp hash nên login từ chối.
+**QUAN TRỌNG — đây là lỗi CHẬP CHỜN, không phải lỗi tất định.** Đo được:
+FAT16.exe Pascal → 1 fail / 2 pass (cộng 1 lần chạy tay pass). Đừng đi tìm
+một nguyên nhân "chắc chắn sai" — nó không luôn xảy ra. Bản C# chỉ mới lấy
+được **một** mẫu pass, nên chưa đủ cơ sở kết luận C# sạch.
 
-**Cách xác nhận:** thay riêng `FAT16.exe` về bản C#
-(`bflat build src/apps/FAT16_Driver.cs src/apps/API.cs ... -o FAT16.exe`)
-mà giữ nguyên mọi app khác. Nếu login qua thì nghi phạm là `fat16_app.pas`,
-cụ thể phần đọc nội dung file (offset/size/đuôi chuỗi), không phải phần
-`Open`/`List` — vì `ls` vẫn hoạt động.
+**Đã loại trừ** (đừng đi lại những hướng này):
+- Offset shared memory khớp: `FatResponseData` ở 8192 = `OFF_RESP_DATA`.
+- Hằng số IPC khớp trên dây: 30/31/38/39/42 và **311** (size-ack).
+  `fat16_app` gọi nó `FS_READ_START`, `login_app` gọi `IPC_READ_ACK` — cùng
+  giá trị, chỉ khác tên.
+- Vòng chờ bằng receive+yield giống **y hệt** bản C# (`FAT16_Driver.cs:954`),
+  nên không phải lỗi dịch.
+- `App_Yield` không nhảm syscall: `app_api` slot 12 và `API.cs` `table[12]`
+  đều là syscall 98, và `case 98` có thật.
+- FAT16 không tự in "Access Denied: You do not have Read (r) permission" —
+  nên nó không bị chặn ở tầng access-control.
 
-**Chưa làm:** chưa sửa. Đừng coi là đã xong.
+**Ứng viên còn lại:** bản thân thiết kế handshake không đệm. Cả hai bên
+đều dùng vòng `ReceiveIPC` + `Yield` bằng vô điều kiện và **ném đi mọi
+message không đúng loại đang chờ**. Hai thread ping-pong qua shared memory
+mà không có hàng đợi, nên nếu một bên bị lỡ nhịp (scheduler, `IsPhantomDead`,
+context switch) thì vòng lặp đọc trúng message của bên khác và mất dữ liệu.
+Điều này có vẻ là **có sẵn trong thiết kế C# gốc**, không phải do port.
+
+**Chưa làm:** chưa sửa. Cần thêm mẫu đo trước khi kết luận, rồi sửa thì
+phải ở tầng protocol (thêm sequence number / hàng đợi có buffer), không
+vá bằng cách thêm delay.
 
 ### 12.5 ⚠️ Cạm bẫy khi chẩn đoán: log serial bị cắt khi kill QEMU
 
