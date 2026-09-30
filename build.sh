@@ -46,8 +46,8 @@ $BF build src/kernel/Kernel.cs src/kernel/Syscall.cs src/arch/Arch.cs src/arch/x
 $BF build src/apps/ATA_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
 $BF build src/apps/FAT16_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o build/fat16.o"
 $BF build src/apps/acpi.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain build/acpi_parse.o build/fpc_runtime.o"
-$BF build src/apps/Shell.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Shell.map --os windows --arch x64 --stdlib zero -o Shell.exe --ldflags "-export:AppMain build/libc.o"
-$BF build src/apps/Login.cs src/apps/Crypto.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/SysLogon.map --os windows --arch x64 --stdlib zero -o SysLogon.exe --ldflags "-export:AppMain build/kerncrypto.o build/libc.o"
+# Shell.exe is Pascal - see the LINK_APP block below.
+# SysLogon.exe is Pascal - see the LINK_APP block below.
 $BF build src/apps/top.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain build/libc.o"
 $BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj build/libc.o"
 
@@ -86,7 +86,11 @@ link_app() {
         -out:"$out" \
         "$@"
 }
-link_app Mouse.exe build/mouse_app.o build/app_api.o
+link_app Mouse.exe   build/mouse_app.o   build/app_api.o
+link_app Shell.exe   build/shell_app.o   build/app_api.o build/libc.o build/kstring.o
+# kerncrypto replaces Login.cs's SHA256 shim: login_app calls
+# SHA256_Compute_Pas / HexToBytes / BytesToHex / ConstantTimeEq directly.
+link_app SysLogon.exe build/login_app.o   build/app_api.o build/libc.o build/kstring.o build/kerncrypto.o
 
 echo "[*] Waiting for FS to flush..."
 sync

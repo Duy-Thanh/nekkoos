@@ -36,6 +36,7 @@ unit app_api;
 {$TYPEINFO OFF}
 {$M-}
 {$PACKRECORDS 1}
+{$ASMMODE Intel}
 
 interface
 
@@ -125,7 +126,14 @@ function  App_GetPIDByName(name: PWord): LongInt;
 procedure App_ResetCursor;
 function  App_RequestFramebuffer: QWord;
 function  App_GetScreenInfo(out w, h, ppsl: QWord): LongInt;
-function  App_CreateSharedBuffer(size: QWord; out addr: QWord): QWord;
+{ Create a shared buffer owned by destPid (0 = the caller's own).
+  Args: destPid in RCX, page count in RDX, out-pointer in R8. The kernel
+  returns the caller's address in RAX and the TARGET's address in RBX. }
+function  App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
+  out targetVAddr: QWord): QWord;
+{ Run a command as another user. Args: appName, password, optional content
+  buffer and its length. Slot 36. }
+function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 procedure App_RedirectTerminal(tid: Cardinal);
 function  App_InByte(port: Word): Word;
 procedure App_OutByte(port: Word; value: Word);
@@ -393,9 +401,33 @@ function App_GetScreenInfo(out w, h, ppsl: QWord): LongInt;
 type TFn = function(w, h, p: QWord): LongInt; cdecl;
 begin App_GetScreenInfo := TFn(AppApi_Slot(APP_SLOT_GET_SCREEN_INFO))(w, h, ppsl); end;
 
-function App_CreateSharedBuffer(size: QWord; out addr: QWord): QWord;
-type TFn = function(s: QWord; out a: QWord): QWord; cdecl;
-begin App_CreateSharedBuffer := TFn(AppApi_Slot(APP_SLOT_CREATE_SHARED_BUFFER))(size, addr); end;
+function App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
+  out targetVAddr: QWord): QWord;
+{ Hand-loaded: the out-pointer must go in R8, and the target address comes
+  back in RBX, not RAX. A plain typed call would put the pointer in RDX and
+  silently drop the second return value, handing the caller a garbage pid. }
+var
+  res: QWord;
+  tgt: QWord;
+  stub: Pointer;
+begin
+  tgt := targetVAddr;
+  stub := AppApi_Slot(APP_SLOT_CREATE_SHARED_BUFFER);
+  asm
+    mov  rcx, destPid
+    mov  rdx, numPages
+    mov  r8,  tgt
+    call stub
+    mov  tgt, rbx
+    mov  res, rax
+  end;
+  targetVAddr := tgt;
+  App_CreateSharedBuffer := res;
+end;
+
+function App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
+type TFn = function(a, p: PWord; c: PByte; n: QWord): QWord; cdecl;
+begin App_SudoRun := TFn(AppApi_Slot(APP_SLOT_SUDO_RUN))(appName, password, content, contentLen); end;
 
 procedure App_RedirectTerminal(tid: Cardinal);
 type TFn = procedure(t: Cardinal); cdecl;
