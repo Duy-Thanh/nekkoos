@@ -684,6 +684,30 @@ python3 test/automation/smoke_test.py
 
 Phải pass trước mỗi commit ảnh hưởng đến kernel hoặc syscall.
 
+⚠️ **Flaky ~1/3** — xem §6.10. Fail thì chạy lại, đừng debug code vội.
+
+### 10.1 Kiểm tra link thuần Pascal (bắt buộc khi thêm unit mới)
+
+```bash
+./verify_pascal_link.sh      # kernel image: build/*.o + Hardware.asm
+./verify_bootloader_link.sh  # EFI image: build/boot.o + boot_io.asm
+```
+
+Hai script này **link thật** bằng `lld` không có bflat — đó là bằng chứng
+rằng C# thực sự có thể bị xóa, không chỉ là chuyện toán học.
+
+`verify_pascal_link.sh` fail khi:
+- Bất kỳ unit nào có symbol RTTI (§6.3b)
+- Có symbol chưa resolve ngoài danh sách ISR/syscall entry còn lại
+- Module mới quên đăng ký (§6.3c)
+
+`verify_bootloader_link.sh` hiện trả exit code **2** với `KNOWN GAP`:
+`boot.pas` còn dùng `AnsiString` nên FPC sinh tham chiếu tới
+`fpc_ansistr_incr_ref` / `fpc_ansistr_decr_ref` / `__FPC_specific_handler`
+(bflat âm thầm cung cấp, lld thì không). Fix đúng cách là chuyển các
+chỗ dùng `AnsiString` sang `PChar`/`PByte` — hợp lý hơn cho bootloader
+freestanding. Không chặn build hiện tại vì bootloader đang ship bản C#.
+
 ---
 
 ## 11. Việc tiếp theo (thứ tự ưu tiên)
@@ -692,8 +716,13 @@ Phải pass trước mỗi commit ảnh hưởng đến kernel hoặc syscall.
 2. ~~Port PELoader sang Pascal~~ ✅
 3. ~~Port helper chuỗi vào libc.pas~~ ✅
 4. ~~Fix auto-reboot (syscall 12/50 return RSP bug)~~ ✅
-5. **Port phần còn lại của Scheduler sang Pascal** (scheduler_dispatch.pas đã có, cần wire đầy đủ)
-6. **Refactor Syscall.cs**: đảm bảo tất cả cases đều dùng break đúng cách, không case nào return success code
-7. **ARM64 HAL stub**: tạo skeleton src/arch/arm64/ với no-op implementations
-8. **Build system dual-arch**: build.sh nhận `ARCH=arm64` env var, compile đúng HAL
-9. **QEMU ARM64 test**: boot NekkoOS trên `qemu-system-aarch64 -M virt`
+5. ~~Port toàn bộ tầng x86_64 arch sang Pascal~~ ✅ (gdt idt context vmm vdso
+   pic isr pit apic ioapic platform_bootstrap)
+6. ~~Chứng minh kernel link được bằng lld thuần~~ ✅ (`./verify_pascal_link.sh`)
+7. **Port `Thread.cs` vào `scheduler.pas`** — nút thắt. 3 file kia đều phụ thuộc nó
+8. **Port `InterruptHandlers.cs`, `SMP.cs`, `SyscallImpl.cs`** → 8 ISR/syscall
+   entry trong `Hardware.asm` lúc này mới thật sự thoát khỏi C#
+9. **Port `Syscall.cs` + `Kernel.cs`** → `KernelMain` do Pascal export
+10. **Đổi `build.sh` sang `lld` thuần, bỏ bflat**
+11. Sửa `boot.pas` dùng `AnsiString` → `PChar` để bootloader link thuần
+12. **Port `src/drivers/*` và `src/apps/*`**, rồi xóa toàn bộ `.cs`
