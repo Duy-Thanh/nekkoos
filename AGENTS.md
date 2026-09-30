@@ -753,3 +753,72 @@ freestanding. Không chặn build hiện tại vì bootloader đang ship bản C
 10. **Đổi `build.sh` sang `lld` thuần, bỏ bflat**
 11. Sửa `boot.pas` dùng `AnsiString` → `PChar` để bootloader link thuần
 12. **Port `src/drivers/*` và `src/apps/*`**, rồi xóa toàn bộ `.cs`
+
+---
+
+## 12. Lộ trình loại bỏ bflat (đang thực hiện)
+
+bflat là cản trở lớn nhất còn lại: nó không còn được phát triển, và mọi thứ
+nó tạo ra đều bị ràng buộc bởi `--stdlib zero`.
+
+**Công thức build app thuần Pascal (đã chứng minh, xem `build.sh`):**
+
+```bash
+lld -flavor link -subsystem:console -entry:AppMain -export:AppMain \
+    -out:APP.exe build/APP.o build/app_api.o
+```
+
+Hai điểm dễ sai, đã mắc:
+
+- **`-export:AppMain` bắt buộc.** `PELoader` tra tên `AppMain` trong PE
+  **export directory** (`FindAppMainExport_Pas`), nó *không* đọc
+  `AddressOfEntryPoint` trong optional header. Thiếu `-export` thì image chạy
+  được ngoài đời nhưng loader báo `Entry point not found`.
+- **Record không được để trong `interface`** — kể cả app. FPC sinh RTTI cho
+  cả các kiểu field, lld fail với
+  `undefined symbol: RTTI_$SYSTEM_$$_LONGWORD$indirect`. Xem §6.3b.
+
+**KASLR của app không phụ thuộc compiler:** app khai báo một QWORD khởi tạo
+= `0x1337BEEFCAFE8BAD` trong `.data`; `PELoader` quét **byte-by-byte** toàn
+bộ ảnh rồi patch giá trị đó bằng địa chỉ vDSO thật. Magic phải nằm trong
+`.data` được khởi tạo — không được để compiler gấp thành immediate.
+
+### 12.1 Trạng thái app (Ring-3)
+
+| App | Unit Pascal | Ghi chú |
+|---|---|---|
+| Mouse.exe | `src/apps/mouse_app.pas` | đầu tiên, smoke 9/9 |
+| Shell.exe | `src/apps/shell_app.pas` | |
+| SysLogon.exe | `src/apps/login_app.pas` | |
+| ATA.exe | `src/apps/ata_app.pas` | |
+| FAT16.exe | `src/apps/fat16_app.pas` | |
+| top.exe | `src/apps/top_app.pas` | |
+| dsrv.exe | `src/apps/dsrv_app.pas` | |
+| explorer.exe | `src/apps/explorer_app.pas` | |
+| stresstest.exe | `src/apps/stress_app.pas` | |
+
+`app_api.pas` thay cho `API.cs` — gateway syscall cho toàn bộ userland.
+
+### 12.2 Thứ tự để xoá bflat khỏi Kernel.exe
+
+`Kernel.exe` vẫn là C# và là phần khó nhất: các handler ISR cần
+`Scheduler.Threads`, `Terminal.ScreenLock`, `Power`, `VMM` — lần lượt phải
+có bản Pascal trước khi chúng thành Pascal thuần.
+
+1. `Terminal.cs` → phần `ScreenLock` + `PrintUnsafe` (đang còn C#, **và là
+   thủ phạm của bug treo boot** — xem §6.10)
+2. `Power.cs` (HardReboot / LegacyReboot) — gọi từ các handler
+3. `InterruptHandlers.cs` → `interrupt_dispatch.pas`: 8 entry point
+   `SyscallHandler`, `DivideByZeroHandler`, `GPFHandler`,
+   `PageFaultHandler`, `TimerHandler`, `KeyboardHandler`, `MouseHandler`,
+   `YieldHandler`
+4. `SMP.cs`, `SyscallImpl.cs` → Pascal thuần
+5. `Syscall.cs` + `Kernel.cs` → `KernelMain` do Pascal export
+6. Đổi `build.sh` sang lld cho Kernel.exe, bỏ `$BF`
+7. `boot.pas`: sửa `AnsiString` → `PChar`/`PByte` (xem §10.1), rồi đổi
+   bootloader sang lld
+8. Xoá toàn bộ `.cs` và bflat
+
+Sau bước 3, `link_probe.pas` và danh sách `KNOWN_REMAINING` trong
+`verify_pascal_link.sh` phải được rút lại — đó là thước đo tiến độ khách
+quan, không phải việc làm cho có.
