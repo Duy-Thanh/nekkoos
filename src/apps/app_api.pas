@@ -108,12 +108,12 @@ function  App_ReceiveIPC(msg: Pointer): LongInt;
 function  App_GetSharedMem: QWord;
 function  App_GetChar: Word;
 procedure App_RunCmd(name: PWord; arg: QWord);
-function  App_GetThreadUID: Cardinal;
+function  App_GetThreadUID(targetTid: Cardinal): Cardinal;
 procedure App_SetUID(uid: Cardinal);
 function  App_GetUID: Cardinal;
 procedure App_Yield;
 procedure App_WaitIPC;
-function  App_GetThreadGID: Cardinal;
+function  App_GetThreadGID(targetTid: Cardinal): Cardinal;
 procedure App_SetGID(gid: Cardinal);
 function  App_GetProcessInfo(tid: Cardinal; out info: Pointer): LongInt;
 procedure App_Clear(color: Cardinal);
@@ -222,6 +222,12 @@ begin if p = nil then exit; App_ProcGID := PProcessInfo(p)^.GID; end;
 function App_ProcActive(p: Pointer): Byte; inline;
 begin if p = nil then exit; App_ProcActive := PProcessInfo(p)^.Active; end;
 
+function App_ProcIsJailed(p: Pointer): Byte; inline;
+begin if p = nil then exit; App_ProcIsJailed := PProcessInfo(p)^.IsJailed; end;
+
+function App_ProcIsPhantomDead(p: Pointer): Byte; inline;
+begin if p = nil then exit; App_ProcIsPhantomDead := PProcessInfo(p)^.IsPhantomDead; end;
+
 function App_ProcHeap(p: Pointer): QWord; inline;
 begin if p = nil then exit; App_ProcHeap := PProcessInfo(p)^.HeapMemory; end;
 
@@ -329,9 +335,9 @@ procedure App_RunCmd(name: PWord; arg: QWord);
 type TFn = procedure(n: PWord; a: QWord); cdecl;
 begin TFn(AppApi_Slot(APP_SLOT_RUN_CMD))(name, arg); end;
 
-function App_GetThreadUID: Cardinal;
-type TFn = function: Cardinal; cdecl;
-begin App_GetThreadUID := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_UID))(); end;
+function App_GetThreadUID(targetTid: Cardinal): Cardinal;
+type TFn = function(tid: Cardinal): Cardinal; cdecl;
+begin App_GetThreadUID := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_UID))(targetTid); end;
 
 procedure App_SetUID(uid: Cardinal);
 type TFn = procedure(u: Cardinal); cdecl;
@@ -349,9 +355,9 @@ procedure App_WaitIPC;
 type TFn = procedure; cdecl;
 begin TFn(AppApi_Slot(APP_SLOT_WAIT_IPC))(); end;
 
-function App_GetThreadGID: Cardinal;
-type TFn = function: Cardinal; cdecl;
-begin App_GetThreadGID := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_GID))(); end;
+function App_GetThreadGID(targetTid: Cardinal): Cardinal;
+type TFn = function(tid: Cardinal): Cardinal; cdecl;
+begin App_GetThreadGID := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_GID))(targetTid); end;
 
 procedure App_SetGID(gid: Cardinal);
 type TFn = procedure(g: Cardinal); cdecl;

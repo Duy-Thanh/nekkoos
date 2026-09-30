@@ -127,24 +127,6 @@ begin
 end;
 
 { ------------------------------------------------------------------ }
-{ 3-argument shared-buffer syscall                                    }
-{ ------------------------------------------------------------------ }
-
-{ app_api exposes App_CreateSharedBuffer with two parameters, but slot 27
-  really takes three: target PID, page count, and an out pointer for the
-  TARGET's view of the mapping (Syscall.cs case 101 reads all three, and the
-  target address is what gets sent to the compositor). Casting the slot
-  keeps the first argument instead of silently dropping it. }
-function CreateSharedBuffer(targetPid: Cardinal; numPages: QWord;
-                           out targetVAddr: QWord): QWord;
-type
-  TFn = function(f: Cardinal; n: QWord; out v: QWord): QWord; cdecl;
-begin
-  CreateSharedBuffer := TFn(AppApi_Slot(APP_SLOT_CREATE_SHARED_BUFFER))
-                           (targetPid, numPages, targetVAddr);
-end;
-
-{ ------------------------------------------------------------------ }
 { Font                                                                 }
 { ------------------------------------------------------------------ }
 
@@ -374,7 +356,10 @@ begin
   end;
 
   targetDwmVAddr := 0;
-  myBuffer := CreateSharedBuffer(Cardinal(dwmId), BACKDROP_PAGES, targetDwmVAddr);
+  { The compositor needs the TARGET-side address of the mapping, not our own
+    copy - that is what its slot-27 handler writes back through the out
+    parameter. }
+  myBuffer := App_CreateSharedBuffer(Cardinal(dwmId), BACKDROP_PAGES, targetDwmVAddr);
   if (myBuffer = 0) or (targetDwmVAddr = 0) then
   begin
     App_Exit;

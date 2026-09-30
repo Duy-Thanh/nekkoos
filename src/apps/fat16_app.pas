@@ -80,12 +80,19 @@ const
   MBR_PART_TABLE_OFFSET = 446;
 
   { Ring buffer of messages that arrived while we were blocked on ATA.
-    The C# original declared 2048 slots but allocated one page, which holds
-    4096/24 = 170 messages. Both numbers are kept verbatim so behaviour is
-    unchanged; see PENDING_CAP. }
-  PENDING_MAX = 2048;
-  { Capacity of the single page the kernel actually gave us. }
-  PENDING_CAP = 4096 div 24;   { 170 }
+
+    The C# original declared 2048 slots but backed the ring with a single
+    page, which holds 4096/24 = 170 messages, and then indexed the array as
+    though all 2048 were real. Past the 170th deferred message that scribbled
+    up to ~48 KB into the RecursePool allocation.
+
+    The ring now wraps at its real capacity. The queue is bounded either way -
+    EnqueuePending drops the message when the next head would collide with the
+    tail - so this only stops the overflow, and the shared block keeps the
+    layout the kernel maps. Growing the block to 49152 bytes was the other
+    option, but that changes the size the kernel hands out. }
+  PENDING_MAX = 4096 div 24;   { 170, the real capacity; TMessage is 24 bytes,
+                                    which is declared further down }
 
   { Recursion guard for RM -RF: 32 levels x 512 bytes = 16384, exactly the
     four pages allocated as RecursePool. }
@@ -241,12 +248,6 @@ var
   Fat_SharedMem: PSharedMemoryBlock = nil;
   SharedAddr:    QWord = 0;
 
-  { Workspace views into the page taken at startup. }
-  Ws_SectorBuf:     PByte = nil;
-  Ws_FatBuf:        PByte = nil;
-  Ws_FormattedName: PByte = nil;
-  Ws_PrivateName:   PWord = nil;
-
   { Deferred messages. Fat_PendingQueue is the one page the kernel handed us;
     the ring bound is PENDING_MAX. }
   Fat_PendingQueue: PMessage  = nil;
@@ -277,6 +278,22 @@ var
 { ---------------------------------------------------------------------
   Access control
   --------------------------------------------------------------------- }
+
+{ Syscall 90 / 92 read the target thread id from the first argument, so
+  these go through the vDSO stub directly: the app_api convenience wrappers
+  are typed for the "no argument" self variants (syscall 89 / 93 take none)
+  and would drop the thread id we actually need. }
+function GetThreadUidOf(tid: Cardinal): Cardinal;
+type TFn = function(t: Cardinal): Cardinal; cdecl;
+begin
+  GetThreadUidOf := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_UID))(tid);
+end;
+
+function GetThreadGidOf(tid: Cardinal): Cardinal;
+type TFn = function(t: Cardinal): Cardinal; cdecl;
+begin
+  GetThreadGidOf := TFn(AppApi_Slot(APP_SLOT_GET_THREAD_GID))(tid);
+end;
 
 function IsSecretName(formattedName: PByte): Boolean;
 var
@@ -1623,7 +1640,6 @@ var
   bytesWritten: Cardinal;
   currentCluster: Word;
   saved: Boolean;
-  lastCluster: Word;
   nextClus: Word;
   expandCluster: Word;
   expandLba: Cardinal;
@@ -1744,7 +1760,7 @@ begin
   end;
 
   bpbPtr := sectorBuf;
-  CachedBPB := TBpb(bpbPtr^);
+  CachedBPB := PBpb(bpbPtr)^;
   if CachedBPB.BytesPerSector = 0 then
   begin
     CachedBPB.BytesPerSector := SECTOR_SIZE;
@@ -1784,8 +1800,8 @@ begin
 
     client    := msg.Sender;
     msgType   := msg.MsgType;
-    callerUID := App_GetThreadUID(client);
-    callerGID := App_GetThreadGID(client);
+    callerUID := GetThreadUidOf(client);
+    callerGID := GetThreadGidOf(client);
 
     { ---------------------------------------------------------------
       READ (30)

@@ -166,15 +166,25 @@ var
 begin
   AppApi_Init;
 
-  { Ask the kernel for the two PS/2 ports. }
-  App_GrantPort(PS2_DATA_PORT);
-  App_GrantPort(PS2_STATUS_PORT);
-
   { ==========================================================
     ANNOUNCE FIRST. See the module header: the kernel is blocked
     waiting for this, and nothing below may be allowed to delay it.
+
+    This must stay ABOVE App_GrantPort. GrantPort is syscall 7, and
+    SyscallImpl.DispatchGrantPortAccess marks the thread IsPhantomDead =
+    1 when the caller is not king - a silent kill, no output, no fault.
+    Anything placed between GrantPort and this call is therefore code
+    that may never execute, which is exactly how the handshake used to
+    get lost: the previous "send the handshake earlier" fix put it
+    first relative to the PS/2 bring-up but still left GrantPort on top,
+    so the daemon died before reaching it and the kernel waited out its
+    full 30 s on every boot.
     ========================================================== }
   App_SendIPC(0, IPC_MOUSE_READY, 0);
+
+  { Ask the kernel for the two PS/2 ports. Only after we are known alive. }
+  App_GrantPort(PS2_DATA_PORT);
+  App_GrantPort(PS2_STATUS_PORT);
 
   DrainController;
 

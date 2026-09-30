@@ -785,18 +785,21 @@ bộ ảnh rồi patch giá trị đó bằng địa chỉ vDSO thật. Magic ph
 
 ### 12.1 Trạng thái app (Ring-3)
 
+**CẬP NHẬT: bảng dưới KHÔNG phản ánh trạng thái commit gần nhất.
+Một số app đã bị revert về C# khi phát hiện lỗi, xem §12.3.**
+
 | App | Unit Pascal | Ghi chú |
 |---|---|---|
-| Mouse.exe | `src/apps/mouse_app.pas` | ✅ **đã link bằng lld** |
-| SysLogon.exe | `src/apps/login_app.pas` | ✅ **đã link bằng lld** |
-| Shell.exe | `src/apps/shell_app.pas` | ✅ **đã link bằng lld** |
-| ATA.exe | `src/apps/ata_app.pas` | đang port |
-| FAT16.exe | `src/apps/fat16_app.pas` | đang port |
-| top.exe | `src/apps/top_app.pas` | đang port |
-| dsrv.exe | `src/apps/dsrv_app.pas` | đang port |
-| explorer.exe | `src/apps/explorer_app.pas` | đang port |
-| stresstest.exe | `src/apps/stress_app.pas` | đang port |
-| acpi.exe | `src/apps/acpi_app.pas` | chưa làm |
+| Mouse.exe | `src/apps/mouse_app.pas` | ✅ lld. **Fix thứ tự handshake, xem §12.4** |
+| SysLogon.exe | `src/apps/login_app.pas` | ✅ lld, nhưng **đang lỗi, xem §12.3** |
+| Shell.exe | `src/apps/shell_app.pas` | ✅ lld, nhưng **đang lỗi qua Shell, xem §12.3** |
+| ATA.exe | `src/apps/ata_app.pas` | ✅ lld, daemon online |
+| FAT16.exe | `src/apps/fat16_app.pas` | ✅ lld, daemon online — **nghi vấn đọc sai nội dung file, xem §12.3** |
+| top.exe | `src/apps/top_app.pas` | ✅ lld |
+| dsrv.exe | `src/apps/dsrv_app.pas` | ✅ lld |
+| explorer.exe | `src/apps/explorer_app.pas` | ✅ lld |
+| stresstest.exe | `src/apps/stress_app.pas` | ✅ lld |
+| acpi.exe | *(chưa port)* | vẫn là C# qua bflat |
 
 `app_api.pas` thay cho `API.cs` — gateway syscall cho toàn bộ userland.
 
@@ -814,11 +817,74 @@ bộ ảnh rồi patch giá trị đó bằng địa chỉ vDSO thật. Magic ph
   gọi có kiểu thường sẽ bỏ mất RBX.
 - **slot 36 `SudoRun`**: `RCX=appName`, `RDX=password`, `R8=content`,
   `R9=contentLen`.
+- **slot 9/14 `GetThreadUID`/`GetThreadGID`**: kernel đọc tid từ
+  `GetArg(ctx,0)` = **RCX**, tức tham số ĐẦU TIÊN. `API.cs` khai
+  `delegate* unmanaged<uint,uint>`. Wrapper cũ trong `app_api.pas` nhận
+  **không tham số** → hỏi credential của chính caller, mọi quyết định
+  access-control sẽ sụp.
 
 Khi thêm wrapper mới, **đọc `Syscall.cs` case tương ứng trước** để biết
 kernel thực sự đọc thanh ghi nào — đừng suy ra từ tên hàm. Xem §6.4.
 
-### 12.2 Thứ tự để xoá bflat khỏi Kernel.exe
+### 12.4 ✅ ĐÃ SỬA: MOUSE gửi handshake sau `GrantPort` → mất IPC 44
+
+**Triệu chứng:** mọi lần boot đều in
+`[!] Timeout waiting for Mouse handshake! Proceeding anyway.` rồi đứng
+30 giây, `Kernel.cs` mới đi tiếp. Smoke test chết vì hết giờ, **không phải**
+vì code sai.
+
+**Nguyên nhân:** `mouse_app.pas` gọi `App_GrantPort` **trước** khi gửi
+handshake. Comment `[FIX HANG BOOT]` trong bản C# cũ nói "gửi handshake
+trước, đừng chờ phần cứng" — nhưng cái "trước" đó chỉ so với phần khởi tạo
+PS/2, còn `GrantPort` vẫn nằm phía trên. Nên fix cũ chưa bao giờ có tác
+dụng: daemon chết (hoặc mất IPC) trước khi tới lệnh gửi.
+
+**Fix:** đảo lại — `App_SendIPC(0, IPC_MOUSE_READY, 0)` phải nằm **trên**
+`App_GrantPort`. Marker chẩn đoán xác nhận thứ tự mới chạy hết
+`A(init) D(send) B(grant60) C(grant64) E(drain)` và **không còn dòng timeout**.
+
+**Bài học:** daemon nào kernel chờ handshake thì phải gửi handshake là việc
+*đầu tiên*, trước mọi syscall khác — kể cả syscall trông vô hại.
+
+### 12.3 🔴 ĐANG MỞ: login `ACCESS DENIED` khi dùng FAT16.exe viết bằng Pascal
+
+**Triệu chứng (hiện tại, chưa sửa):** boot tới `Username:` OK, nhưng
+`root` + mật khẩu đúng vẫn bị `[!] ACCESS DENIED! Incorrect Username or
+Password.` Smoke test dừng ở bước "login success".
+
+**Phạm vi:** xuất hiện **sau khi** thay `FAT16.exe` từ C# sang Pascal.
+ATA.exe Pascal vẫn báo online, FAT16.exe Pascal cũng báo
+`Online & Listening`, nhưng nội dung file trả về có vẻ sai — `/ETC/PASSWD`
+đọc ra không khớp hash nên login từ chối.
+
+**Cách xác nhận:** thay riêng `FAT16.exe` về bản C#
+(`bflat build src/apps/FAT16_Driver.cs src/apps/API.cs ... -o FAT16.exe`)
+mà giữ nguyên mọi app khác. Nếu login qua thì nghi phạm là `fat16_app.pas`,
+cụ thể phần đọc nội dung file (offset/size/đuôi chuỗi), không phải phần
+`Open`/`List` — vì `ls` vẫn hoạt động.
+
+**Chưa làm:** chưa sửa. Đừng coi là đã xong.
+
+### 12.5 ⚠️ Cạm bẫy khi chẩn đoán: log serial bị cắt khi kill QEMU
+
+Khi smoke test giết QEMU, buffer serial **chưa flush** — `serial.log` bị cắt
+cứng ở dòng 58, mất đúng 30 giây cuối, tức là **mất luôn dòng
+`Timeout waiting for Mouse`**. Rất dễ kết luận nhầm rằng daemon không in gì.
+
+Muốn thấy phần cuối log: chạy QEMU bằng `run.sh`, **đợi QEMU còn sống**, rồi
+đọc log. Marker chẩn đoán cũng phải grep không neo (`^[A-E]` thay vì
+`^[A-E]$`) vì serial dùng CRLF nên dòng là `A\r`.
+
+Lưu ý thêm: `pkill -f qemu-system` sẽ **giết luôn chính shell đang chạy
+lệnh đó** (chuỗi lệnh chứa "qemu-system"). Dùng `pkill -9 -x qemu-system-x86_64`.
+
+### 12.6 Cờ RTTI của `verify_pascal_link.sh` khi có app
+
+`verify_pascal_link.sh` gom mọi `build/*.o`. Khi có nhiều app đều export
+`AppMain`, các object đó sẽ đụng tên nhau trong bản link kernel. Cần loại
+app objects khỏi kernel-link probe, hoặc chuyển app sang `build/apps/`.
+
+### 12.7 Thứ tự để xoá bflat khỏi Kernel.exe
 
 `Kernel.exe` vẫn là C# và là phần khó nhất: các handler ISR cần
 `Scheduler.Threads`, `Terminal.ScreenLock`, `Power`, `VMM` — lần lượt phải

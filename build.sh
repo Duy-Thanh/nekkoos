@@ -33,7 +33,6 @@ echo "[1.5/4] Dang build Kernel (Vi vua) & Apps Ring 3 truoc..."
 
 nasm -f win64 src/arch/x86_64/Hardware.asm -o Hardware.obj
 nasm -f win64 src/boot/boot_io.asm -o boot_io.obj
-nasm -f win64 src/apps/stresstest_asm.asm -o stresstest_asm.obj
 # nasm -f bin src/app.asm -o app.bin
 nasm -f bin src/arch/x86_64/smp_x86.asm -o smp.bin
 # nasm -f win64 src/app_syscall.asm -o app_syscall.obj
@@ -43,18 +42,18 @@ BF="bflat"
 # Build Kernel + apps (no-pie, deterministic, map files)
 $BF build src/kernel/Kernel.cs src/kernel/Syscall.cs src/arch/Arch.cs src/arch/x86_64/IDT.cs src/arch/x86_64/ISR.cs src/kernel/RTC.cs src/drivers/x86-legacy/PCI.cs src/kernel/Heap.cs src/kernel/Thread.cs src/kernel/IPC.cs src/drivers/x86-legacy/KeyboardDriver.cs src/kernel/LibC.cs src/arch/x86_64/VMM.cs src/arch/x86_64/AddressSpaces.cs src/arch/x86_64/ContextLayout.cs src/arch/x86_64/SyscallImpl.cs src/boot/BootContract.cs src/arch/x86_64/PlatformBootstrap.cs src/kernel/Terminal.cs src/kernel/PMM.cs src/kernel/IO.cs src/arch/x86_64/PIC.cs src/arch/x86_64/PIT.cs src/arch/x86_64/InterruptHandlers.cs src/kernel/ATA.cs src/kernel/FAT16.cs src/kernel/GlobalUsings.cs src/kernel/System.Runtime.InteropServices.cs src/kernel/System.Runtime.CompilerServices.cs src/kernel/PELoader.cs src/kernel/StrandScheduler.cs src/arch/x86_64/GDT.cs src/kernel/PRNG.cs src/drivers/x86-legacy/Power.cs src/arch/x86_64/APIC.cs src/arch/x86_64/SMP.cs src/kernel/Spinlock.cs src/arch/x86_64/IOAPIC.cs src/arch/x86_64/vDSO.cs src/arch/x86_64/HardwareChecks.cs src/drivers/x86-legacy/Serial.cs src/drivers/x86-legacy/MouseDriver.cs src/kernel/NekkoInt.cs src/kernel/KernCrypto.cs src/kernel/InternalShell.cs src/kernel/Sudo.cs -Ot --no-pie --deterministic --map maps/Kernel.map --os windows --arch x64 --stdlib zero -o Kernel.exe --ldflags "-export:KernelMain Hardware.obj build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o build/fat16.o build/fpc_runtime.o build/pe_loader.o build/syscall_security.o build/memmap_scan.o build/scheduler_dispatch.o build/passwd_parser.o build/internal_shell.o build/spinlock.o build/ata_driver.o build/sudo_dispatch.o build/scheduler.o build/kstring.o build/kstate.o build/io.o build/serial.o build/gdt.o build/idt.o build/context.o build/vdso.o build/vmm.o build/pic.o build/isr.o build/pit.o build/apic.o build/ioapic.o build/ata_hw.o build/fat16fs.o build/platform_bootstrap.o"
 
-$BF build src/apps/ATA_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ATA_Driver.map --os windows --arch x64 --stdlib zero -o ATA.exe --ldflags "-export:AppMain"
-$BF build src/apps/FAT16_Driver.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/FAT16_Driver.map --os windows --arch x64 --stdlib zero -o FAT16.exe --ldflags "-export:AppMain build/libc.o build/fat16.o"
+# ATA_Driver is Pascal - see LINK_APP below.
+# FAT16_Driver is Pascal - see LINK_APP below.
 $BF build src/apps/acpi.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain build/acpi_parse.o build/fpc_runtime.o"
 # Shell.exe is Pascal - see the LINK_APP block below.
 # SysLogon.exe is Pascal - see the LINK_APP block below.
-$BF build src/apps/top.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/NekkoTop.map --os windows --arch x64 --stdlib zero -o top.exe --ldflags "-export:AppMain build/libc.o"
-$BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --no-pie --deterministic --map maps/NekkoStressTest.map --os windows --arch x64 --stdlib zero -o stresstest.exe --ldflags "-export:AppMain stresstest_asm.obj build/libc.o"
+# top is Pascal - see LINK_APP below.
+# stresstest is Pascal - see LINK_APP below.
 
 # Additional userland apps from build.bat
-$BF build src/apps/dsrv.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain build/libc.o"
+# dsrv is Pascal - see LINK_APP below.
 # Mouse.exe is already Pascal - see the LINK_APP block below.
-$BF build src/apps/explorer.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain build/libc.o"
+# explorer is Pascal - see LINK_APP below.
 
 # =========================================================================
 # [PURE PASCALL APPS] Liên kết app Ring-3 bằng lld, KHÔNG qua bflat.
@@ -91,6 +90,16 @@ link_app Shell.exe   build/shell_app.o   build/app_api.o build/libc.o build/kstr
 # kerncrypto replaces Login.cs's SHA256 shim: login_app calls
 # SHA256_Compute_Pas / HexToBytes / BytesToHex / ConstantTimeEq directly.
 link_app SysLogon.exe build/login_app.o   build/app_api.o build/libc.o build/kstring.o build/kerncrypto.o
+# The storage daemons. kstring.o is required throughout for the W() UTF-16
+# literal helper; fat16_app additionally needs the kernel-side fat16 unit.
+link_app ATA.exe   build/ata_app.o   build/app_api.o build/kstring.o
+link_app FAT16.exe build/fat16_app.o build/app_api.o build/libc.o build/fat16.o build/kstring.o
+# GUI and utility apps. stresstest needs no asm obj: the loop is ordinary
+# Pascal and the only inline asm left is the deliberate fault injection.
+link_app top.exe       build/top_app.o       build/app_api.o build/libc.o
+link_app dsrv.exe      build/dsrv_app.o      build/app_api.o build/libc.o
+link_app explorer.exe  build/explorer_app.o  build/app_api.o build/libc.o
+link_app stresstest.exe build/stress_app.o  build/app_api.o build/libc.o
 
 echo "[*] Waiting for FS to flush..."
 sync

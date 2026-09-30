@@ -134,7 +134,6 @@ var
   { IDENTIFY DEVICE staging. Static rather than stack-allocated: no heap,
     no exceptions, and it keeps the data off a busy-wait stack frame. }
   IdentifyData: array[0..ATA_IDENTIFY_WORDS - 1] of Word;
-
 function AtaReadStatus: Byte; inline;
 begin
   AtaReadStatus := Byte(App_InByte(ATA_PORT_STATUS) and $FF);
@@ -184,6 +183,7 @@ procedure DetectDiskSize;
 var
   status: Byte;
   timeout: LongInt;
+  i: Integer;
   totalSectors: Cardinal;
 begin
   if not WaitATA then Exit;
@@ -215,8 +215,8 @@ begin
     if (status and ATA_ST_DRQ) <> 0 then Break;
   end;
 
-  for timeout := 0 to ATA_IDENTIFY_WORDS - 1 do
-    IdentifyData[timeout] := App_InWord(ATA_PORT_DATA);
+  for i := 0 to ATA_IDENTIFY_WORDS - 1 do
+    IdentifyData[i] := App_InWord(ATA_PORT_DATA);
 
   totalSectors := Cardinal(IdentifyData[ATA_IDENTIFY_TOTAL_LOW]) or
                  (Cardinal(IdentifyData[ATA_IDENTIFY_TOTAL_HIGH]) shl 16);
@@ -254,6 +254,7 @@ var
   timeout: LongInt;
   error: Boolean;
   flushed: Boolean;
+  status: Byte;
 begin
   App_AcquireAtaHw;
 
@@ -266,8 +267,9 @@ begin
     error := False;
     while timeout > 0 do
     begin
-      if (AtaReadStatus and ATA_ST_BUSY) = 0 then Break;
-      if (AtaReadStatus and ATA_ST_ERR) <> 0 then
+      status := AtaReadStatus;
+      if (status and ATA_ST_BUSY) = 0 then Break;
+      if (status and ATA_ST_ERR) <> 0 then
       begin
         error := True;
         Break;
@@ -323,6 +325,7 @@ var
   msgType: Cardinal;
   clientId: Cardinal;
   lba: Cardinal;
+  status: Byte;
   isError: Boolean;
 begin
   AppApi_Init;
@@ -476,13 +479,14 @@ begin
             hardware lock is held. }
           while True do
           begin
-            if (AtaReadStatus and ATA_ST_BUSY) <> 0 then
+            status := AtaReadStatus;
+            if (status and ATA_ST_BUSY) <> 0 then
             begin
               App_Yield;
               Continue;
             end;
-            if ((AtaReadStatus and ATA_ST_ERR) <> 0) or
-               ((AtaReadStatus and ATA_ST_DF) <> 0) then
+            if ((status and ATA_ST_ERR) <> 0) or
+               ((status and ATA_ST_DF) <> 0) then
             begin
               App_Print(W('[!] ATA Ring 3: Platter write/flush failed!'#13#10));
               isError := True;
@@ -508,8 +512,9 @@ begin
 
         while True do
         begin
-          if (AtaReadStatus and ATA_ST_BUSY) = 0 then Break;
-          if (AtaReadStatus and ATA_ST_ERR) <> 0 then
+          status := AtaReadStatus;
+          if (status and ATA_ST_BUSY) = 0 then Break;
+          if (status and ATA_ST_ERR) <> 0 then
           begin
             App_Print(W('[!] ATA Ring 3: Cache flush failed!'#13#10));
             isError := True;
