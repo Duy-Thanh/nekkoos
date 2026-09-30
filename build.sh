@@ -126,6 +126,15 @@ PY
 echo "[2/4] Dang build Loader (Stub)..."
 $BF build src/boot/Boot.cs src/boot/BootContract.cs -Os --map maps/bootx64.map --os uefi --stdlib zero -o "efi/boot/bootx64.efi" --ldflags "-entry:NekkoBoot boot_io.obj"
 
+# =========================================================================
+# [AUTH DB] Sinh PASSWD + SUDOERS truoc khi dong dia.
+# Hai file nay chua password hash nen duoc .gitignore -> clone sach khong co.
+# build.sh ben duoi se mcopy chung vao ::/ETC, thieu la build fail (set -e).
+# File da ton tai thi GIU NGUYEN de khong lam doi mat khau dang chay.
+# =========================================================================
+echo "[2.5/4] Generating login database (passwd, sudoers)..."
+python3 scripts/gen_auth.py
+
 # Create disk image and populate (as in build.bat)
 echo "[3/4] Dang che tao o cung Vat Ly Ao (hdd.img) ..."
 rm -f hdd.img

@@ -401,6 +401,33 @@ Thêm unit vào đúng một chỗ sẽ hỏng theo hai kiểu khác nhau:
 
 Toàn bộ quy ước porting: `docs/PASCAL_PORTING.md`.
 
+### 5.2b ⚠️ File chứa credential: `passwd` + `sudoers`
+
+Hai file này **gitignored** (chứa password hash) nên **không có trong clone
+sạch**. `build.sh` copy chúng vào `::/ETC/PASSWD` và `::/ETC/SUDOERS`; thiếu
+thì `mcopy` fail (build.sh có `set -e`).
+
+Đã thêm `scripts/gen_auth.py`, chạy ở bước `[2.5/4]` ngay trước khi tạo
+đĩa. File đã tồn tại thì **giữ nguyên** để không đổi mật khẩu đang dùng.
+
+```bash
+python3 scripts/gen_auth.py                # tạo nếu thiếu
+python3 scripts/gen_auth.py --force        # sinh lại salt mới
+python3 scripts/gen_auth.py --print        # xem account, không in hash
+NEKKO_PASSWORD=... python3 scripts/gen_auth.py --force
+```
+
+**Bẫy cần nhớ:** salt được lưu dưới dạng 64 ký tự hex nhưng hash tính trên
+**32 byte đã decode**, không phải trên chuỗi hex:
+
+```
+sha256(bytes.fromhex(salt_hex) + password)
+```
+
+Hash trên chuỗi hex cho digest khác → đăng nhập luôn báo "ACCESS DENIED"
+dù file trông hoàn toàn bình thường. Script có `--self-test` tự kiểm tra
+lại bằng cặp hash đã biết là đúng, nếu format đổi sẽ fail ngay.
+
 ### 5.3 COFF relocation stripping
 
 `compile_pascal.sh` chạy Python script sau khi compile để xóa `IMAGE_REL_AMD64_ABSOLUTE` (type 0) relocations — lld từ chối những reloc này.
