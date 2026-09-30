@@ -167,27 +167,54 @@ Signature phải khớp HOÀN TOÀN (số tham số, kiểu, thứ tự). Sai m�
 
 ## 3. Kiến trúc Pascal migration
 
-### 3.1 Trạng thái hiện tại (2026-09-15)
+### 3.1 Trạng thái hiện tại (2026-09-29)
 
 **Pascal modules đã port (PASCAL_MODULES trong compile_pascal.sh):**
 ```
-libc            prng            kerncrypto      pmm
-heap            strandscheduler ipc             terminal
-arch_interface  rtc             fat16           fpc_runtime
-pe_loader       syscall_security memmap_scan    scheduler_dispatch
-acpi_parse      passwd_parser
+libc            kstring        kstate          ata_hw
+prng            kerncrypto      pmm            heap
+strandscheduler ipc             terminal       arch_interface
+rtc             fat16           fpc_runtime    pe_loader
+syscall_security memmap_scan    scheduler_dispatch
+acpi_parse      passwd_parser   spinlock        ata_driver
+sudo_dispatch   scheduler       io             serial
 ```
 
-**x86_64 HAL implementations (ARCH_X86_64_MODULES):**
+**x86_64 arch modules (ARCH_X86_64_MODULES):**
 ```
 interrupt_impl  timer_impl      mmu_impl        platform_impl
+gdt             idt             context         vdso
+vmm             pic             isr             pit
+apic            ioapic          platform_bootstrap
 ```
 
+**Đã port nhưng CHƯA nối vào C#** (link rồi, chưa được gọi — C# vẫn dùng bản
+C# cũ của chúng: `GDT.cs`, `IDT.cs`, `VMM.cs`, `vDSO.cs`, `PIC.cs`, `ISR.cs`,
+`PIT.cs`, `APIC.cs`, `IOAPIC.cs`, `PlatformBootstrap.cs`):
+`io serial gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap`
+
+Đây là lý do các unit mới **không thể** gây ra boot stall: chúng được link
+nhưng chưa được invoke. Xem §6.10.
+
 **Còn lại trong C# (chưa port):**
-- `Syscall.cs` — dispatcher chính (giữ nguyên, chỉ là thin switch)
-- `Kernel.cs` — kernel main (giữ nguyên)
-- `Scheduler.cs` — C# wrapper (logic đã sang Pascal)
-- `src/apps/*.cs` — user apps Ring-3
+- `Syscall.cs` (607) — dispatcher chính
+- `Kernel.cs` (483) — kernel main
+- `Thread.cs` (678) — **chặn cảnh**: SMP/InterruptHandlers/SyscallImpl đều cần nó
+- `InterruptHandlers.cs` (459), `SMP.cs` (430), `SyscallImpl.cs` (399)
+- `HardwareChecks.cs` (220), `FAT16.cs` (1337), `PELoader.cs` (293),
+  `Sudo.cs` (288), `InternalShell.cs` (284), `Terminal.cs` (227)
+- `src/boot/Boot.cs` (1246) — đã có bản nháp `src/boot/boot.pas` (2111 dòng,
+  compile sạch, RTTI=0, giữ marker INJECT_PUBKEY) nhưng **chưa** nối vào build
+- `src/apps/*.cs` — toàn bộ userland Ring-3
+- `src/drivers/x86-legacy/*.cs` — Power, PCI, KeyboardDriver, MouseDriver
+
+**Thứ tự port tiếp theo (quan trọng):**
+1. `Thread.cs` → `thread.pas` (đây là nút thắt — 3 file kia đều phụ thuộc nó)
+2. `InterruptHandlers.cs`, `SMP.cs`, `SyscallImpl.cs` (sẽ thành Pascal thuần)
+3. `Syscall.cs`, `Kernel.cs` → entry point `KernelMain` do Pascal export
+4. Đổi `build.sh` sang `lld` thuần, bỏ bflat
+5. `src/apps/*`, `src/drivers/*`, rồi xóa toàn bộ `.cs`
+
 
 ### 3.2 Roadmap port C# → Pascal
 
@@ -340,11 +367,39 @@ Thứ tự:
 4. **bflat** — C# kernel + apps → PE/COFF
 5. **lld link** — ghép tất cả thành NekkoOS.efi
 
+**Đã chứng minh khả thi (2026-09-29):** bước 4-5 cuối cùng CÓ THỂ bỏ bflat.
+Một PE thuần Pascal+NASM link thành công bằng `lld -flavor link`
+(`~/bflat/bin/lld`) với `-subsystem:efi_application -entry:<Pascal export>`.
+Lệnh mẫu đã test thành công:
+
+```bash
+~/bflat/bin/lld -flavor link -subsystem:efi_application \
+  -entry:KernelMain_Pas -out:kernel.efi build/*.o Hardware.obj
+```
+
+(kèm relocation strip như `compile_pascal.sh` làm). Đây là đường đi cuối
+cùng để xóa C#.
+
+### 5.1b ⚠️ Đăng ký unit mới — phảI SỬA CẢ HAI script
+
+Thêm unit vào đúng một chỗ sẽ hỏng theo hai kiểu khác nhau:
+
+| Thiếu ở | Lỗi |
+|---|---|
+| `compile_pascal.sh` | `lld: error: unsupported relocation type 0x0 in build/<mod>.o` |
+| `build.sh` | `lld: error: undefined symbol: <UNIT>_$$_...` |
+
+`compile_pascal.sh` vừa compile vừa chạy script strip relocation — bỏ nó khỏi
+đây là nguyên nhân hầu hết lỗi reloc. Chi tiết: §6.3c.
+
 ### 5.2 Thêm Pascal module mới
 
-1. Tạo `src/kernel/pas/<module>.pas` (hoặc `src/arch/<module>.pas`)
-2. Thêm vào `PASCAL_MODULES` trong `compile_pascal.sh`
-3. `./build.sh` để kiểm tra link
+1. Tạo `src/kernel/pas/<module>.pas` (hoặc `src/arch/<arch>/<module>.pas`)
+2. Thêm vào `PASCAL_MODULES` hoặc `ARCH_X86_64_MODULES` trong `compile_pascal.sh`
+3. Thêm `build/<module>.o` vào `--ldflags` trong `build.sh`
+4. `./build.sh` để kiểm tra link
+
+Toàn bộ quy ước porting: `docs/PASCAL_PORTING.md`.
 
 ### 5.3 COFF relocation stripping
 

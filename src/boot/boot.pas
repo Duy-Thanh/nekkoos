@@ -23,9 +23,10 @@
     procedural type at the call site; the UEFI_* wrappers below do that cast
     in exactly one place each.
   - Every record is a `packed record` with its padding written out by hand.
-    FPC is built with {$PACKRECORDS 1}, so a C# LayoutKind.Sequential struct
-    that leans on CLR auto-padding has to spell that padding out itself or
-    the field offsets drift and the bootloader decodes firmware structures
+    FPC is built with the $PACKRECORDS 1 switch, so a C#
+    LayoutKind.Sequential struct that leans on CLR auto-padding has to spell
+    that padding out itself or the field offsets drift and the bootloader
+    decodes firmware structures
     as garbage. The TSizeGuard* aliases turn every expected size into a
     compile error, so a layout edit cannot land silently.
   - Records live in the implementation section only: anything reachable from
@@ -160,7 +161,7 @@ type
     { CLR sequential layout pads this 32-bit Type out to the 8-byte
       PhysicalStart that follows, so NumberOfPages lands at +24. The kernel
       side already assumes that (fpc_runtime.pas EFI_*_OFFSET). }
-    Type:          Cardinal;
+    MemType:       Cardinal;   { C# calls this field Type }
     Pad0:          Cardinal;
     PhysicalStart: QWord;
     VirtualStart:  QWord;
@@ -394,37 +395,68 @@ type
 
 { ==========================================================================
   LAYOUT GUARDS
-  Each alias is array[0..(SizeOf(rec) - CSharpSize)]: it compiles to a single
-  byte when the Pascal layout matches the C# original, and is a hard compile
-  error ("Upper bound of range is less than lower bound") the moment it does
-  not. The expected numbers are the CLR LayoutKind.Sequential sizes:
-    fields laid out in order, each at its own natural alignment, trailing
-    padding up to the struct's alignment.
+  Every struct is guarded by a PAIR of aliases, one for each direction:
+    TSizeGuardX      = array[0..(SizeOf(TEfiX) - N)]
+    TSizeGuardX_Hi  = array[0..(N - SizeOf(TEfiX))]
+  Both collapse to a single byte when the Pascal layout matches the C#
+  original, and both are hard compile errors ("Upper bound of range is less
+  than lower bound") when the record is either too small or too big, so a
+  layout edit cannot land silently in either direction.
+
+  N is the CLR LayoutKind.Sequential size: fields in declaration order, each
+  at its own natural alignment, struct alignment = widest field, size rounded
+  up (1-byte alignment for the three Pack=1 structs). Every N below was
+  cross-checked two ways: against a model of the CLR layout algorithm driven
+  by the field lists parsed out of Boot.cs / BootContract.cs, and against the
+  real SizeOf emitted into a probe object file (porting guide section 12).
   ========================================================================== }
 type
-  TSizeGuardTableHeader  = array[0..(SizeOf(TEfiTableHeader) - 24)] of Byte;
-  TSizeGuardGuid         = array[0..(SizeOf(TEfiGuid) - 16)] of Byte;
-  TSizeGuardInputKey     = array[0..(SizeOf(TEfiInputKey) - 4)] of Byte;
-  TSizeGuardTextInput    = array[0..(SizeOf(TEfiSimpleTextInput) - 24)] of Byte;
-  TSizeGuardTextOutput   = array[0..(SizeOf(TEfiSimpleTextOutput) - 80)] of Byte;
-  TSizeGuardModeInfo     = array[0..(SizeOf(TEfiGraphicsOutputModeInformation) - 36)] of Byte;
-  TSizeGuardGopMode      = array[0..(SizeOf(TEfiGraphicsOutputMode) - 40)] of Byte;
-  TSizeGuardGop          = array[0..(SizeOf(TEfiGraphicsOutput) - 32)] of Byte;
-  TSizeGuardMemDesc      = array[0..(SizeOf(TEfiMemoryDescriptor) - 40)] of Byte;
-  TSizeGuardLoadedImage  = array[0..(SizeOf(TEfiLoadedImage) - 80)] of Byte;
-  TSizeGuardEfiTime      = array[0..(SizeOf(TEfiTime) - 16)] of Byte;
-  TSizeGuardFileInfo     = array[0..(SizeOf(TEfiFileInfo) - 80)] of Byte;
-  TSizeGuardFileProtocol = array[0..(SizeOf(TEfiFileProtocol) - 88)] of Byte;
-  TSizeGuardSimpleFs     = array[0..(SizeOf(TEfiSimpleFileSystem) - 16)] of Byte;
-  TSizeGuardRuntime      = array[0..(SizeOf(TEfiRuntimeServices) - 128)] of Byte;
-  TSizeGuardConfigTable  = array[0..(SizeOf(TEfiConfigurationTable) - 24)] of Byte;
-  TSizeGuardBootServices = array[0..(SizeOf(TEfiBootServices) - 376)] of Byte;
-  TSizeGuardSystemTable  = array[0..(SizeOf(TEfiSystemTable) - 112)] of Byte;
-  TSizeGuardRng          = array[0..(SizeOf(TEfiRngProtocol) - 16)] of Byte;
-  TSizeGuardAcpiHeader  = array[0..(SizeOf(TAcpiHeader) - 36)] of Byte;
-  TSizeGuardAcpiBgrt    = array[0..(SizeOf(TAcpiBgrt) - 56)] of Byte;
-  TSizeGuardBmpHeader   = array[0..(SizeOf(TBmpHeader) - 54)] of Byte;
-  TSizeGuardBootInfo    = array[0..(SizeOf(TNekkoBootInfo) - 64)] of Byte;
+  TSizeGuardTableHeader= array[0..(SizeOf(TEfiTableHeader) - 24)] of Byte;
+  TSizeGuardTableHeader_Hi= array[0..(24 - SizeOf(TEfiTableHeader))] of Byte;
+  TSizeGuardGuid= array[0..(SizeOf(TEfiGuid) - 16)] of Byte;
+  TSizeGuardGuid_Hi= array[0..(16 - SizeOf(TEfiGuid))] of Byte;
+  TSizeGuardInputKey= array[0..(SizeOf(TEfiInputKey) - 4)] of Byte;
+  TSizeGuardInputKey_Hi= array[0..(4 - SizeOf(TEfiInputKey))] of Byte;
+  TSizeGuardTextInput= array[0..(SizeOf(TEfiSimpleTextInput) - 24)] of Byte;
+  TSizeGuardTextInput_Hi= array[0..(24 - SizeOf(TEfiSimpleTextInput))] of Byte;
+  TSizeGuardTextOutput= array[0..(SizeOf(TEfiSimpleTextOutput) - 80)] of Byte;
+  TSizeGuardTextOutput_Hi= array[0..(80 - SizeOf(TEfiSimpleTextOutput))] of Byte;
+  TSizeGuardModeInfo= array[0..(SizeOf(TEfiGraphicsOutputModeInformation) - 36)] of Byte;
+  TSizeGuardModeInfo_Hi= array[0..(36 - SizeOf(TEfiGraphicsOutputModeInformation))] of Byte;
+  TSizeGuardGopMode= array[0..(SizeOf(TEfiGraphicsOutputMode) - 40)] of Byte;
+  TSizeGuardGopMode_Hi= array[0..(40 - SizeOf(TEfiGraphicsOutputMode))] of Byte;
+  TSizeGuardGop= array[0..(SizeOf(TEfiGraphicsOutput) - 32)] of Byte;
+  TSizeGuardGop_Hi= array[0..(32 - SizeOf(TEfiGraphicsOutput))] of Byte;
+  TSizeGuardMemDesc= array[0..(SizeOf(TEfiMemoryDescriptor) - 40)] of Byte;
+  TSizeGuardMemDesc_Hi= array[0..(40 - SizeOf(TEfiMemoryDescriptor))] of Byte;
+  TSizeGuardLoadedImage= array[0..(SizeOf(TEfiLoadedImage) - 80)] of Byte;
+  TSizeGuardLoadedImage_Hi= array[0..(80 - SizeOf(TEfiLoadedImage))] of Byte;
+  TSizeGuardEfiTime= array[0..(SizeOf(TEfiTime) - 16)] of Byte;
+  TSizeGuardEfiTime_Hi= array[0..(16 - SizeOf(TEfiTime))] of Byte;
+  TSizeGuardFileInfo= array[0..(SizeOf(TEfiFileInfo) - 80)] of Byte;
+  TSizeGuardFileInfo_Hi= array[0..(80 - SizeOf(TEfiFileInfo))] of Byte;
+  TSizeGuardFileProtocol= array[0..(SizeOf(TEfiFileProtocol) - 88)] of Byte;
+  TSizeGuardFileProtocol_Hi= array[0..(88 - SizeOf(TEfiFileProtocol))] of Byte;
+  TSizeGuardSimpleFs= array[0..(SizeOf(TEfiSimpleFileSystem) - 16)] of Byte;
+  TSizeGuardSimpleFs_Hi= array[0..(16 - SizeOf(TEfiSimpleFileSystem))] of Byte;
+  TSizeGuardRuntime= array[0..(SizeOf(TEfiRuntimeServices) - 136)] of Byte;
+  TSizeGuardRuntime_Hi= array[0..(136 - SizeOf(TEfiRuntimeServices))] of Byte;
+  TSizeGuardConfigTable= array[0..(SizeOf(TEfiConfigurationTable) - 24)] of Byte;
+  TSizeGuardConfigTable_Hi= array[0..(24 - SizeOf(TEfiConfigurationTable))] of Byte;
+  TSizeGuardBootServices= array[0..(SizeOf(TEfiBootServices) - 376)] of Byte;
+  TSizeGuardBootServices_Hi= array[0..(376 - SizeOf(TEfiBootServices))] of Byte;
+  TSizeGuardSystemTable= array[0..(SizeOf(TEfiSystemTable) - 120)] of Byte;
+  TSizeGuardSystemTable_Hi= array[0..(120 - SizeOf(TEfiSystemTable))] of Byte;
+  TSizeGuardRng= array[0..(SizeOf(TEfiRngProtocol) - 16)] of Byte;
+  TSizeGuardRng_Hi= array[0..(16 - SizeOf(TEfiRngProtocol))] of Byte;
+  TSizeGuardAcpiHeader= array[0..(SizeOf(TAcpiHeader) - 36)] of Byte;
+  TSizeGuardAcpiHeader_Hi= array[0..(36 - SizeOf(TAcpiHeader))] of Byte;
+  TSizeGuardAcpiBgrt= array[0..(SizeOf(TAcpiBgrt) - 56)] of Byte;
+  TSizeGuardAcpiBgrt_Hi= array[0..(56 - SizeOf(TAcpiBgrt))] of Byte;
+  TSizeGuardBmpHeader= array[0..(SizeOf(TBmpHeader) - 54)] of Byte;
+  TSizeGuardBmpHeader_Hi= array[0..(54 - SizeOf(TBmpHeader))] of Byte;
+  TSizeGuardBootInfo= array[0..(SizeOf(TNekkoBootInfo) - 64)] of Byte;
+  TSizeGuardBootInfo_Hi= array[0..(64 - SizeOf(TNekkoBootInfo))] of Byte;
 
 { ==========================================================================
   UEFI SERVICE SIGNATURES
@@ -448,10 +480,10 @@ type
   TfnGetNextMonotonicCount = function(This: Pointer; Count: PCardinal): QWord; cdecl;
   TfnLocateProtocol = function(This: Pointer; Protocol: PEfiGuid;
                                Registration: Pointer;
-                               Interface: PPointer): QWord; cdecl;
+                               OutInterface: PPointer): QWord; cdecl;
   TfnHandleProtocol = function(This: Pointer; Handle: Pointer;
                                Protocol: PEfiGuid;
-                               Interface: PPointer): QWord; cdecl;
+                               OutInterface: PPointer): QWord; cdecl;
   TfnGetTime        = function(This: Pointer; Time: PEfiTime;
                                Capabilities: PCardinal): QWord; cdecl;
   TfnResetSystem    = procedure(This: Pointer; ResetType: Cardinal;
@@ -463,7 +495,7 @@ type
   TfnEnableCursor   = function(This: Pointer; Visible: Boolean): QWord; cdecl;
   TfnGetRNG         = function(This: Pointer; Algorithm: PEfiGuid;
                                ValueLength: QWord; Value: PByte): QWord; cdecl;
-  TfnFileOpen       = function(This: Pointer; File: PPefiFileProtocol;
+  TfnFileOpen       = function(This: Pointer; OutFile: PEfiFileProtocol;
                                FileName: PWord; OpenMode: QWord;
                                Attributes: QWord): QWord; cdecl;
   TfnFileClose      = function(This: Pointer): QWord; cdecl;
@@ -525,7 +557,7 @@ var
     src/boot/boot.pas is patched by the pubkey-injection step, and the
     literal must use Pascal's $ hex prefix, not C#'s 0x.
     ========================================================== }
-  Boot_PublicKeyN: array[0..255] of Byte = ( $EE, $3B, $FF, $8E, $EF, $51, $26, $03, $E1, $9B, $1F, $C0, $62, $B1, $81, $D4, $24, $DF, $55, $D5, $19, $D1, $22, $90, $07, $F9, $1C, $54, $B3, $31, $B9, $BF, $A8, $EF, $50, $F7, $9C, $4B, $14, $0F, $52, $EE, $95, $7C, $07, $C2, $78, $E5, $73, $39, $27, $DC, $AE, $58, $45, $8D, $0E, $E4, $E6, $AD, $31, $61, $52, $AE, $49, $95, $EE, $CE, $04, $19, $B6, $A9, $35, $7B, $F9, $B1, $34, $F5, $5F, $E3, $F2, $D6, $4A, $79, $60, $DF, $2A, $74, $C9, $D4, $D3, $B4, $14, $84, $AB, $3A, $56, $4D, $49, $72, $39, $18, $DA, $56, $44, $34, $6C, $E5, $FD, $02, $C6, $CA, $CC, $EC, $80, $C6, $1A, $7B, $31, $F3, $FA, $90, $22, $7B, $E0, $AA, $06, $4E, $3A, $B0, $ED, $C9, $9A, $F1, $3C, $E7, $A4, $01, $D2, $B3, $3B, $70, $D0, $4A, $09, $EE, $43, $35, $D0, $E6, $C2, $2B, $13, $D5, $1C, $EB, $97, $58, $B5, $15, $4D, $96, $2C, $7F, $70, $C2, $BB, $7F, $2A, $BD, $30, $AC, $6A, $65, $C7, $7E, $36, $3A, $26, $65, $6D, $D5, $86, $76, $EF, $98, $75, $5A, $7D, $E9, $CD, $9E, $04, $44, $B9, $39, $26, $36, $18, $B7, $FA, $0E, $42, $AE, $B5, $85, $7E, $0B, $32, $85, $92, $A5, $00, $8E, $CC, $10, $D9, $83, $1F, $09, $97, $45, $0D, $96, $3C, $1D, $9D, $B6, $92, $BF, $8E, $E3, $84, $B8, $AA, $8B, $A1, $F0, $34, $87, $15, $DA, $95, $84, $7D, $AD, $FD, $68, $D2, $4A, $CF, $8E, $51, $5C, $38, $7B ); /* INJECT_PUBKEY */
+  Boot_PublicKeyN: array[0..255] of Byte = ( $EE, $3B, $FF, $8E, $EF, $51, $26, $03, $E1, $9B, $1F, $C0, $62, $B1, $81, $D4, $24, $DF, $55, $D5, $19, $D1, $22, $90, $07, $F9, $1C, $54, $B3, $31, $B9, $BF, $A8, $EF, $50, $F7, $9C, $4B, $14, $0F, $52, $EE, $95, $7C, $07, $C2, $78, $E5, $73, $39, $27, $DC, $AE, $58, $45, $8D, $0E, $E4, $E6, $AD, $31, $61, $52, $AE, $49, $95, $EE, $CE, $04, $19, $B6, $A9, $35, $7B, $F9, $B1, $34, $F5, $5F, $E3, $F2, $D6, $4A, $79, $60, $DF, $2A, $74, $C9, $D4, $D3, $B4, $14, $84, $AB, $3A, $56, $4D, $49, $72, $39, $18, $DA, $56, $44, $34, $6C, $E5, $FD, $02, $C6, $CA, $CC, $EC, $80, $C6, $1A, $7B, $31, $F3, $FA, $90, $22, $7B, $E0, $AA, $06, $4E, $3A, $B0, $ED, $C9, $9A, $F1, $3C, $E7, $A4, $01, $D2, $B3, $3B, $70, $D0, $4A, $09, $EE, $43, $35, $D0, $E6, $C2, $2B, $13, $D5, $1C, $EB, $97, $58, $B5, $15, $4D, $96, $2C, $7F, $70, $C2, $BB, $7F, $2A, $BD, $30, $AC, $6A, $65, $C7, $7E, $36, $3A, $26, $65, $6D, $D5, $86, $76, $EF, $98, $75, $5A, $7D, $E9, $CD, $9E, $04, $44, $B9, $39, $26, $36, $18, $B7, $FA, $0E, $42, $AE, $B5, $85, $7E, $0B, $32, $85, $92, $A5, $00, $8E, $CC, $10, $D9, $83, $1F, $09, $97, $45, $0D, $96, $3C, $1D, $9D, $B6, $92, $BF, $8E, $E3, $84, $B8, $AA, $8B, $A1, $F0, $34, $87, $15, $DA, $95, $84, $7D, $AD, $FD, $68, $D2, $4A, $CF, $8E, $51, $5C, $38, $7B ); { INJECT_PUBKEY }
 
 { ==========================================================================
   TEXT HELPERS
@@ -615,21 +647,21 @@ end;
 
 function Uefi_LocateProtocol(bs: PEfiBootServices; protocol: PEfiGuid;
                              registration: Pointer;
-                             iface: PPointer): QWord;
+                             OutInterface: PPointer): QWord;
 var
   f: TfnLocateProtocol;
 begin
   f := TfnLocateProtocol(bs^.LocateProtocol);
-  Uefi_LocateProtocol := f(bs, protocol, registration, iface);
+  Uefi_LocateProtocol := f(bs, protocol, registration, OutInterface);
 end;
 
 function Uefi_HandleProtocol(bs: PEfiBootServices; handle: Pointer;
-                             protocol: PEfiGuid; iface: PPointer): QWord;
+                             protocol: PEfiGuid; OutInterface: PPointer): QWord;
 var
   f: TfnHandleProtocol;
 begin
   f := TfnHandleProtocol(bs^.HandleProtocol);
-  Uefi_HandleProtocol := f(bs, handle, protocol, iface);
+  Uefi_HandleProtocol := f(bs, handle, protocol, OutInterface);
 end;
 
 function Uefi_GetTime(rs: PEfiRuntimeServices; t: PEfiTime;
@@ -692,7 +724,7 @@ begin
 end;
 
 function Uefi_OpenVolume(fileSystem: PEfiSimpleFileSystem;
-                         rootDir: PPefiFileProtocol): QWord;
+                         rootDir: PEfiFileProtocol): QWord;
 var
   f: TfnFileOpen;
 begin
@@ -700,30 +732,39 @@ begin
   Uefi_OpenVolume := f(fileSystem, rootDir, nil, 0, 0);
 end;
 
-function Uefi_FileClose(file: PEfiFileProtocol): QWord;
+function Uefi_FileOpen(rootDir: PEfiFileProtocol; fileHandle: PEfiFileProtocol;
+                       fileName: PWord; openMode, attributes: QWord): QWord;
+var
+  f: TfnFileOpen;
+begin
+  f := TfnFileOpen(rootDir^.Open);
+  Uefi_FileOpen := f(rootDir, fileHandle, fileName, openMode, attributes);
+end;
+
+function Uefi_FileClose(fileHandle: PEfiFileProtocol): QWord;
 var
   f: TfnFileClose;
 begin
-  f := TfnFileClose(file^.Close);
-  Uefi_FileClose := f(file);
+  f := TfnFileClose(fileHandle^.Close);
+  Uefi_FileClose := f(fileHandle);
 end;
 
-function Uefi_FileRead(file: PEfiFileProtocol; size: PQWord;
+function Uefi_FileRead(fileHandle: PEfiFileProtocol; size: PQWord;
                        buffer: Pointer): QWord;
 var
   f: TfnFileRead;
 begin
-  f := TfnFileRead(file^.Read);
-  Uefi_FileRead := f(file, size, buffer);
+  f := TfnFileRead(fileHandle^.Read);
+  Uefi_FileRead := f(fileHandle, size, buffer);
 end;
 
-function Uefi_FileGetInfo(file: PEfiFileProtocol; informationType: PEfiGuid;
+function Uefi_FileGetInfo(fileHandle: PEfiFileProtocol; informationType: PEfiGuid;
                           bufferSize: PQWord; buffer: Pointer): QWord;
 var
   f: TfnFileGetInfo;
 begin
-  f := TfnFileGetInfo(file^.GetInfo);
-  Uefi_FileGetInfo := f(file, informationType, bufferSize, buffer);
+  f := TfnFileGetInfo(fileHandle^.GetInfo);
+  Uefi_FileGetInfo := f(fileHandle, informationType, bufferSize, buffer);
 end;
 
 { ==========================================================================
@@ -982,7 +1023,7 @@ end;
 
 procedure Sha256Compute(data: PByte; length: QWord; outputHash: PByte);
 var
-  H: array[0..7] of Cardinal;
+  Hval: array[0..7] of Cardinal;
   W: array[0..63] of Cardinal;
   block: array[0..63] of Byte;
   totalBits, paddedLen, offset: QWord;
@@ -994,7 +1035,7 @@ begin
   { 256 MB ceiling, same as the C# original. }
   if length > $10000000 then Exit;
 
-  for i := 0 to 7 do H[i] := SHA256_H0[i];
+  for i := 0 to 7 do Hval[i] := SHA256_H0[i];
 
   totalBits := length * 8;
   paddedLen := length + 1;
@@ -1027,8 +1068,8 @@ begin
     for t := 16 to 63 do
       W[t] := SmallSigma1(W[t - 2]) + W[t - 7] + SmallSigma0(W[t - 15]) + W[t - 16];
 
-    a := H[0]; b := H[1]; c := H[2]; d := H[3];
-    e := H[4]; f := H[5]; g := H[6]; h := H[7];
+    a := Hval[0]; b := Hval[1]; c := Hval[2]; d := Hval[3];
+    e := Hval[4]; f := Hval[5]; g := Hval[6]; h := Hval[7];
 
     for t := 0 to 63 do
     begin
@@ -1038,18 +1079,18 @@ begin
       d := c; c := b; b := a; a := T1 + T2;
     end;
 
-    H[0] := H[0] + a; H[1] := H[1] + b; H[2] := H[2] + c; H[3] := H[3] + d;
-    H[4] := H[4] + e; H[5] := H[5] + f; H[6] := H[6] + g; H[7] := H[7] + h;
+    Hval[0] := Hval[0] + a; Hval[1] := Hval[1] + b; Hval[2] := Hval[2] + c; Hval[3] := Hval[3] + d;
+    Hval[4] := Hval[4] + e; Hval[5] := Hval[5] + f; Hval[6] := Hval[6] + g; Hval[7] := Hval[7] + h;
 
     Inc(offset, 64);
   end;
 
   for i := 0 to 7 do
   begin
-    outputHash[i * 4]     := Byte((H[i] shr 24) and $FF);
-    outputHash[i * 4 + 1] := Byte((H[i] shr 16) and $FF);
-    outputHash[i * 4 + 2] := Byte((H[i] shr 8) and $FF);
-    outputHash[i * 4 + 3] := Byte(H[i] and $FF);
+    outputHash[i * 4]     := Byte((Hval[i] shr 24) and $FF);
+    outputHash[i * 4 + 1] := Byte((Hval[i] shr 16) and $FF);
+    outputHash[i * 4 + 2] := Byte((Hval[i] shr 8) and $FF);
+    outputHash[i * 4 + 3] := Byte(Hval[i] and $FF);
   end;
 end;
 
@@ -1501,7 +1542,7 @@ var
   magicKey: Char;
   cmd: Char;
   debugging: Boolean;
-  sp, nl, one: PWord;
+  nl, one: PWord;
   dumpAddr: QWord;
   ptr64: PQWord;
   port: Word;
@@ -1626,17 +1667,17 @@ begin
   { Open the ESP and pull Kernel.exe into boot-pool memory.      }
   { ---------------------------------------------------------- }
   loadedImage := nil;
-  Uefi_HandleProtocol(bs, imageHandle, @GUID_LOADED_IMAGE, @loadedImage);
+  Uefi_HandleProtocol(bs, imageHandle, @GUID_LOADED_IMAGE, PPointer(@loadedImage));
 
   fileSystem := nil;
   Uefi_HandleProtocol(bs, PEfiLoadedImage(loadedImage)^.DeviceHandle,
-                      @GUID_SIMPLE_FS, @fileSystem);
+                      @GUID_SIMPLE_FS, PPointer(@fileSystem));
 
   rootDir := nil;
   Uefi_OpenVolume(fileSystem, @rootDir);
 
   kernelFile := nil;
-  openStatus := LongInt(Uefi_FileOpen(fileSystem, @kernelFile, U16('Kernel.exe'), 1, 0));
+  openStatus := LongInt(Uefi_FileOpen(rootDir, @kernelFile, U16('Kernel.exe'), 1, 0));
   if openStatus <> 0 then
   begin
     Print(conOut, U16('LOI: Khong tim thay Kernel.exe tren dia!'#13#10));
@@ -1669,7 +1710,7 @@ begin
   isVerified := True;
 
   sigFile := nil;
-  status := Uefi_FileOpen(fileSystem, @sigFile, U16('\Kernel.exe.mui'), 1, 0);
+  status := Uefi_FileOpen(rootDir, @sigFile, U16('\Kernel.exe.mui'), 1, 0);
 
   if (status <> 0) or (sigFile = nil) then
   begin
@@ -1700,7 +1741,7 @@ begin
 
     Uefi_FreePool(bs, rsaBuffer);
 
-    { PKCS#1 v1.5 padding: 00 01 FF..FF 00 DigestInfo */
+    { PKCS#1 v1.5 padding: 00 01 FF..FF 00 DigestInfo }
     if (decryptedSig[0] <> $00) or (decryptedSig[1] <> $01) then
       isVerified := False;
     for i := 2 to 203 do
@@ -1804,7 +1845,7 @@ begin
   maxAddress := 0;
   for i := 0 to numEntries - 1 do
   begin
-    if PEfiMemoryDescriptor(mapPtr + (i * descriptorSize))^.Type = 7 then
+    if PEfiMemoryDescriptor(mapPtr + (i * descriptorSize))^.MemType = 7 then
     begin
       if PEfiMemoryDescriptor(mapPtr + (i * descriptorSize))^.PhysicalStart +
          (PEfiMemoryDescriptor(mapPtr + (i * descriptorSize))^.NumberOfPages * 4096)
@@ -1926,7 +1967,7 @@ begin
   { the resolved video state to the kernel.                     }
   { ---------------------------------------------------------- }
   bootInfo := nil;
-  Uefi_AllocatePool(bs, 6, QWord(SizeOf(TNekkoBootInfo)), @bootInfo);
+  Uefi_AllocatePool(bs, 6, QWord(SizeOf(TNekkoBootInfo)), PPointer(@bootInfo));
 
   finalMemoryMapSize := 0;
   finalMemoryMap := nil;
@@ -1940,7 +1981,6 @@ begin
   finalBuffer := nil;
   Uefi_AllocatePool(bs, 6, allocatedMapCapacity, @finalBuffer);
   finalMemoryMap := PEfiMemoryDescriptor(finalBuffer);
-  finalMapPtr := PByte(finalMemoryMap);
 
   finalMemoryMapSize := allocatedMapCapacity;
   Uefi_GetMemoryMap(bs, @finalMemoryMapSize, @finalBuffer, @finalMapKey,
@@ -1988,7 +2028,7 @@ begin
         'R', 'r':
           begin
             Print(conOut, U16('[DEBUG] Cold Rebooting System...'#13#10));
-            Uefi_ResetSystem(rs, 0, 0, 0, nil);
+            Uefi_ResetSystem(rs, 0, nil, 0, nil);
             while true do ;
           end;
 
