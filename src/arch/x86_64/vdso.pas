@@ -211,21 +211,22 @@ begin
   AddSyscall(50);                   { 25 RequestFramebuffer }
   AddSyscall(51);                   { 26 GetScreenInfo }
   AddSyscallWithRbxReturn(101);     { 27 CreateSharedBuffer }
+  AddSyscall(52);                   { 28 RedirectTerminal }
 
-  { 28: plain I/O helper slots. These do not trap into the kernel, they run
-    the port access inline in ring 3 against a port the IOPL/iopb has
-    granted. Each still consumes a table slot. }
-  AddRawStub(@StubInByte[0], 8);    { 28 InByte }
-  AddRawStub(@StubOutByte[0], 7);   { 29 OutByte }
-  AddRawStub(@StubInWord[0], 9);    { 30 InWord }
-  AddRawStub(@StubOutWord[0], 9);   { 31 OutWord }
-  AddRawStub(@StubOutDword[0], 7);  { 32 OutDword }
+  { 29-33: inline port I/O helpers. These do not trap into the kernel, they
+    execute the access in ring 3 against a port the IOPB has granted. Each
+    still consumes a table slot. }
+  AddRawStub(@StubInByte[0], 8);    { 29 InByte }
+  AddRawStub(@StubOutByte[0], 7);   { 30 OutByte }
+  AddRawStub(@StubInWord[0], 9);    { 31 InWord }
+  AddRawStub(@StubOutWord[0], 9);   { 32 OutWord }
+  AddRawStub(@StubOutDword[0], 7);  { 33 OutDword }
 
   { ATA hardware lock. ATA.EXE and the kernel both touch IDE ports
     0x1F0-0x1F7; without mutual exclusion they race and fault. }
-  AddSyscall(60);                   { 33 AcquireAtaHw }
-  AddSyscall(61);                   { 34 ReleaseAtaHw }
-  AddSyscall(94);                   { 35 SudoRun }
+  AddSyscall(60);                   { 34 AcquireAtaHw }
+  AddSyscall(61);                   { 35 ReleaseAtaHw }
+  AddSyscall(94);                   { 36 SudoRun }
 
   Terminal_SetColor_Pas($00FF00FF);
   Terminal_Print_Pas(W('[+] vDSO Gateway forged in RAM! Absolute KASLR Ready.'#13#10));

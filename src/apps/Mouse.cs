@@ -51,8 +51,28 @@ public static unsafe class MouseDaemon
         SyscallGrantPort(0x60);
         SyscallGrantPort(0x64);
 
+        // ==========================================================
+        // [FIX HANG BOOT] GỬI HANDSHAKE TRƯỚC, ĐỪNG CHỜ PHẦN CỨNG!
+        //
+        // Kernel (Kernel.cs) đứng trong vòng chờ 30s cho type 44. Trước đây
+        // handshake nằm SAU khởi tạo PS/2, nên bất kỳ bế nào 8042 trả lời
+        // chậm hoặc kẹt cũng làm cả hệ thống đứng yên 30s rồi mới boot tiếp.
+        // Đó là lý do smoke test chập chờn: ATA/FAT16 OK, riêng Mouse treo.
+        //
+        // Kernel chỉ cần biết daemon đã sống để tháo chờ - nó không cần biết
+        // con chuột có phản hồi hay không. Nên: báo sống TRƯỚC, rồi mới lo
+        // phần cứng. Nếu phần cứng hỏng thì ta mất chuột, không mất cả OS.
+        // ==========================================================
+        SyscallSendIPC(0, 44, 0);
+
         // 2. XẢ RÁC CỔNG 0x60 TRƯỚC KHI KHỞI TẠO!
+        // [FIX HANG] Có timeout. Vòng lặp vô hạn ở đây chính là chỗ treo: nếu
+        // 8042 giữ nguyên cờ "có dữ liệu" mà đọc 0x60 không làm rỗng buffer
+        // (byte treo từ IRQ bàn phím chẳng hạn), daemon đứng im vô hạn và
+        // không bao giờ gửi được gì. Hết giờ thì bỏ qua, vẫn tiếp tục được.
+        int drainBudget = 100000;
         while ((AppInByte(0x64) & 1) != 0) {
+            if (--drainBudget <= 0) break;
             AppInByte(0x60);
         }
 
@@ -74,9 +94,6 @@ public static unsafe class MouseDaemon
             WriteMouse(0xF4); 
         }
 
-        // 4. GỬI THƯ BÁO KERNEL LÀ TAO ĐÃ SẴN SÀNG (Type 44)
-        // Luôn gửi handshake dù mouse có lỗi hay không — kernel phải unblock!
-        SyscallSendIPC(0, 44, 0);
 
         // ==========================================================
         // [FIX DEADLOCK] DSRV.EXE có thể không tồn tại (bị disabled).
