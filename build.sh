@@ -53,8 +53,40 @@ $BF build src/apps/stresstest.cs src/apps/API.cs src/apps/ThrowHelpers.cs -Ot --
 
 # Additional userland apps from build.bat
 $BF build src/apps/dsrv.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/dsrv.map --os windows --arch x64 --stdlib zero -o dsrv.exe --ldflags "-export:AppMain build/libc.o"
-$BF build src/apps/Mouse.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/Mouse.map --os windows --arch x64 --stdlib zero -o Mouse.exe --ldflags "-export:AppMain"
+# Mouse.exe is already Pascal - see the LINK_APP block below.
 $BF build src/apps/explorer.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/explorer.map --os windows --arch x64 --stdlib zero -o explorer.exe --ldflags "-export:AppMain build/libc.o"
+
+# =========================================================================
+# [PURE PASCALL APPS] Liên kết app Ring-3 bằng lld, KHÔNG qua bflat.
+#
+# Đây là bước đầu tiên trong việc loại bỏ hoàn toàn bflat: userland không
+# cần bất kỳ thứ gì từ runtime C#, chỉ cần bảng stub vDSO. App Pascal liên
+# kết thành PE bình thường với entry 'AppMain', đúng như bflat làm.
+#
+# PELoader quét ảnh theo byte tìm magic 0x1337BEEFCAFE8BAD rồi patch nó
+# bằng địa chỉ vDSO thật - nên không phụ thuộc compiler, chỉ phụ thuộc hằng
+# số đó còn nằm trong .data của app.
+#
+# PELoader tìm entry point bằng cách tra tên 'AppMain' trong PE EXPORT
+# DIRECTORY (FindAppMainExport_Pas) - nó KHÔNG đọc AddressOfEntryPoint trong
+# optional header. Nên -export:AppMain là bắt buộc; chỉ có -entry thì image
+# vẫn chạy được ngoài đời nhưng loader sẽ báo "Entry point not found".
+#
+# -subsystem:console: kernel nạp app như một PE bình thường, không phải UEFI
+# image, nên subsystem phải khác efi_application.
+# =========================================================================
+echo "[*] Linking Pascal apps with lld (no bflat)..."
+LLD="$HOME/bflat/bin/lld"
+link_app() {
+    local out="$1"; shift
+    "$LLD" -flavor link \
+        -subsystem:console \
+        -entry:AppMain \
+        -export:AppMain \
+        -out:"$out" \
+        "$@"
+}
+link_app Mouse.exe build/mouse_app.o build/app_api.o
 
 echo "[*] Waiting for FS to flush..."
 sync
