@@ -846,7 +846,7 @@ dụng: daemon chết (hoặc mất IPC) trước khi tới lệnh gửi.
 **Bài học:** daemon nào kernel chờ handshake thì phải gửi handshake là việc
 *đầu tiên*, trước mọi syscall khác — kể cả syscall trông vô hại.
 
-### 12.3 🔴 ĐANG MỞ: login chập chờn khi FAT16.exe viết bằng Pascal
+### 12.3 ✅ ĐÃ SỬA: login chập chờn khi FAT16.exe viết bằng Pascal
 
 **Triệu chứng:** boot tới `Username:` ổn định. Nhưng `root` + mật khẩu đúng
 thỉnh thoảng bị `[!] ACCESS DENIED!`, và thỉnh thoảng thì
@@ -869,16 +869,46 @@ một nguyên nhân "chắc chắn sai" — nó không luôn xảy ra. Bản C# 
 - FAT16 không tự in "Access Denied: You do not have Read (r) permission" —
   nên nó không bị chặn ở tầng access-control.
 
-**Ứng viên còn lại:** bản thân thiết kế handshake không đệm. Cả hai bên
-đều dùng vòng `ReceiveIPC` + `Yield` bằng vô điều kiện và **ném đi mọi
-message không đúng loại đang chờ**. Hai thread ping-pong qua shared memory
-mà không có hàng đợi, nên nếu một bên bị lỡ nhịp (scheduler, `IsPhantomDead`,
-context switch) thì vòng lặp đọc trúng message của bên khác và mất dữ liệu.
-Điều này có vẻ là **có sẵn trong thiết kế C# gốc**, không phải do port.
+**Đã sửa.** Nguyên nhân thật: `EOF` **không đảm bảo đã đủ dữ liệu**.
 
-**Chưa làm:** chưa sửa. Cần thêm mẫu đo trước khi kết luận, rồi sửa thì
-phải ở tầng protocol (thêm sequence number / hàng đợi có buffer), không
-vá bằng cách thêm delay.
+- Server (`fat16_app.pas`) gửi `FS_READ_CHUNK` rồi **chỉ** gửi `FS_READ_EOF`
+  khi hết cluster chain. Nó không đếm bao nhiêu chunk client thực sự nhận.
+- Client (`login_app.pas` `ReadFileIPC`) coi `EOF` là "đã xong" và `return
+  fileSize` — **không kiểm tra gì cả**.
+- Chunk server gửi theo thứ tự tuần tự (chỉ gửi sector k sau khi sector
+  k-1 được ack), nên client dùng `offset` trong payload là đủ để biết có bị
+  thiếu không. Nhưng nếu một chunk lỡ, `PassFileBuf` — là buffer **static**,
+  sống qua cả các lần login — giữ lại **nội dung lần trước** ở đúng lỗ hổng
+  đó.
+- Kết quả: `passSize > 0` nên **không** hiện `CRITICAL ERROR`, nhưng nội
+  dung bị lẫn dữ liệu cũ giữa chừng → hash sai → `ACCESS DENIED`. Đúng triệu
+  chứng chập chờn quan sát được.
+
+**Fix** (tầng protocol, không phải delay):
+
+1. Xoá toàn bộ `fileBuffer` trước mỗi lần đọc → không còn dữ liệu cũ nào
+   sống sót trong lỗ hổng.
+2. Client theo dõi `nextOffset` và **từ chối** chunk có `offset <> nextOffset`,
+   đặt cờ `gap`.
+3. Vẫn ack chunk để daemon không bị kẹt (một daemon kẹt sẽ kéo theo mọi
+   tiến trình khác), nhưng `gap` khiến lần đọc đó bị coi là thất bại.
+4. Chỉ `return fileSize` khi **không gap và `nextOffset >= fileSize`**.
+   Thiếu byte thì báo lỗi thật thay vì trả về file hỏng.
+5. Vòng lặp thử lại tối đa `READ_ATTEMPTS = 3` lần cho trường hợp mất
+   message thật (race, không phải disk hỏng). Trường hợp file quá buffer
+   thì không thử lại — đó là lỗi xác định, không phải race.
+
+**Đo sau khi sửa:** 4/4 lần boot tới login đều `AUTHENTICATED` (trước đó
+login fail ~1/3). Trong 5 lần chạy chỉ còn 1 fail, và fail đó ở bước
+**boot to login prompt** — flake timeout 60s có sẵn ở §6.10, không liên
+quan. Login thì 0 fail.
+
+**Còn tồn đọng (không đụng tới lần này):** vòng chờ phía server vẫn **ném
+đi** message của client khác (`fat16_app.pas` dòng ~1848 và ~1870 chỉ nhận
+`Sender = client` rồi bỏ qua phần còn lại). Với `ls`/`cat` chạy song song
+đọc file thì message của client đó bị mất và nó treo. Cần hàng đợi thật ở
+tầng daemon; **đừng** coi đây là đã xong.
+
 
 ### 12.5 ⚠️ Cạm bẫy khi chẩn đoán: log serial bị cắt khi kill QEMU
 
@@ -891,7 +921,21 @@ Muốn thấy phần cuối log: chạy QEMU bằng `run.sh`, **đợi QEMU còn
 `^[A-E]$`) vì serial dùng CRLF nên dòng là `A\r`.
 
 Lưu ý thêm: `pkill -f qemu-system` sẽ **giết luôn chính shell đang chạy
-lệnh đó** (chuỗi lệnh chứa "qemu-system"). Dùng `pkill -9 -x qemu-system-x86_64`.
+lệnh đó** (chuỗi lệnh chứa "qemu-system"). Đừng dùng `pkill -9 -x
+qemu-system-x86_64` để tránh điều đó — **lệnh đó không bao giờ khớp được**.
+`/proc/comm` cắt tên process còn 15 ký tự, nên process thật là
+`qemu-system-x86`:
+
+```bash
+pkill -9 -x qemu-system-x86   # đúng
+```
+
+Hệ quả của việc dùng sai tên này rất dễ hiểu nhầm: QEMU cũ vẫn sống và
+giữ `hdd.img`, nên `smoke_test.py` của lần chạy sau **thoát ra không in
+gì cả** (không phải `[FAIL]`, mà là không có output) — trông như harness
+chết. Kiểm tra bằng `ps -eo comm | grep '^qemu-system-x86$'`. Lệnh kết
+thúc rồi thì xoá `hdd.img.lock` và **chờ QEMU thực sự biến mất** trước
+khi chạy lần kế tiếp, nếu không sẽ dính đúng lỗi tranh chấp disk này.
 
 ### 12.6 Cờ RTTI của `verify_pascal_link.sh` khi có app
 

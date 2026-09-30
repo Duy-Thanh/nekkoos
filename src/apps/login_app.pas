@@ -64,6 +64,11 @@ const
   IPC_READ_CHUNK_OK = 39;   { ack a chunk }
   IPC_READ_EOF     = 42;    { end of file }
 
+  { A read that arrives incomplete is a race, not a corrupt disk, so the
+    transfer is simply run again. Bounded so a genuinely unreachable file
+    still ends in an error rather than a loop. }
+  READ_ATTEMPTS    = 3;
+
   IPC_CD_REQ       = 36;
   IPC_CD_REPLY     = 37;
 
@@ -201,67 +206,107 @@ end;
   Returns the size, or 0 on any failure. }
 function ReadFileIPC(fileName: PWord; fileBuffer: PByte; bufferCapacity: Cardinal): Cardinal;
 var
-  fileSize, offset: Cardinal;
+  attempt: Integer;
+  fileSize, offset, nextOffset: Cardinal;
   dataChunk: PByte;
   i: Integer;
+  gap, tooBig: Boolean;
 begin
   ReadFileIPC := 0;
-  StringToSharedBuffer(fileName, SharedNameBuffer);
-  App_SendIPC(FAT16_PID, IPC_READ_REQ, 0);
 
-  fileSize := 0;
-  dataChunk := SharedRespData;
+  { Wipe the destination before the first attempt. This buffer is static and
+    outlives a failed attempt, so without this any byte a short transfer
+    leaves untouched still holds the previous login's text, and the caller
+    goes on to hash it as if it were fresh file content. That is what made
+    /ETC/PASSWD read correctly but verify wrongly, intermittently. }
+  if bufferCapacity > 0 then
+    for i := 0 to Integer(bufferCapacity) - 1 do
+      fileBuffer[i] := 0;
 
-  while True do
+  for attempt := 1 to READ_ATTEMPTS do
   begin
-    if App_ReceiveIPC(@Msg[0]) = 1 then
+    StringToSharedBuffer(fileName, SharedNameBuffer);
+    App_SendIPC(FAT16_PID, IPC_READ_REQ, 0);
+
+    fileSize   := 0;
+    nextOffset := 0;
+    gap        := False;
+    tooBig     := False;
+    dataChunk  := SharedRespData;
+
+    while True do
     begin
-      if App_MsgSender(@Msg[0]) = FAT16_PID then
+      if App_ReceiveIPC(@Msg[0]) = 1 then
       begin
-        if App_MsgType(@Msg[0]) = IPC_READ_SIZE then
+        if App_MsgSender(@Msg[0]) = FAT16_PID then
         begin
-          fileSize := Cardinal(App_MsgPayload(@Msg[0]));
-          if fileSize = 0 then
+          if App_MsgType(@Msg[0]) = IPC_READ_SIZE then
           begin
-            ReadFileIPC := 0;
-            Exit;
-          end;
-          { A PASSWD file larger than the real buffer must be refused, not
-            truncated into - refusing is what keeps a bloated account
-            database from overwriting this process's memory. }
-          if fileSize > bufferCapacity then
-          begin
-            App_Print(W('#10[!!!] FATAL: File too large for buffer (potential overflow blocked)!'#10));
+            fileSize := Cardinal(App_MsgPayload(@Msg[0]));
+            if fileSize = 0 then Break;
+            { A PASSWD file larger than the real buffer must be refused, not
+              truncated into - refusing is what keeps a bloated account
+              database from overwriting this process's memory. }
+            if fileSize > bufferCapacity then
+            begin
+              App_Print(W('#10[!!!] FATAL: File too large for buffer (potential overflow blocked)!'#10));
+              App_SendIPC(FAT16_PID, IPC_READ_ACK, 0);
+              tooBig := True;
+              Break;
+            end;
             App_SendIPC(FAT16_PID, IPC_READ_ACK, 0);
-            ReadFileIPC := 0;
-            Exit;
-          end;
-          App_SendIPC(FAT16_PID, IPC_READ_ACK, 0);
-        end
-        else if App_MsgType(@Msg[0]) = IPC_READ_CHUNK then
-        begin
-          offset := Cardinal(App_MsgPayload(@Msg[0]));
-          i := 0;
-          while i < 512 do
+          end
+          else if App_MsgType(@Msg[0]) = IPC_READ_CHUNK then
           begin
-            if (Cardinal(i) + offset < fileSize) and (Cardinal(i) + offset < bufferCapacity) then
-              fileBuffer[offset + i] := dataChunk[i];
-            Inc(i);
-          end;
-          App_SendIPC(FAT16_PID, IPC_READ_CHUNK_OK, 0);
-        end
-        else if App_MsgType(@Msg[0]) = IPC_READ_EOF then
-        begin
-          ReadFileIPC := fileSize;
-          Exit;
+            offset := Cardinal(App_MsgPayload(@Msg[0]));
+            { The daemon only sends the next sector once this one is acked,
+              so the offsets must arrive back to back. Anything else means a
+              chunk went missing, and copying it at its own offset would
+              leave a hole that the buffer quietly fills with old data. }
+            if offset <> nextOffset then
+            begin
+              gap := True;
+              if offset < nextOffset then
+                App_SendIPC(FAT16_PID, IPC_READ_CHUNK_OK, 0);
+            end
+            else
+            begin
+              i := 0;
+              while i < 512 do
+              begin
+                if (Cardinal(i) + nextOffset < fileSize) and
+                   (Cardinal(i) + nextOffset < bufferCapacity) then
+                  fileBuffer[nextOffset + i] := dataChunk[i];
+                Inc(i);
+              end;
+              nextOffset := nextOffset + 512;
+              App_SendIPC(FAT16_PID, IPC_READ_CHUNK_OK, 0);
+            end;
+          end
+          else if App_MsgType(@Msg[0]) = IPC_READ_EOF then
+            Break;
         end;
+        { Junk letter: drop it and keep waiting. Falling through to WaitIPC here
+          would sleep on a mailbox that already has a message in it. }
+        Continue;
       end;
-      { Junk letter: drop it and keep waiting. Falling through to WaitIPC here
-        would sleep on a mailbox that already has a message in it. }
-      Continue;
+      App_WaitIPC;
     end;
-    App_WaitIPC;
+
+    { Do not take the daemon's word for it. EOF only means the daemon stopped
+      sending; it does not prove every byte arrived, and a short or gapped
+      transfer has to be reported as a failure instead of being handed back
+      as a complete file. }
+    if (fileSize <> 0) and (not gap) and (nextOffset >= fileSize) then
+    begin
+      ReadFileIPC := fileSize;
+      Exit;
+    end;
+
+    if tooBig then Exit;
   end;
+
+  ReadFileIPC := 0;
 end;
 
 { Change the daemon's working directory. Returns the daemon's verdict. }
