@@ -787,17 +787,36 @@ bộ ảnh rồi patch giá trị đó bằng địa chỉ vDSO thật. Magic ph
 
 | App | Unit Pascal | Ghi chú |
 |---|---|---|
-| Mouse.exe | `src/apps/mouse_app.pas` | đầu tiên, smoke 9/9 |
-| Shell.exe | `src/apps/shell_app.pas` | |
-| SysLogon.exe | `src/apps/login_app.pas` | |
-| ATA.exe | `src/apps/ata_app.pas` | |
-| FAT16.exe | `src/apps/fat16_app.pas` | |
-| top.exe | `src/apps/top_app.pas` | |
-| dsrv.exe | `src/apps/dsrv_app.pas` | |
-| explorer.exe | `src/apps/explorer_app.pas` | |
-| stresstest.exe | `src/apps/stress_app.pas` | |
+| Mouse.exe | `src/apps/mouse_app.pas` | ✅ **đã link bằng lld** |
+| SysLogon.exe | `src/apps/login_app.pas` | ✅ **đã link bằng lld** |
+| Shell.exe | `src/apps/shell_app.pas` | ✅ **đã link bằng lld** |
+| ATA.exe | `src/apps/ata_app.pas` | đang port |
+| FAT16.exe | `src/apps/fat16_app.pas` | đang port |
+| top.exe | `src/apps/top_app.pas` | đang port |
+| dsrv.exe | `src/apps/dsrv_app.pas` | đang port |
+| explorer.exe | `src/apps/explorer_app.pas` | đang port |
+| stresstest.exe | `src/apps/stress_app.pas` | đang port |
+| acpi.exe | `src/apps/acpi_app.pas` | chưa làm |
 
 `app_api.pas` thay cho `API.cs` — gateway syscall cho toàn bộ userland.
+
+Đăng ký app mới: thêm tên unit vào `APP_MODULES` trong `compile_pascal.sh`
+(cũng là chỗ chạy relocation stripper), rồi thêm một dòng `link_app` trong
+`build.sh` và **xoá** dòng `$BF build src/apps/<app>.cs ...` tương ứng.
+
+### 12.1b ⚠️ ABI của vài syscall không theo tuần tự tham số thường
+
+`app_api.pas` đã vấp một lỗi kiểu này và đã sửa, nhưng còn dễ mắc:
+
+- **slot 27 `CreateSharedBuffer`**: kernel đọc `RCX=destPid`, `RDX=numPages`,
+  `R8=&outAddr`, và trả về **hai** giá trị — RAX là địa chỉ của caller, **RBX
+  là địa chỉ của tiến trình đích**. Wrapper phải load tay bằng inline asm;
+  gọi có kiểu thường sẽ bỏ mất RBX.
+- **slot 36 `SudoRun`**: `RCX=appName`, `RDX=password`, `R8=content`,
+  `R9=contentLen`.
+
+Khi thêm wrapper mới, **đọc `Syscall.cs` case tương ứng trước** để biết
+kernel thực sự đọc thanh ghi nào — đừng suy ra từ tên hàm. Xem §6.4.
 
 ### 12.2 Thứ tự để xoá bflat khỏi Kernel.exe
 
