@@ -9,7 +9,6 @@ NvVars
 *.efi
 *.obj
 *.img
-*.py
 *.map
 *.pem
 *.der
