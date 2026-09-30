@@ -21,6 +21,23 @@ interface
 
 uses libc;
 
+  { Parsed command result - use simple types, no record }
+  { Action: Byte; Arg: PWord; ArgLen: Word }
+
+{ Initialize - no-op for now }
+procedure InternalShell_SetSchedulerState(threads: Pointer; threadCount: Integer;
+  currentThreadIdPtr: PInteger; foregroundTaskPtr: PInteger; systemTicksPtr: PQWord); cdecl;
+  public name 'InternalShell_SetSchedulerState';
+
+{ Parse command string into action + argument }
+function InternalShell_ParseCommand_Pas(cmdStr: PWord; outAction: PByte; outArg: PWord; outArgLen: PWord): Byte; cdecl;
+  public name 'InternalShell_ParseCommand_Pas';
+
+implementation
+
+{ TShellAction lives here, not in the interface: an enum reachable from the
+  interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
+  It is private to this unit; callers receive the action as a Byte. }
 type
   { Command action types returned by parser }
   TShellAction = (
@@ -40,20 +57,6 @@ type
     SA_LOGOUT = 13,
     SA_UNKNOWN = 255
   );
-
-  { Parsed command result - use simple types, no record }
-  { Action: Byte; Arg: PWord; ArgLen: Word }
-
-{ Initialize - no-op for now }
-procedure InternalShell_SetSchedulerState(threads: Pointer; threadCount: Integer;
-  currentThreadIdPtr: PInteger; foregroundTaskPtr: PInteger; systemTicksPtr: PQWord); cdecl;
-  public name 'InternalShell_SetSchedulerState';
-
-{ Parse command string into action + argument }
-function InternalShell_ParseCommand_Pas(cmdStr: PWord; outAction: PByte; outArg: PWord; outArgLen: PWord): Byte; cdecl;
-  public name 'InternalShell_ParseCommand_Pas';
-
-implementation
 
 { Initialize - no-op }
 procedure InternalShell_SetSchedulerState(threads: Pointer; threadCount: Integer;

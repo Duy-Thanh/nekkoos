@@ -18,10 +18,12 @@ unit platform_impl;
 
 interface
 
-type
-  TPlatformType = (ptX86_64, ptARM64, ptRISCV64);
+{ TPlatformType lives in the implementation, not here: an enum in the
+  interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
+  The exported function returns a plain Cardinal instead, which is the same
+  4 bytes on the wire, so the ABI is unchanged for any caller. }
 
-function  HAL_GetPlatformType: TPlatformType; cdecl; public name 'HAL_GetPlatformType';
+function  HAL_GetPlatformType: Cardinal; cdecl; public name 'HAL_GetPlatformType';
 function  HAL_GetPlatformName: PChar; cdecl; public name 'HAL_GetPlatformName';
 function  HAL_GetCPUVendor: PChar; cdecl; public name 'HAL_GetCPUVendor';
 function  HAL_GetCPUModel: PChar; cdecl; public name 'HAL_GetCPUModel';
@@ -38,6 +40,10 @@ function  HAL_ReadCycleCounter: QWord; cdecl; public name 'HAL_ReadCycleCounter'
 
 implementation
 
+{ Platform identifiers, kept out of the interface - see the note above. }
+type
+  TPlatformType = (ptX86_64, ptARM64, ptRISCV64);
+
 { AAL Layer 1 primitives }
 procedure Arch_WritePort8(port: Word; value: Byte); cdecl; external name 'Arch_WritePort8';
 function  Arch_ReadPort8(port: Word): Byte; cdecl; external name 'Arch_ReadPort8';
@@ -47,9 +53,9 @@ function  Arch_ReadTimestamp: QWord; cdecl; external name 'Arch_ReadTimestamp';
 const
   COM1 = $3F8;
 
-function HAL_GetPlatformType: TPlatformType; cdecl;
+function HAL_GetPlatformType: Cardinal; cdecl;
 begin
-  HAL_GetPlatformType := ptX86_64;
+  HAL_GetPlatformType := Cardinal(ptX86_64);
 end;
 
 function HAL_GetPlatformName: PChar; cdecl;
