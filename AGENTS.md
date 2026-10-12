@@ -1030,3 +1030,97 @@ không có giá trị chẩn đoán. Đã sửa hai thứ và thêm một thứ:
 **Bài học chung:** đừng dùng `wait_for(r"root@nekkoOS#")` làm bằng chứng.
 Prompt quay lại bất kể lệnh thành công hay không — chỉ có text của chính
 lệnh đó mới là bằng chứng.
+
+---
+
+## 13. Bẫy đã tự vấp (2026-10-12) — đọc trước khi debug Mouse handshake
+
+Ghi lại vì đã đốt một buổi sáng vào đó.
+
+### 13.1 `build.sh` từng xoá sạch artifact trước khi compile — ĐÃ SỬA
+
+Dòng cleanup ở đầu `build.sh` xoá `*.exe` và `hdd.img` **trước khi compile bất cứ
+thứ gì**. Một lỗi compile Pascal (hoặc C#) làm `set -e` bắn ra ngay, để lại cây
+thư mục **rỗng** — không còn `hdd.img`, không còn app nào.
+
+Hậu quả đo được: `smoke_test.py` báo
+`[FATAL] disk image (hdd.img) not found`. Thông báo đó **trông chẳng giống lỗi
+build chút nào** nên rất dễ bị hiểu nhầm là QEMU cấu hình sai, và mất hàng giờ
+đi sai hướng.
+
+Đã sửa (commit `8bccb1a`): artifact được `mv` sang chỗ tạm, `trap ERR` đưa lại
+nếu build không xong. Verify bằng cách chèn lỗi compile thật vào
+`ata_app.pas` — build `exit 1`, có thông báo rõ, 11 exe + hdd.img còn nguyên.
+
+**Bài học:** nếu smoke test nói không thấy `hdd.img`, hãy chạy `./build.sh` và
+đọc exit code TRƯỚC khi đụng vào QEMU.
+
+### 13.2 Log stale đọc như log mới — bẫy tự đánh lừa chính mình
+
+6 lần đo "đã fix Mouse timeout" là **vô giá trị hoàn toàn**:
+
+- build fail → `hdd.img` không tồn tại
+- mỗi run smoke test FATAL ngay, **không tạo log mới**
+- lệnh `ls -t logs/*.log | head -1` trong vòng lặp copy **log của lần trước**
+- `grep -c 'Timeout waiting'` trên output rỗng → `0 timeouts`
+- markers `[MOUSE] b c d e f` in ra đẹp đẹp — nhưng đó là log cũ
+
+Kết luận "đã hết timeout" được rút từ **không có lần chạy nào cả**. Đây là lỗi
+của tôi, không phải của test.
+
+**Quy tắc:** trước khi tin một phép đo, kiểm tra phép đo đó có thực sự chạy
+không. `[FATAL] ... not found` là bằng chứng phản bác, không phải nhiễu.
+
+### 13.3 Mouse handshake timeout — ĐÃ ĐO, CHƯA SỬA
+
+**Sự thật đã xác lập (đo, không suy đoán):**
+- `App_SendIPC(0, 44, 0)` là **hành động đầu tiên** trong `AppMain`, trước cả
+  `App_GrantPort`. Nên lý do "chết trước khi gửi" trong comment cũ là sai.
+- `PELoader.LoadAndRun(rawFat, true, false, true, p3, 3)` cho Mouse:
+  `runInBackground=true, isJailed=false, forceRoot=true`.
+  `forceRoot` ⇒ `UID=0` ⇒ `isKing=true` ⇒ `DispatchGrantPortAccess` **không**
+  giết. Không jailed nên nhánh `IsJailed==1 && receiver 0/1` trong `case 5`
+  cũng không bắn.
+- **~50% boot mất handshake** (đo 3/6 lần với build sạch, và 5/5 ở lần đo khác).
+  Không phải flake ~1/3 như §6.10 từng ghi.
+- Chi phí: đúng **30 giây** (`PIT.Ticks - daemonWaitStart > 30000`). Không mất
+  chức năng — 10/10 bước smoke vẫn pass.
+
+**Ứng viên còn lại, chưa loại trừ:**
+- Vòng chờ `Kernel.cs:424-450` chỉ `IO.Hlt()`, **không `Scheduler.Yield()`**
+  trong khi vòng chờ ACPI (`Kernel.cs:348-368`) có. Nếu `Hlt` một mình không
+  chuyển thread thì Mouse không được schedule. Nhưng nếu đúng vậy thì phải fail
+  100%, nên chưa giải thích được tỷ lệ 50%.
+- `Scheduler.Threads[receiverId].Active == 0` tại thời điểm Mouse gửi ⇒
+  `Syscall.cs:229` **drop message, trả về 0**. Đây là ứng viên mạnh nhất vì nó
+  giải thích được intermittency: `Active` là biến race, chỉ cần send trúng lúc
+  thread 0 đang chuyển trạng thái là mất. Chưa đo được vì hết giờ.
+- `KernelIdleLoop` (`Kernel.cs:101-110`) drain receiver 0 nhưng **chỉ xử lý
+  type 9 và 39** — type 44 rơi vào đây sẽ bị vứt. Nhưng `KernelIdleLoop` chỉ
+  chạy sau vòng chờ 30s nên chưa thấy đường nào tới được.
+- Diagnostic trong chính vòng chờ (in `dbgLoop`) **làm lỗi biến mất hoàn toàn**
+  (0/10 lần). Phép thử đó không chứng minh gì về nguyên nhân — nó chỉ chứng minh
+  đây là race nhạy với timing, và **không thể quan sát bằng cách chèn code vào
+  đúng chỗ đang cần quan sát**.
+
+**Cách làm nếu tiếp tục (nên làm theo thứ tự này):**
+1. Thêm wrapper trả giá trị syscall cho `App_SendIPC` trong `mouse_app.pas`
+   (khai báo `function ...): Cardinal; cdecl;` ở **cả** `interface` lẫn
+   `implementation`, nếu không FPC báo `Calling convention doesn't match`).
+   `0` = kernel từ chối queue ⇒ xác nhận ứng viên `Active == 0`.
+2. Nếu (1) ra 0: loại bỏ điều kiện `Active == 0` cho receiver là thread kernel,
+   hoặc đọc `Active` một cách an toàn hơn.
+3. Đăng ký type 44 trong `KernelIdleLoop` đề phòng path khác chạy tới.
+
+### 13.4 FPC: rác sau `end.` được chấp nhận im lặng
+
+`procedure Broken; begin Undefined_Symbol(); end;` **thêm vào sau `end.` cuối
+cùng của unit** compile sạch, không warning, không error. Phải chèn lỗi **bên
+trong** unit (trước `end.`) thì mới test được đường lỗi compile.
+
+### 13.5 Không đặt `type` ở giữa `implementation` khi đang debug nhanh
+
+Hai lần phải dời `type TFn` / `procedure DbgStep` vì FPC không thấy symbol dù
+thứ tự nhìn có vẻ đúng. Nếu phải chèn helper vào app Pascal, khai báo ở
+`interface` và `implementation` **cùng một dạng signature** (kể cả `cdecl`).
+
