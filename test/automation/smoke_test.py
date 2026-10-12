@@ -218,44 +218,66 @@ def tail(n=50):
     return "\n".join(lines[-n:])
 
 
-def snapshot_lines():
-    """Line count of the serial log, to be used as a baseline.
+def serial_size():
+    try:
+        return os.path.getsize(SERIAL_LOG)
+    except OSError:
+        return 0
 
-    Typing a command echoes the keystrokes back into the log, so the text a
-    command prints can easily be confused with the echo of what was typed a
-    step earlier. Taking a baseline first and only looking at what follows it
-    is what stops "cat hello.txt" from passing because the write step's echo
-    of the content is still in the buffer.
+
+def tail_since_bytes(offset):
+    with open(SERIAL_LOG, "rb") as f:
+        f.seek(offset)
+        return f.read().decode(errors="replace")
+
+
+def wait_quiet(quiet_for=0.8, timeout=25):
+    """Wait until the serial log stops producing bytes.
+
+    There is no usable "prompt returned" event to wait for after a command.
+    The shell echoes the keystrokes back onto the same serial line as the
+    prompt it is already sitting on, so the line ends up as
+    "root@nekkoOS# cd ..#10[!] Directory not found..." and the prompt the step
+    wants to wait for is present before the command has done anything. Waiting
+    for it returns on the echo, and the output written afterwards is never read
+    - which is how a step reports PASS for a command the OS refused.
+
+    An ls adds more lines below it, so even a change in line count is not a
+    signal of completion. The only one that is: the log going quiet.
     """
-    return len(read_serial_log().splitlines())
+    last = serial_size()
+    since = time.time()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.12)
+        cur = serial_size()
+        if cur != last:
+            last = cur
+            since = time.time()
+        elif time.time() - since >= quiet_for:
+            return True
+    return False
 
 
-def tail_since(baseline):
-    """Only the log produced after `baseline` was taken."""
-    lines = read_serial_log().splitlines()
-    return "\n".join(lines[baseline:])
+def run_cmd(cmd, timeout=25, quiet_for=0.8):
+    """Type one command and return (completed, everything the log produced).
+
+    The baseline is a byte offset taken before the first keystroke, so the echo
+    of the command and its output are both captured - but they are only
+    inspected once the log has gone quiet, which is what makes the returned
+    text trustworthy. A caller that checked a pattern as soon as it appeared
+    would still race the output.
+    """
+    offset = serial_size()
+    type_text(cmd + "\n")
+    ok = wait_quiet(timeout=timeout, quiet_for=quiet_for)
+    return ok, tail_since_bytes(offset)
 
 
 def wait_for(pattern, timeout=30, window=200):
     deadline = time.time() + timeout
     while time.time() < deadline:
         snap = tail(window)
-        if re.search(pattern, snap):
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def wait_for_since(pattern, baseline, timeout=30, extra=0):
-    """Wait for a pattern, but only in the log produced after `baseline`.
-
-    Used where the prompt itself would otherwise match: without the baseline
-    the previous step's prompt satisfies the check and the step passes
-    without the command ever having produced anything.
-    """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        snap = tail_since(baseline + extra)
         if re.search(pattern, snap):
             return True
         time.sleep(0.5)
@@ -284,7 +306,13 @@ class Result:
 
 
 def step_boot_to_login(res):
-    ok = wait_for(r"Username:", timeout=60, window=300)
+    # The kernel gives a wedged daemon 30 seconds before it prints
+    # "[!] Timeout waiting for X handshake!" and carries on, and boot itself
+    # has been measured anywhere between 11 and 130 seconds. A 60-second cap
+    # on this step therefore kills the run during the very wait whose result
+    # we want to read, which turns an observable timeout into a blank failure
+    # with nothing in the log to explain it.
+    ok = wait_for(r"Username:", timeout=150, window=300)
     res.record("boot to login prompt", ok)
     return ok
 
@@ -301,82 +329,85 @@ def step_login(res):
 
 
 def step_ls_empty_home(res):
-    before = snapshot_lines()
-    type_text("ls\n")
-    ok = wait_for_since(r"root@nekkoOS#", before, timeout=15)
-    snap = tail_since(before)
+    ok, snap = run_cmd("ls")
     no_panic = "PANIC" not in snap and "EXCEPTION" not in snap
     res.record("ls in empty home dir (ClearBuffer fix)", ok and no_panic)
     return ok and no_panic
 
 
 def step_uppercase_ls(res):
-    before = snapshot_lines()
-    type_text("LS\n")
-    ok = wait_for_since(r"root@nekkoOS#", before, timeout=15)
-    snap = tail_since(before)
+    ok, snap = run_cmd("LS")
     # Case-insensitive dispatch: LS must hit the ls handler instead of RunCmd.
     # Handler produces a directory listing; RunCmd prints "not found" / error.
     has_listing = "DIR" in snap or "bytes" in snap
-    res.record("uppercase LS delegates to ls (Pascal StrCmp_Pas)", ok and has_listing)
-    return ok and has_listing
+    not_error = "not found" not in snap and "Access Denied" not in snap
+    res.record("uppercase LS delegates to ls (Pascal StrCmp_Pas)",
+               ok and has_listing and not_error)
+    return ok and has_listing and not_error
 
 
 def step_cd_dotdot(res):
-    before = snapshot_lines()
-    type_text("cd ..\n")
-    ok = wait_for_since(r"root@nekkoOS#", before, timeout=15)
-    snap = tail_since(before)
-    # The prompt comes back whether or not the directory changed, so the
-    # prompt alone proved nothing. Look for the shell's own error text.
+    ok, snap = run_cmd("cd ..")
+    # The prompt comes back whether or not the directory changed, and it comes
+    # back before the command has run at all, so neither the prompt nor the
+    # line count proves anything. Only this text does.
     denied = "Directory not found" in snap or "Access Denied" in snap
-    res.record("cd .. prefix match via StrStartsWith_Pas", ok and not denied)
+    res.record("cd .. changes to parent directory", ok and not denied)
     return ok and not denied
 
 
 def step_root_listing(res):
-    before = snapshot_lines()
-    type_text("ls\n")
-    ok = wait_for_since(r"root@nekkoOS#", before, timeout=15)
-    snap = tail_since(before)
+    ok, snap = run_cmd("ls")
     no_panic = "PANIC" not in snap and "EXCEPTION" not in snap
+    # After a successful "cd .." from HOME the listing must show the volume
+    # root's entries, not the home directory again.
     has_content = bool(re.search(r"\w+\s+\|", snap))
     res.record("root dir listing via FAT16 IPC", ok and no_panic and has_content)
     return ok and no_panic and has_content
 
 
 def step_write_and_cat(res):
-    before_w = snapshot_lines()
-    type_text("write hello.txt\n")
-    ok1 = wait_for_since(r"Enter content\. End with", before_w, timeout=15)
-    if not ok1:
-        time.sleep(2)
-    before_content = snapshot_lines()
+    ok, snap = run_cmd("write hello.txt")
+    entered_content = "Enter content" in snap
+    off = serial_size()
     type_text("automated smoke test\n.\n")
+    ok2 = wait_quiet(timeout=25)
+    write_snap = tail_since_bytes(off)
     # The shell echoes the bytes as they are typed, so the content shows up in
     # the log here whether or not it is ever written to disk. Only the
     # explicit success message proves the write happened.
-    ok_write = wait_for_since(r"\[\+\] File written successfully", before_content,
-                              timeout=20)
-    ok2 = wait_for_since(r"root@nekkoOS#", before_content, timeout=15)
-    snap = tail_since(before_content)
-    write_ok = ok_write and "[+] File written successfully" in snap
-    no_panic = "PANIC" not in snap and "EXCEPTION" not in snap
-    res.record("write hello.txt", ok2 and write_ok and no_panic)
+    write_ok = "[+] File written successfully" in write_snap
+    no_panic = "PANIC" not in write_snap and "EXCEPTION" not in write_snap
+    res.record("write hello.txt", ok2 and entered_content and write_ok and no_panic)
+
+    # The write's own success message only proves the daemon thinks it wrote.
+    # A reply that reports success while the entry never lands is exactly the
+    # failure "write then cat" is blind to, so list the directory and confirm
+    # the file is actually there under its 8.3 name before reading it back.
+    # This is also the only place the real on-disk name is observable: a name
+    # that arrives mangled never shows up in a listing.
+    ok_ls, ls_snap = run_cmd("ls")
+    # The listing renders the 11-byte FAT name as base + "." + extension, so
+    # "hello.txt" appears as HELLO.TXT, not "HELLO   TXT".
+    listed = re.search(r"\bHELLO\.TXT\b", ls_snap) is not None
+    listed_size = re.search(r"HELLO\.TXT.*?(\d+)\s*bytes", ls_snap)
+    if listed and listed_size and int(listed_size.group(1)) == 0:
+        # Present but zero length: the name is right, the content is not.
+        listed = False
+    res.record("hello.txt appears in the directory listing with its size",
+               ok_ls and listed)
 
     # Read it back from a clean baseline. Without it, the echo of the content
     # above is still in the window and the cat step passes on text the file
     # may never contain.
-    before_c = snapshot_lines()
-    type_text("cat hello.txt\n")
-    ok3 = wait_for_since(r"root@nekkoOS#", before_c, timeout=15)
-    snap = tail_since(before_c)
-    cat_ok = "automated smoke test" in snap
-    not_denied = "not found" not in snap and "Access Denied" not in snap
-    no_panic2 = "PANIC" not in snap and "EXCEPTION" not in snap
+    ok3, cat_snap = run_cmd("cat hello.txt")
+    cat_ok = "automated smoke test" in cat_snap
+    not_denied = "not found" not in cat_snap and "Access Denied" not in cat_snap
+    no_panic2 = "PANIC" not in cat_snap and "EXCEPTION" not in cat_snap
     res.record("cat hello.txt reads back content",
                ok3 and cat_ok and not_denied and no_panic2)
-    return ok2 and write_ok and no_panic and ok3 and cat_ok and not_denied and no_panic2
+    return (entered_content and write_ok and no_panic and ok_ls and listed
+            and ok3 and cat_ok and not_denied and no_panic2)
 
 
 def step_shutdown(res):
