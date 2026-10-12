@@ -162,6 +162,17 @@ const
   DIR_FREE_SLOT = $00;   { no further entries in this sector }
   DIR_DELETED   = $E5;
 
+  { Sentinel for "this subtree does not contain the target directory".
+    Valid clusters run 2..$FFEF, so $FFFF cannot collide with a real cluster
+    and cannot be mistaken for the root (which is cluster 0). }
+  DIR_UNVISITED = $FFFF;
+
+  { Recursion bound for the parent walk. A corrupt FAT can chain directories
+    into a cycle; without a bound the walk would never return and would hold
+    the daemon - and with it every client - forever. Deeper nesting than this
+    is not something this volume produces. }
+  WALK_MAX_DEPTH = 32;
+
 type
   { The shared window is one physical page range mapped into every daemon.
     The offsets are an ABI with the kernel and with ata_app.pas. }
@@ -229,6 +240,20 @@ type
     ChsLast:       array[0..2] of Byte;
     LbaStart:      Cardinal;
     SectorCount:   Cardinal;
+  end;
+
+  { One level of the parent walk.
+
+    A directory here is either the fixed root area or a chain of clusters, so
+    resuming a scan means resuming a chain position and a place inside it.
+    Keeping that resume position is what lets the walk run on a single sector
+    buffer. A recursive version would need one buffer per level, or - sharing
+    one - would let a child overwrite the sector its parent was still scanning. }
+  TWalkFrame = record
+    Cluster:  Word;      { current cluster of this directory's chain }
+    SecIdx:   Cardinal;  { next sector to read within it }
+    EntryIdx: Integer;   { next entry to look at inside that sector }
+    IsRoot:   Boolean;   { the root area is not part of any chain }
   end;
 
   { IPC envelope. Layout must match app_api's private TMessage. }
@@ -653,6 +678,263 @@ begin
   end;
 
   FindEntry := (outSize^ > 0) or (outAttr^ <> 0) or (outCluster^ <> 0);
+end;
+
+{ ---------------------------------------------------------------------
+  Locating a directory's parent
+  --------------------------------------------------------------------- }
+
+{ Examine one directory and everything below it, looking for the entry that
+  points at `target`.
+
+  FAT16 stores no "." and ".." entries, so a directory has no idea where it
+  sits in the tree. Everything else - mkdir, rm, the whole permission model -
+  reads the tree from the root down, and "cd .." has to as well: the only way
+  to learn the parent of a cluster is to look at every entry of every
+  directory on the volume and find the one that points back at it.
+
+  Returns the parent's cluster, or 0 when the parent is the volume root
+  (the root directory occupies the fixed area before the data clusters and
+  has no cluster number of its own). Returns DIR_UNVISITED when this subtree
+  does not contain the target, which tells the caller to keep walking.
+
+  The depth parameter is the recursion guard and nothing else: it is not the
+  tree's real depth, just a bound on how far a chain may be followed. }
+function FindParentInTree(target: Word;
+  outCluster: PWord; outAttr: PByte; outOwnerUID, outOwnerGID,
+  outPerms: PWord; sectorBuf, fatBuf: PByte): Word;
+var
+  stack: array[0..WALK_MAX_DEPTH - 1] of TWalkFrame;
+  depth: LongInt;
+  sectors: Cardinal;
+  clusterLba: Cardinal;
+  fatSector: Cardinal;
+  nextCluster: Word;
+  ent: PDirEntry;
+  e: Integer;
+  childCluster: Word;
+  descended: Boolean;
+  endOfDir: Boolean;
+begin
+  FindParentInTree := DIR_UNVISITED;
+
+  if (sectorBuf = nil) or (fatBuf = nil) then Exit;
+  if RootDirSectors > MAX_ROOT_DIR_SECTORS then Exit;
+  if CachedBPB.SectorsPerCluster = 0 then Exit;
+
+  { Start at the root: the fixed area before the data clusters, which is
+    not part of any cluster chain. }
+  stack[0].Cluster   := 0;
+  stack[0].SecIdx    := 0;
+  stack[0].EntryIdx  := 0;
+  stack[0].IsRoot    := True;
+  depth := 0;
+
+  while depth >= 0 do
+  begin
+    { How many sectors this directory still has. The root is the fixed run
+      declared in the BPB; a subdirectory is a chain of clusters and its
+      length is only known by walking the FAT, so the chain is followed one
+      cluster at a time rather than counted up front. }
+    if stack[depth].IsRoot then
+    begin
+      if not IsValidCluster(stack[depth].Cluster) then
+      begin
+        Dec(depth);
+        Continue;
+      end;
+      sectors := RootDirSectors;
+    end
+    else
+    begin
+      sectors := CachedBPB.SectorsPerCluster;
+      if not IsValidCluster(stack[depth].Cluster) then
+      begin
+        Dec(depth);
+        Continue;
+      end;
+    end;
+
+    { End of this directory: step to the next cluster of its chain, or pop
+      back to the parent level when the chain is spent. }
+    if stack[depth].SecIdx >= sectors then
+    begin
+      if stack[depth].IsRoot then
+      begin
+        Dec(depth);
+        Continue;
+      end;
+
+      fatSector := FAT16_FatSectorForCluster_Pas(FatStartLba,
+                    CachedBPB.ReservedSectorCount, stack[depth].Cluster);
+      if fatSector > MAX_LBA28 then
+      begin
+        Dec(depth);
+        Continue;
+      end;
+      ReadSectorIPC(fatSector, fatBuf);
+      nextCluster := FAT16_GetNextCluster_Pas(fatBuf, stack[depth].Cluster);
+      if not IsValidCluster(nextCluster) then
+      begin
+        Dec(depth);
+        Continue;
+      end;
+      stack[depth].Cluster  := nextCluster;
+      stack[depth].SecIdx   := 0;
+      stack[depth].EntryIdx := 0;
+      Continue;
+    end;
+
+    if stack[depth].IsRoot then
+      clusterLba := RootDirLba + stack[depth].SecIdx
+    else
+      clusterLba := FAT16_ClusterLba_Pas(FirstDataSector,
+                     stack[depth].Cluster, CachedBPB.SectorsPerCluster) +
+                     stack[depth].SecIdx;
+
+    if clusterLba > MAX_LBA28 then
+    begin
+      Dec(depth);
+      Continue;
+    end;
+
+    ReadSectorIPC(clusterLba, sectorBuf);
+
+    { Scan this directory's entries from the saved position. Everything the
+      loop needs to resume later lives in stack[depth], which is why the walk
+      only ever needs one sector buffer: no level overwrites another's
+      in-progress scan. }
+    descended := False;
+    endOfDir := False;
+    while stack[depth].EntryIdx < DIR_PER_SECTOR do
+    begin
+      e := stack[depth].EntryIdx;
+      ent := PDirEntry(PByte(sectorBuf) + (e * DIRENTRY_SIZE));
+
+      { End of the directory. Every entry past the first free slot is unused
+        and must not be read as data. }
+      if ent^.Name[0] = DIR_FREE_SLOT then
+      begin
+        endOfDir := True;
+        Break;
+      end;
+
+      if ent^.Name[0] <> DIR_DELETED then
+      begin
+        if ((ent^.Attributes and ATTR_LFN) <> ATTR_LFN) and
+           ((ent^.Attributes and ATTR_VOLUME_ID) = 0) then
+        begin
+          { Found the entry that points back at the target, so this level is
+            its parent. Cluster 0 means the volume root, which is a cluster
+            number in its own right and the common answer. }
+          if ((ent^.Attributes and ATTR_DIRECTORY) <> 0) and
+             (ent^.FirstClusterLow = target) then
+          begin
+            if outCluster <> nil then outCluster^ := stack[depth].Cluster;
+            if outAttr <> nil then outAttr^ := ent^.Attributes;
+            if outOwnerUID <> nil then outOwnerUID^ := ent^.OwnerUID;
+            if outOwnerGID <> nil then outOwnerGID^ := ent^.OwnerGID;
+            if outPerms <> nil then outPerms^ := ent^.Permissions;
+            FindParentInTree := stack[depth].Cluster;
+            Exit;
+          end;
+
+          { Not the target. If it is a directory the target may live inside
+            it, so descend, remembering where to pick this level back up. }
+          if ((ent^.Attributes and ATTR_DIRECTORY) <> 0) and
+             IsValidCluster(ent^.FirstClusterLow) then
+          begin
+            childCluster := ent^.FirstClusterLow;
+            if depth + 1 >= WALK_MAX_DEPTH then
+            begin
+              Dec(depth);
+              FindParentInTree := DIR_UNVISITED;
+              Exit;
+            end;
+            stack[depth].EntryIdx := e + 1;
+            Inc(depth);
+            stack[depth].Cluster  := childCluster;
+            stack[depth].SecIdx   := 0;
+            stack[depth].EntryIdx := 0;
+            stack[depth].IsRoot   := False;
+            descended := True;
+            Break;
+          end;
+        end;
+      end;
+
+      stack[depth].EntryIdx := e + 1;
+    end;
+
+    if descended then Continue;
+
+    { The directory announced its end at the first free slot. Everything past
+      it is unused, so the level is done: do not follow the chain any further
+      hoping to find more entries. }
+    if endOfDir then
+    begin
+      Dec(depth);
+      Continue;
+    end;
+
+    { Sector exhausted: move on to the next sector of this directory. }
+    stack[depth].SecIdx := stack[depth].SecIdx + 1;
+    stack[depth].EntryIdx := 0;
+  end;
+
+  FindParentInTree := DIR_UNVISITED;
+end;
+
+{ Public wrapper used by "cd ..".
+
+  Returns the parent cluster, or the cluster that was passed in when the
+  parent cannot be found - "cd .." then leaves the working directory
+  unchanged rather than silently landing somewhere wrong. A directory at the
+  root level has the root as its parent, which is cluster 0. }
+function FindParentCluster(target: Word;
+  outCluster: PWord; outAttr: PByte; outOwnerUID, outOwnerGID,
+  outPerms: PWord; sectorBuf, fatBuf, formattedName: PByte): Word;
+var
+  found: Word;
+begin
+  { Cluster 0 is the root, whose parent is itself. }
+  if target = 0 then
+  begin
+    if outCluster <> nil then outCluster^ := 0;
+    if outAttr <> nil then outAttr^ := ATTR_DIRECTORY;
+    if outOwnerUID <> nil then outOwnerUID^ := 0;
+    if outOwnerGID <> nil then outOwnerGID^ := 0;
+    if outPerms <> nil then outPerms^ := DIR_PERMS;
+    FindParentCluster := 0;
+    Exit;
+  end;
+
+  if outCluster = nil then
+  begin
+    FindParentCluster := target;
+    Exit;
+  end;
+
+  outCluster^ := 0;
+  if outAttr <> nil then outAttr^ := 0;
+  if outOwnerUID <> nil then outOwnerUID^ := 0;
+  if outOwnerGID <> nil then outOwnerGID^ := 0;
+  if outPerms <> nil then outPerms^ := 0;
+
+  found := FindParentInTree(target, outCluster, outAttr, outOwnerUID,
+            outOwnerGID, outPerms, sectorBuf, fatBuf);
+
+  if found = DIR_UNVISITED then
+  begin
+    { Nothing on the volume points at this cluster. Either the directory was
+      removed behind the daemon's back or the FAT is damaged; keeping the
+      current position is the only safe answer. }
+    outCluster^ := target;
+    FindParentCluster := target;
+    Exit;
+  end;
+
+  FindParentCluster := outCluster^;
 end;
 
 { ---------------------------------------------------------------------
@@ -2145,10 +2427,45 @@ begin
       sharedName := PWord(@Fat_SharedMem^.FatRequestName[0]);
       StrCpyLimited(privateName, sharedName, 255);
 
+      { Single backslash names the volume root, which has no directory entry
+        to look up - the root is the fixed area before the data clusters. }
       if (privateName[0] = Ord('\')) and (privateName[1] = 0) then
       begin
         CurrentDirCluster := 0;
         App_SendIPC(client, FS_CD_RESULT, 1);
+        Continue;
+      end;
+
+      { ".." asks for the parent of the working directory. FAT16 keeps no "."
+        or ".." entries, so there is nothing on disk to look up by name: the
+        parent has to be found by walking the tree from the root. Doing this
+        here rather than falling through to FindEntry is what makes "cd .."
+        work at all - FindEntry formats ".." into the 11-byte FAT name
+        "..        ", which no directory on the volume contains, so the
+        lookup always failed and the shell reported the directory as missing. }
+      if (privateName[0] = Ord('.')) and (privateName[1] = Ord('.')) and
+         (privateName[2] = 0) then
+      begin
+        cdCluster := 0; cdSize := 0; cdAttr := 0;
+        cdOwnerUID := 0; cdOwnerGID := 0; cdPerms := 0;
+        FindParentCluster(CurrentDirCluster, @cdCluster, @cdAttr,
+          @cdOwnerUID, @cdOwnerGID, @cdPerms, sectorBuf, fatBuf,
+          formattedName);
+
+        { Entering a directory still needs execute permission on it, exactly
+          as a cd by name does. Skipping the check here would let any client
+          step out of a directory it was confined to. }
+        if not CheckAccess(callerUID, callerGID, cdOwnerUID, cdOwnerGID,
+             cdPerms, X_OK) then
+        begin
+          App_Print(W('[!] Access Denied: You do not have Execute (x) permission to enter this directory!'#13#10));
+          App_SendIPC(client, FS_CD_RESULT, 0);
+        end
+        else
+        begin
+          CurrentDirCluster := cdCluster;
+          App_SendIPC(client, FS_CD_RESULT, 1);
+        end;
         Continue;
       end;
 
