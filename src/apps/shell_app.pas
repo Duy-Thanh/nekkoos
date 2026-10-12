@@ -214,11 +214,17 @@ begin
   MemSet(ptr, 0, sizeBytes);
 end;
 
-{ Copy a wide-char path into the shared FAT16 name buffer, capped. }
+{ Copy a wide-char path into the shared FAT16 name buffer, capped.
+
+  The daemon reads FatRequestName as a wide-char string - PWord followed by
+  StrCpyLimited - so the name has to cross as wide characters. Narrowing it
+  to bytes here puts two half-characters per word into the buffer, and the
+  daemon's parser then stops at the first zero high byte: "hello.txt" reaches
+  it as the single character "h". That is why cat, cd by name, mkdir and rm
+  all reported their target as missing even when the entry existed. }
 procedure CopyPathToShared(src: PWord; cap: Integer); inline;
 begin
   StrCpyLimited(SharedNameBuffer, src, Cardinal(cap));
-  SharedNameBuffer[cap - 1] := 0;
 end;
 
 { Drain every pending message. Used before each command so a reply left over
@@ -344,7 +350,13 @@ var
   offset: Cardinal;
 begin
   sharedNameBuf := SharedNameBuffer;
-  WideStrToBytes(fileName, PByte(sharedNameBuf), 256);
+  { The daemon reads this buffer as a wide-char string, so the name crosses as
+    wide characters. Narrowing it to bytes here is what put a mangled entry on
+    disk: "hello.txt" was stored as "hlotT.EXE", and no client could find it
+    again under the name the operator typed. ls is what makes that visible -
+    cat provided no evidence at all, because it was looking the file up with
+    the same mangled encoding. }
+  StrCpyLimited(sharedNameBuf, fileName, 256);
   sharedNameBuf[255] := 0;
 
   ShellPrint(W('[*] Enter content. End with a single ''.'' on its own line:'#10));
