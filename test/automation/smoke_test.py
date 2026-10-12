@@ -259,19 +259,48 @@ def wait_quiet(quiet_for=0.8, timeout=25):
     return False
 
 
-def run_cmd(cmd, timeout=25, quiet_for=0.8):
+def wait_for_echo(cmd, offset, timeout=15):
+    """Wait until the typed command has been echoed back, after `offset`.
+
+    The keystrokes arrive over the QEMU monitor one at a time, so the echo lags
+    the send by a noticeable margin - and a slow daemon means the log can be
+    quiet again before its output has been produced. Waiting for the echo
+    first tells the harness the keystrokes landed, so the quiet window that
+    follows measures "the command finished" rather than "nothing has happened
+    yet".
+
+    Only the slice after `offset` is searched. Without that bound the needle
+    matches the echo of the same command typed at an earlier step, and the wait
+    returns before this run has even started.
+
+    Without this, a run reported "cat hello.txt reads back content" as FAIL
+    while the archived log showed the content on the very next line: the
+    snapshot was taken inside the gap between typing and the reply.
+    """
+    deadline = time.time() + timeout
+    needle = cmd.replace(" ", "")
+    while time.time() < deadline:
+        window = tail_since_bytes(offset).replace("\r", "")
+        if needle in window.replace(" ", ""):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def run_cmd(cmd, timeout=25, quiet_for=1.0):
     """Type one command and return (completed, everything the log produced).
 
     The baseline is a byte offset taken before the first keystroke, so the echo
     of the command and its output are both captured - but they are only
-    inspected once the log has gone quiet, which is what makes the returned
-    text trustworthy. A caller that checked a pattern as soon as it appeared
-    would still race the output.
+    inspected once the echo has landed and the log has then gone quiet, which
+    is what makes the returned text trustworthy. A caller that checked a
+    pattern as soon as it appeared would still race the output.
     """
     offset = serial_size()
     type_text(cmd + "\n")
+    echoed = wait_for_echo(cmd, offset)
     ok = wait_quiet(timeout=timeout, quiet_for=quiet_for)
-    return ok, tail_since_bytes(offset)
+    return echoed and ok, tail_since_bytes(offset)
 
 
 def wait_for(pattern, timeout=30, window=200):
