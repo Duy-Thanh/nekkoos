@@ -1,11 +1,46 @@
+#!/bin/bash
 set -e
 
 # Kill qemu if running to release hdd.img lock
 pkill -f qemu-system-x86_64 || true
 sleep 1
 
-# Clean up
-rm -f *.exe *.efi *.obj *.bin *.map hdd.img Kernel.exe.mui pubkey.bin
+# Clean up. Deleting the runnable set outright used to mean that a Pascal
+# compile failure left no hdd.img and no app binaries behind at all: the
+# smoke run then reported "disk image not found", which reads nothing like a
+# build error and sends you looking in the QEMU config. The previous artifacts
+# are now held aside and put back if this build does not finish, so a failure
+# leaves the machine in the state it was in rather than empty.
+BUILD_BAK=/tmp/nekkoos-build-backup
+rm -rf "$BUILD_BAK"
+mkdir -p "$BUILD_BAK"
+
+shopt -s nullglob
+STAGED=""
+for f in *.exe *.efi *.obj *.bin *.map hdd.img Kernel.exe.mui pubkey.bin; do
+    [ -e "$f" ] || continue
+    mv "$f" "$BUILD_BAK/" && STAGED="$STAGED $f"
+done
+if [ -d efi/boot ]; then
+    mv efi/boot "$BUILD_BAK/efi_boot" && STAGED="$STAGED efi/boot"
+fi
+shopt -u nullglob
+
+restore_previous_artifacts() {
+    shopt -s nullglob
+    for f in "$BUILD_BAK"/*; do
+        [ -e "$f" ] || continue
+        case "$f" in
+            */efi_boot) mv "$f" efi/boot ;;
+            *)          mv "$f" . ;;
+        esac
+    done
+    shopt -u nullglob
+    rm -rf "$BUILD_BAK"
+    echo "[!] Build failed - previous artifacts restored."
+}
+trap restore_previous_artifacts ERR
+
 rm -rf efi/boot *.pdb *.lib
 mkdir -p efi/boot
 
@@ -211,6 +246,10 @@ mcopy -i hdd.img smp.bin ::/
 echo "[!] Disk Image created successfully! Syncing I/O..."
 sync
 sleep 1
+
+# The build got this far, so the staged artifacts can go for good.
+trap - ERR
+rm -rf "$BUILD_BAK"
 
 rm -rf hdd_img && mkdir -p hdd_img
 cp hdd.img ./hdd_img
