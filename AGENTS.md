@@ -994,3 +994,39 @@ không ai đi lại:
 - **Kết luận:** đừng dùng phương pháp này để bảo vệ daemon. Nếu cần
   chống treo thì làm ở tầng khác (ví dụ scheduler dọn client chết, hoặc
   bound số vòng quay), không gọi syscall này trong vòng lặp spin.
+
+### 12.9 ✅ Smoke test giờ đọc log, và log lộ ngay hai bug thật
+
+`smoke_test.py` từng **báo PASS cho những lệnh thất bại**, nên kết quả 9/9
+không có giá trị chẩn đoán. Đã sửa hai thứ và thêm một thứ:
+
+1. **Lưu log TRƯỚC khi kill QEMU.** `finally` cũ terminate QEMU rồi mới in
+   kết quả, nên log cuối luôn bị cắt ở ~58 dòng — mất đúng phần giải thích lỗi.
+   Giờ `archive_serial_log()` copy log sang `test/automation/logs/` (đã có
+   `*.log` trong `.gitignore`) khi QEMU **còn sống**, cả trong `die()`.
+2. **Audit log dù pass hay fail.** `audit_log()` quét các mẫu lỗi
+   (PANIC, `EXCEPTION 0x`, `Timeout waiting for ... handshake`, `ACCESS
+   DENIED`, `OVERFLOW`, memory fault, `transfer aborted`) và in ra phần
+   RESULTS. Một bản 9/9 có timeout trong log giờ được gọi là có vấn đề.
+3. **Baseline thay vì window.** Các bước trước chỉ `tail(300)` nên khớp cả
+   echo của phím đã gõ ở bước trước. `cd ..` đứng ở prompt suốt nên PASS kể
+   cả khi thất bại; `cat hello.txt` PASS chỉ vì bước write echo lại nội dung.
+   Giờ dùng `snapshot_lines()` + `tail_since()` để chỉ đọc log sinh ra SAU
+   khi gõ.
+
+**Hai bug thật (chưa sửa, mới lộ ra nhờ log):**
+
+- **`cd ..` luôn thất bại.** Nhánh `FS_CD_REQ` trong `fat16_app.pas` chỉ xử
+  lý đúng chuỗi `'\'` (về root); mọi tên khác rơi vào `FindEntry` tìm entry
+  tên `..`. FAT16 **không lưu entry `.`/`..`** nên tra không bao giờ thấy →
+  `FS_CD_RESULT, 0`. Cần tìm cluster cha (quét cây thư mục, hoặc đổi sang
+  lưu stack cwd); **không** phải thêm một nhánh so sánh chuỗi.
+- **Ghi được nhưng đọc không được.** Log cho thấy `[+] File written
+  successfully!` rồi ngay sau đó `cat hello.txt` →
+  `[!] Shell: File not found or Access Denied!`. Liên quan mật thiết tới lỗi
+  trên: sau `cd ..` hỏng, `CurrentDirCluster` của daemon còn trỏ đâu chưa rõ,
+  nên write và cat có thể dùng hai thư mục khác nhau.
+
+**Bài học chung:** đừng dùng `wait_for(r"root@nekkoOS#")` làm bằng chứng.
+Prompt quay lại bất kể lệnh thành công hay không — chỉ có text của chính
+lệnh đó mới là bằng chứng.
