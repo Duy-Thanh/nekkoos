@@ -903,11 +903,12 @@ login fail ~1/3). Trong 5 lần chạy chỉ còn 1 fail, và fail đó ở bư�
 **boot to login prompt** — flake timeout 60s có sẵn ở §6.10, không liên
 quan. Login thì 0 fail.
 
-**Còn tồn đọng (không đụng tới lần này):** vòng chờ phía server vẫn **ném
-đi** message của client khác (`fat16_app.pas` dòng ~1848 và ~1870 chỉ nhận
-`Sender = client` rồi bỏ qua phần còn lại). Với `ls`/`cat` chạy song song
-đọc file thì message của client đó bị mất và nó treo. Cần hàng đợi thật ở
-tầng daemon; **đừng** coi đây là đã xong.
+**Đã sửa tiếp (server ném message).** Unit đã có sẵn `EnqueuePending` và
+hàng đợi `PendingHead/PendingTail` từ thời port, nhưng **chỉ được gọi trong
+ba vòng chờ của helper ATA**; ba vòng chờ của *file transfer* thì không. Ba
+vòng chờ đó giờ đều park message lạ vào hàng đợi (gọi trong nhánh READ và
+nhánh WRITE), nên request của client khác còn nguyên và được xử lý sau khi
+transfer hiện tại xong. Xem §12.8 trước khi đụng vào đây.
 
 
 ### 12.5 ⚠️ Cạm bẫy khi chẩn đoán: log serial bị cắt khi kill QEMU
@@ -966,3 +967,30 @@ có bản Pascal trước khi chúng thành Pascal thuần.
 Sau bước 3, `link_probe.pas` và danh sách `KNOWN_REMAINING` trong
 `verify_pascal_link.sh` phải được rút lại — đó là thước đo tiến độ khách
 quan, không phải việc làm cho có.
+
+### 12.8 ⚠️ ĐỪNG gọi `App_GetProcessInfo` trong vòng lặp nóng của daemon
+
+Đã thử thêm kiểm tra "client còn sống" vào `fat16_app.pas` để daemon không
+treo khi client chết giữa chừng. Thất bại, phải hoàn nguyên. Ghi lại để
+không ai đi lại:
+
+- **Triệu chứng:** boot từ **11 giây** nhảy lên **130 giây**. Smoke test
+  (timeout 60s) fail ngay bước "boot to login prompt". Log đầy đủ (chạy
+  QEMU tay với `-serial file:`) in thêm
+  `[!] Timeout waiting for Mouse handshake! Proceeding anyway.` — tức
+  +30 giây, và còn ~90 giây không lý giải được ở chỗ khác.
+- **Nguyên nhân chưa rõ**, nhưng phép thử A/B là rõ ràng: chỉ bỏ 3 dòng
+  `ClientAlive(...)` (giữ nguyên phần park message) → boot về 11 giây,
+  không còn timeout. Vậy thủ phạm là `App_GetProcessInfo`, không phải việc
+  park.
+- **Bẫy phụ khi làm việc này:** `App_ProcIsJailed` và
+  `App_ProcIsPhantomDead` **có implementation nhưng không có khai báo ở
+  `interface`** của `app_api.pas`, nên unit khác gọi sẽ ra
+  `Identifier not found`. Nếu bỏ công sửa dùm thì nhớ cả hai việc — sửa
+  interface rồi khởi tạo biến: `info := nil` **trước** khi gọi
+  `App_GetProcessInfo`. `top_app.pas` và `stress_app.pas` đều set
+  `p := nil` trước; không làm thế thì biến đựng rác (đo được: `info = 7`)
+  và accessor đọc `[7 + 14] = 0x15` → page fault giết app.
+- **Kết luận:** đừng dùng phương pháp này để bảo vệ daemon. Nếu cần
+  chống treo thì làm ở tầng khác (ví dụ scheduler dọn client chết, hoặc
+  bound số vòng quay), không gọi syscall này trong vòng lặp spin.

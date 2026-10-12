@@ -1845,8 +1845,14 @@ begin
 
       while True do
       begin
-        if (App_ReceiveIPC(@ack) = 1) and (ack.MsgType = FS_READ_START) and
-           (ack.Sender = client) then Break;
+        if App_ReceiveIPC(@ack) = 1 then
+        begin
+          if (ack.MsgType = FS_READ_START) and (ack.Sender = client) then Break;
+          { Somebody else asked us for something while we were tied up.
+            Parking it keeps their request alive; dropping it left them
+            waiting for a reply that was never going to be processed. }
+          EnqueuePending(@ack);
+        end;
         App_Yield;
       end;
 
@@ -1867,8 +1873,11 @@ begin
           App_SendIPC(client, FS_READ_CHUNK, bytesRead);
           while True do
           begin
-            if (App_ReceiveIPC(@ack) = 1) and (ack.MsgType = FS_READ_ACK) and
-               (ack.Sender = client) then Break;
+            if App_ReceiveIPC(@ack) = 1 then
+            begin
+              if (ack.MsgType = FS_READ_ACK) and (ack.Sender = client) then Break;
+              EnqueuePending(@ack);
+            end;
             App_Yield;
           end;
           bytesRead := bytesRead + SECTOR_SIZE;
@@ -2025,9 +2034,12 @@ begin
           App_SendIPC(client, FS_WRITE_ASK, bytesWritten);
           while True do
           begin
-            if (App_ReceiveIPC(@dataRes) = 1) and
-               (dataRes.MsgType = FS_WRITE_GIVE) and
-               (dataRes.Sender = client) then Break;
+            if App_ReceiveIPC(@dataRes) = 1 then
+            begin
+              if (dataRes.MsgType = FS_WRITE_GIVE) and
+                 (dataRes.Sender = client) then Break;
+              EnqueuePending(@dataRes);
+            end;
             App_Yield;
           end;
 
