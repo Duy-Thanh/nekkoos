@@ -1124,3 +1124,52 @@ Hai lần phải dời `type TFn` / `procedure DbgStep` vì FPC không thấy sy
 thứ tự nhìn có vẻ đúng. Nếu phải chèn helper vào app Pascal, khai báo ở
 `interface` và `implementation` **cùng một dạng signature** (kể cả `cdecl`).
 
+---
+
+## 14. Đơn vị tick: mọi hằng số thời gian phải qua `MsToTicks` (2026-10-13)
+
+`PIT.CurrentFreq = 250` (nạp bởi `PlatformBootstrap.InitLegacyTimer(250)`), nên
+**một tick = 4ms**, không phải 1ms. Mọi chỗ so `PIT.Ticks` với một con số trần
+trụng đều sai bốn lần.
+
+Lịch sử:
+- Vòng chờ daemon cũ ghi `> 30000` với comment "Timeout 30s". Thực đo:
+  **11260 tick ≈ 45s** cho ngưỡng mới, tức 30000 tick ≈ 120s. Con số "30 giây"
+  trong AGENTS.md trước đây **chưa từng được đo**, chỉ suy từ hằng số.
+- Khi đổi sang 45 giây, tôi cũng ghi trần trụng `45000` = **180 giây** → boot
+  im lặng hơn 2 phút. Người dùng phát hiện, buộc kiểm tra đồng hồ.
+
+Sửa (Kernel.cs): hằng số là **mili giây**, so với `PIT.MsToTicks(...)`.
+
+**Quy tắc:** không bao giờ so `PIT.Ticks` với số vô danh. Muốn hẹn 45 giây thì
+viết `PIT.MsToTicks(45000)`. In ra cũng phải đổi ra ms
+(`elapsedTicks * 1000 / PIT.CurrentFreq`), đừng in tick trần trụng.
+
+### 14.1 Phục hồi thay vì đợi
+
+Mouse handshake rơi vào ~50% boot, nguyên nhân **vẫn chưa biết** (mọi phép thử
+chèn code vào đúng vòng chờ đều làm lỗi biến mất — thay đổi timing là che nó).
+Thay vì tiếp tục đuổi theo, vòng chờ giờ:
+
+- Mỗi lần thử có deadline cứng **45 giây**.
+- Hết hạn mà Mouse chưa báo → **giết thread daemon đó và spawn lại MOUSE.EXE**
+  (spawn bản mới TRƯỚC khi giết bản cũ, để spawn hỏng không để hệ thống trắng
+  daemon).
+- Tiến trình con được hưởng deadline đầy đủ của riêng nó, không phải phần dư.
+- Ngân sách: **1 lần restart** → tệ nhất ~90s, vẫn trong cửa sổ 150s của smoke.
+- ATA/FAT16 **không** restart: chúng là bắt buộc (SYSLOGON đọc từ FAT16 volume),
+  chỉ được bỏ qua.
+
+Verify bằng cách **cố tình tắt handshake** trong `mouse_app.pas` (không đo bằng
+cách "mong" lỗi tự xảy ra):
+```
+[TIMER] mouse deadline hit after 45048 ms (11262 ticks)
+[!] Mouse handshake timed out - killed the daemon, respawned a fresh one.
+[!] Timeout waiting for Mouse handshake after restart. Proceeding anyway.
+```
+Kèm **10/10 smoke pass**. Không verify được thì coi như chưa sửa.
+
+> Lưu ý: lần đầu "cố tình tắt" tôi sửa nhầm dòng (`App_SendIPC` thay vì
+> `DbSendIpc`), nên handshake vẫn chạy và test "pass" một cách vô nghĩa. Nếu
+> ép lỗi, phải xác nhận lỗi **thật sự** đã xảy ra bằng log.
+

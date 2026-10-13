@@ -89,6 +89,33 @@ public static unsafe class Program
     // =========================================================================
     // [KERNEL IDLE] VÒNG LẶP NGHỈ NGƠI CỦA BSP (LÕI VUA)
     // =========================================================================
+    // =====================================================================
+    // Daemon recovery
+    // =====================================================================
+
+    // How long a daemon may take to report ready before it is treated as stuck,
+    // in MILLISECONDS. Compared against PIT.MsToTicks() and never against the
+    // raw tick count: the PIT is programmed at 250 Hz, so one tick is 4 ms and
+    // every raw-tick constant in this file is silently four times its nominal
+    // value. The original 30000 was written as "30 seconds" and was actually
+    // 120 - which is why a wedged daemon appeared to cost half a minute and
+    // actually cost two.
+    const ulong DAEMON_READY_MS = 45000;
+
+    // How many times a wedged mouse daemon may be killed and respawned before
+    // the boot proceeds without one. Two attempts in total.
+    const int MOUSE_RESTARTS = 1;
+
+    // Terminate a thread if it actually exists. Guarded because the id may be
+    // -1 (never spawned, or a spawn that failed), and killing thread 0 - the
+    // boot thread running this very loop - would end the system right here.
+    static void KillThread(int id)
+    {
+        if (id <= 0 || id >= Scheduler.ThreadCount) return;
+        if (Scheduler.Threads[id].Priority == 99) return;   // kernel threads are not harmable
+        Scheduler.TerminateTask(id);
+    }
+
     public static void KernelIdleLoop()
     {
         while (true)
@@ -404,9 +431,14 @@ public static unsafe class Program
             }
         }
 
+        int mouseDaemonId = -1;
         fixed (char* p3 = "MOUSE.EXE\0") {
-            byte* rawFat = Driver.FAT16.ReadFile(p3, &dummySize);
-            if (rawFat != null) PELoader.LoadAndRun(rawFat, true, false, true, p3, 3); 
+            byte* rawMouse = Driver.FAT16.ReadFile(p3, &dummySize);
+            // The id is needed to kill this daemon later: the wait below
+            // recovers from a lost mouse handshake by terminating and
+            // respawning, and a thread cannot be terminated without knowing
+            // which one it is.
+            if (rawMouse != null) PELoader.LoadAndRun(rawMouse, out mouseDaemonId, true, false, true, p3, 3);
             else {
                 Terminal.SetColor(0x00FF0000);
                 fixed(char* err = "[!] FATAL KERNEL ERROR: MOUSE.EXE is missing or corrupted!\n\0") Terminal.Print(err);
@@ -418,9 +450,14 @@ public static unsafe class Program
         // [FIX KVM RACE] Dùng IO.Hlt() thay vì chỉ Scheduler.Yield() thuần túy.
         // Với KVM, Scheduler.Yield() có thể không đủ để daemons chạy và gửi IPC.
         // IO.Hlt() đảm bảo CPU thực sự nghỉ đến khi timer interrupt kích hoạt,
-        // cho daemons đủ thời gian gửi handshake. Timeout 30s để không treo mãi.
         // ==========================================================
+        // Each attempt gets a hard deadline, and the mouse is terminated and
+        // respawned when it expires rather than waited on forever. The budget is
+        // one restart: two attempts is roughly 90 s of worst case, which still
+        // leaves the boot inside the time the harness allows to reach the login
+        // prompt with room to spare.
         ulong daemonWaitStart = PIT.Ticks;
+        int mouseRestarts = 0;
         while (!Driver.ATA.UseDaemon || !Driver.FAT16.UseDaemon || !Driver.Mouse.UseDaemon)
         {
             CompilerFence();
@@ -436,12 +473,93 @@ public static unsafe class Program
 
             if (Driver.ATA.UseDaemon && Driver.FAT16.UseDaemon && Driver.Mouse.UseDaemon) break;
 
-            // Timeout 30 giây: nếu daemon nào đó không gửi handshake được thì bỏ qua nó
-            if (PIT.Ticks - daemonWaitStart > 30000) {
+            // Strict deadline per attempt. A daemon that has not reported ready by
+            // now is not waited on further: the loop either recovers it or moves
+            // on, so one unresponsive daemon cannot hold the boot hostage.
+            if (PIT.Ticks - daemonWaitStart > PIT.MsToTicks(DAEMON_READY_MS)) {
                 Terminal.SetColor(0x00FF0000);
+                // ATA and FAT16 are kernel-critical: the rest of this sequence
+                // reads SYSLOGON off the FAT16 volume, so there is no boot to
+                // continue into without them. They are given up on, not
+                // restarted.
                 if (!Driver.ATA.UseDaemon)   { fixed(char* w = "[!] Timeout waiting for ATA handshake! Proceeding anyway.\n\0")   Terminal.Print(w); Driver.ATA.UseDaemon   = true; }
                 if (!Driver.FAT16.UseDaemon) { fixed(char* w = "[!] Timeout waiting for FAT16 handshake! Proceeding anyway.\n\0") Terminal.Print(w); Driver.FAT16.UseDaemon = true; }
-                if (!Driver.Mouse.UseDaemon) { fixed(char* w = "[!] Timeout waiting for Mouse handshake! Proceeding anyway.\n\0") Terminal.Print(w); Driver.Mouse.UseDaemon = true; }
+
+                if (!Driver.Mouse.UseDaemon)
+                {
+                    // The mouse handshake fails on roughly half of all boots.
+                    // The cause was never found, and every attempt to observe it
+                    // from inside this loop changes the loop's timing enough to
+                    // hide the failure. So rather than waiting the timeout out
+                    // and continuing without a mouse, terminate whatever the
+                    // daemon is stuck in and start a fresh one. Its handshake
+                    // is the first thing AppMain does, so a clean start is the
+                    // best available repair - and it costs one deadline instead
+                    // of the whole boot.
+                    if (mouseRestarts < MOUSE_RESTARTS)
+                    {
+                        mouseRestarts++;
+                        int oldMouseId = mouseDaemonId;
+
+                        // Spawn the replacement before killing the old one, so a
+                        // failed spawn cannot leave the system with no mouse
+                        // daemon at all.
+                        int newMouseId = -1;
+                        fixed (char* mn = "MOUSE.EXE\0")
+                        {
+                            byte* rawRespawn = Driver.FAT16.ReadFile(mn, &dummySize);
+                            if (rawRespawn != null)
+                                PELoader.LoadAndRun(rawRespawn, out newMouseId, true, false, true, mn, 3);
+                        }
+
+                        if (newMouseId >= 0)
+                        {
+                            // Measured here, before the baseline is reset further
+                            // down. Reading it after the reset reports 0 or 1 tick
+                            // no matter how long the attempt really took, which is
+                            // a measurement that measures nothing.
+                            ulong elapsedTicks = PIT.Ticks - daemonWaitStart;
+
+                            KillThread(oldMouseId);
+                            mouseDaemonId = newMouseId;
+                            // Reset the expectation: the replacement reports ready
+                            // through the same handshake, and gets a full deadline
+                            // of its own rather than the remainder of the one the
+                            // stuck daemon just burned.
+                            Driver.Mouse.UseDaemon  = false;
+                            Driver.Mouse.DaemonId   = 0;
+                            daemonWaitStart = PIT.Ticks;
+
+                            // Reported in milliseconds, not in raw ticks: a bare
+                            // tick count was read here once as milliseconds and
+                            // turned into a constant that was four times its
+                            // intended value. The conversion uses the timer's own
+                            // recorded frequency rather than an assumed one.
+                            Terminal.SetColor(0x0000FF00);
+                            fixed (char* r0 = "[TIMER] mouse deadline hit after ") Terminal.Print(r0);
+                            Terminal.PrintDecUnsafe(elapsedTicks * 1000 / PIT.CurrentFreq);
+                            fixed (char* r1 = " ms (") Terminal.Print(r1);
+                            Terminal.PrintDecUnsafe(elapsedTicks);
+                            fixed (char* r1b = " ticks)\n\0") Terminal.Print(r1b);
+                            fixed (char* rw = "[!] Mouse handshake timed out - killed the daemon, respawned a fresh one.\n\0") Terminal.Print(rw);
+                            Terminal.SetColor(0x00FFFFFF);
+                            continue;
+                        }
+
+                        // No replacement could be loaded. Kill the stuck thread
+                        // anyway and continue without a mouse, rather than
+                        // leaving a wedged thread spinning behind the boot.
+                        KillThread(oldMouseId);
+                        mouseDaemonId = -1;
+                        fixed (char* nw = "[!] Timeout waiting for Mouse handshake, and no replacement could be loaded. Proceeding anyway.\n\0") Terminal.Print(nw);
+                        Driver.Mouse.UseDaemon = true;
+                    }
+                    else
+                    {
+                        fixed (char* w = "[!] Timeout waiting for Mouse handshake after restart. Proceeding anyway.\n\0") Terminal.Print(w);
+                        Driver.Mouse.UseDaemon = true;
+                    }
+                }
                 Terminal.SetColor(0x00FFFFFF);
                 break;
             }
