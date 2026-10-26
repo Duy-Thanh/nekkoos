@@ -13,8 +13,8 @@ namespace NekkoOS.Kernel;
 
 public static unsafe class Mem
 {
-    public static Spinlock VmmLock => VMM.VmmLock;
-    public static void ResetLock() => VMM.VmmLock = new Spinlock();
+    // The VMM lock now lives in vmm.pas and starts released; nothing to reset.
+    public static void ResetLock() { }
     public static void Init() => VMM.Init();
 
     /// Root của address-space kernel (handle mờ cho generic code).

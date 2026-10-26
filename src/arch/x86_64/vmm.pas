@@ -65,8 +65,9 @@ procedure Arch_EnableNX; cdecl; external name 'Arch_EnableNX';
 { A PTE/PDPT/PD/PML4E with the Present bit and the user bit set. }
 const
   ENTRY_PRESENT      = QWord(1);
-  ENTRY_USER         = QWord(2);
+  ENTRY_USER         = QWord(4);   { U/S bit }
   ENTRY_WRITABLE     = QWord(2);
+  ENTRY_TABLE        = QWord(7);   { P|W|U on every intermediate level }
   ENTRY_HUGE         = QWord($80);   { PS bit, only valid in PD/PDPT entries }
 
   { x86-64 2 MiB huge page. }
@@ -203,7 +204,7 @@ begin
       Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
       Exit;
     end;
-    Vmm_Pml4[pml4Index] := QWord(newTable) or ENTRY_USER or ENTRY_WRITABLE;
+    Vmm_Pml4[pml4Index] := QWord(newTable) or ENTRY_TABLE;
   end;
 
   pdpt := EntryToPtr(Vmm_Pml4[pml4Index]);
@@ -221,7 +222,7 @@ begin
       Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
       Exit;
     end;
-    PQWord(pdpt)[pdptIndex] := QWord(newTable) or ENTRY_USER or ENTRY_WRITABLE;
+    PQWord(pdpt)[pdptIndex] := QWord(newTable) or ENTRY_TABLE;
   end;
 
   pd := EntryToPtr(PQWord(pdpt)[pdptIndex]);
@@ -291,7 +292,7 @@ begin
       Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
       Exit;
     end;
-    pml4Arr[pml4Index] := QWord(newTable) or flags or ENTRY_PRESENT or ENTRY_WRITABLE;
+    pml4Arr[pml4Index] := QWord(newTable) or flags or ENTRY_TABLE;
   end;
 
   pdpt := EntryToPtr(pml4Arr[pml4Index]);
@@ -309,7 +310,7 @@ begin
       Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
       Exit;
     end;
-    PQWord(pdpt)[pdptIndex] := QWord(newTable) or flags or ENTRY_PRESENT or ENTRY_WRITABLE;
+    PQWord(pdpt)[pdptIndex] := QWord(newTable) or flags or ENTRY_TABLE;
   end;
 
   pd := EntryToPtr(PQWord(pdpt)[pdptIndex]);
@@ -327,7 +328,7 @@ begin
       Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
       Exit;
     end;
-    PQWord(pd)[pdIndex] := QWord(newTable) or flags or ENTRY_PRESENT or ENTRY_WRITABLE;
+    PQWord(pd)[pdIndex] := QWord(newTable) or flags or ENTRY_TABLE;
   end;
 
   pt := EntryToPtr(PQWord(pd)[pdIndex]);
@@ -384,7 +385,7 @@ begin
   addr := 4096;
   while addr < HUGE_PAGE_SIZE do
   begin
-    Vmm_MapPageIn(addr, addr, ENTRY_USER or ENTRY_WRITABLE, Pointer(Vmm_Pml4));
+    Vmm_MapPageIn(addr, addr, $03, Pointer(Vmm_Pml4));
     Inc(addr, PAGE_SIZE);
   end;
 
@@ -455,7 +456,7 @@ begin
     if entry4 = Vmm_Pml4[i4] then Continue;
 
     { Present + writable but not a huge leaf: this points at a real table. }
-    if ((entry4 and ENTRY_PRESENT) <> 0) and ((entry4 and ENTRY_WRITABLE) <> 0) then
+    if ((entry4 and ENTRY_PRESENT) <> 0) and ((entry4 and ENTRY_USER) <> 0) then
     begin
       if EntryToPtr(entry4) = nil then Continue;
       pdpt := PQWord(EntryToPtr(entry4));
@@ -463,7 +464,7 @@ begin
       for i3 := 0 to 511 do
       begin
         entry3 := pdpt[i3];
-        if ((entry3 and ENTRY_PRESENT) <> 0) and ((entry3 and ENTRY_WRITABLE) <> 0) then
+        if ((entry3 and ENTRY_PRESENT) <> 0) and ((entry3 and ENTRY_USER) <> 0) then
         begin
           if EntryToPtr(entry3) = nil then Continue;
           pd := PQWord(EntryToPtr(entry3));
@@ -472,7 +473,7 @@ begin
           begin
             entry2 := pd[i2];
             if ((entry2 and ENTRY_PRESENT) <> 0) and
-               ((entry2 and ENTRY_WRITABLE) <> 0) and
+               ((entry2 and ENTRY_USER) <> 0) and
                ((entry2 and ENTRY_HUGE) = 0) then
             begin
               if EntryToPtr(entry2) = nil then Continue;
@@ -482,7 +483,7 @@ begin
               begin
                 entry1 := pt[i1];
                 if ((entry1 and ENTRY_PRESENT) <> 0) and
-                   ((entry1 and ENTRY_WRITABLE) <> 0) then
+                   ((entry1 and ENTRY_USER) <> 0) then
                 begin
                   physPage := entry1 and (not QWord($FFF));
                   if (physPage = 0) or (physPage >= PhysLimit) then Continue;
@@ -506,6 +507,41 @@ begin
   Pmm_FreePage(Pointer(pml4));
 
   Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
+end;
+
+{ ── cdecl exports for VMM.cs ── }
+procedure Vmm_Init_Pas; cdecl; public name 'Vmm_Init_Pas';
+begin
+  Vmm_Init;
+end;
+
+procedure Vmm_MapPage_Pas(physAddr, virtAddr, flags: QWord); cdecl; public name 'Vmm_MapPage_Pas';
+begin
+  Vmm_MapPage(physAddr, virtAddr, flags);
+end;
+
+procedure Vmm_MapPageIn_Pas(physAddr, virtAddr, flags: QWord; pml4Dir: Pointer); cdecl; public name 'Vmm_MapPageIn_Pas';
+begin
+  Vmm_MapPageIn(physAddr, virtAddr, flags, pml4Dir);
+end;
+
+procedure Vmm_MapHugePage_Pas(physAddr, virtAddr: QWord); cdecl; public name 'Vmm_MapHugePage_Pas';
+begin
+  Vmm_MapHugePage(physAddr, virtAddr);
+end;
+
+{ Shared-window addresses are still owned by C# (Syscall.cs); it hands them
+  over before every teardown. }
+procedure Vmm_DestroyUserSpace_Pas(pml4Phys, sharedRamPhys, mpuTrapPhys: QWord); cdecl; public name 'Vmm_DestroyUserSpace_Pas';
+begin
+  kstate_SharedRAM_Phys := sharedRamPhys;
+  kstate_MpuTrapPage_Phys := mpuTrapPhys;
+  Vmm_DestroyUserSpace(pml4Phys);
+end;
+
+function Vmm_GetPml4_Pas: Pointer; cdecl; public name 'Vmm_GetPml4_Pas';
+begin
+  Vmm_GetPml4_Pas := Vmm_GetPml4;
 end;
 
 end.
