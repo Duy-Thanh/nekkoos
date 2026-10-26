@@ -54,6 +54,12 @@ function PMM_FreePageByIndex(index: QWord): Byte; cdecl; public name 'PMM_FreePa
   và trả về con trỏ thật. Đây là API mà code kernel dùng (thay cho PMM.cs).
   Zero-fill nằm NGOÀI khoá để không giữ lock trong lúc memset 4 KiB. }
 
+{ Build the page bitmap from the UEFI memory map. The bitmap lives at
+  largestFreeStart (the biggest free region); only EfiConventionalMemory
+  (type 7) is handed out. Pages 0 and 8-9 stay reserved: page 0 is the null
+  trap and 8-9 hold the SMP trampoline and its mailboxes. }
+procedure Pmm_Init(mapPtr: PByte; mapSize, descSize, largestFreeStart: QWord);
+
 function Pmm_AllocatePage: Pointer;
 function Pmm_AllocatePageBelow4GB: Pointer;
 function Pmm_AllocateContiguousPages(count: QWord): Pointer;
@@ -433,6 +439,86 @@ begin
     Terminal_SetColor_Pas($00FF0000);
     Terminal_Print_Pas(W('[!] PMM WARNING: Attempt to free unallocated page!'#13#10));
   end;
+end;
+
+procedure Pmm_Init(mapPtr: PByte; mapSize, descSize, largestFreeStart: QWord);
+const
+  EFI_CONVENTIONAL = 7;
+  MAX_PHYS = QWord($100000000000);         { 256 TiB }
+  U64_MAX = QWord($FFFFFFFFFFFFFFFF);
+var
+  numEntries, i, j, maxPhysicalAddress, topAddress, totalPg, bitmapBytes: QWord;
+  bitmapPtr: PByte;
+  descPtr: PByte;
+  startPage, nPages, freePg, bitmapPages, bitmapStartPage: QWord;
+  descType: Cardinal;
+begin
+  { EFI_MEMORY_DESCRIPTOR: Type u32 @0, PhysicalStart @8, NumberOfPages @24. }
+  if (descSize = 0) or (mapSize < descSize) then Exit;
+  numEntries := mapSize div descSize;
+
+  maxPhysicalAddress := 0;
+  for i := 0 to numEntries - 1 do
+  begin
+    descPtr := mapPtr + i * descSize;
+    nPages := PQWord(descPtr + 24)^;
+    startPage := PQWord(descPtr + 8)^;
+    if nPages > (U64_MAX - startPage) div 4096 then Continue;
+    topAddress := startPage + nPages * 4096;
+    if topAddress > maxPhysicalAddress then maxPhysicalAddress := topAddress;
+  end;
+
+  if maxPhysicalAddress > MAX_PHYS then maxPhysicalAddress := MAX_PHYS;
+
+  totalPg := maxPhysicalAddress div 4096;
+  bitmapBytes := (totalPg + 7) div 8;
+  if bitmapBytes > U64_MAX div 4096 then bitmapBytes := U64_MAX div 4096;
+  if bitmapBytes = 0 then bitmapBytes := 1;
+
+  bitmapPtr := PByte(largestFreeStart);
+  if largestFreeStart + bitmapBytes > maxPhysicalAddress then Exit;
+
+  { Everything starts as used; free regions are cleared below. }
+  for i := 0 to bitmapBytes - 1 do bitmapPtr[i] := $FF;
+
+  PMM_SetState(bitmapPtr, totalPg, bitmapBytes, 0);
+
+  freePg := 0;
+  for i := 0 to numEntries - 1 do
+  begin
+    descPtr := mapPtr + i * descSize;
+    descType := PCardinal(descPtr)^;
+    if descType <> EFI_CONVENTIONAL then Continue;
+
+    startPage := PQWord(descPtr + 8)^ div 4096;
+    nPages := PQWord(descPtr + 24)^;
+    if nPages > U64_MAX - startPage then nPages := U64_MAX - startPage;
+
+    j := 0;
+    while j < nPages do
+    begin
+      if startPage + j < totalPg then PMM_ClearBit(startPage + j);
+      Inc(j);
+    end;
+    Inc(freePg, nPages);
+  end;
+
+  { The bitmap itself occupies pages inside the region it describes. }
+  bitmapPages := (bitmapBytes + 4095) div 4096;
+  bitmapStartPage := largestFreeStart div 4096;
+  for i := 0 to bitmapPages - 1 do
+    if bitmapStartPage + i < totalPg then
+    begin
+      PMM_SetBit(bitmapStartPage + i);
+      Dec(freePg);
+    end;
+
+  { Null page, and the SMP trampoline (page 8) and mailboxes (page 9). }
+  if PMM_TestBit(0) = 0 then begin PMM_SetBit(0); Dec(freePg); end;
+  if PMM_TestBit(8) = 0 then begin PMM_SetBit(8); Dec(freePg); end;
+  if PMM_TestBit(9) = 0 then begin PMM_SetBit(9); Dec(freePg); end;
+
+  PMM_SetFreePages(freePg);
 end;
 
 end.

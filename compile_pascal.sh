@@ -22,7 +22,7 @@ mod_src() {
     esac
 }
 
-PASCAL_MODULES=(libc kstring kstate ata_hw fat16fs prng kerncrypto pmm heap fat16_kernel strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser internal_shell spinlock sudo_dispatch syscall_dispatch scheduler ipc_kernel ata_kernel power console input_drv pci io serial)
+PASCAL_MODULES=(libc kstring kstate ata_hw fat16fs prng kerncrypto pmm heap fat16_kernel strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser internal_shell spinlock sudo_dispatch syscall_dispatch kernel_main scheduler ipc_kernel ata_kernel power console input_drv pci io serial)
 ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap interrupt_handlers smp syscall_impl hardware_checks)
 APP_MODULES=(app_api link_probe mouse_app shell_app login_app ata_app fat16_app top_app dsrv_app explorer_app stress_app)
 

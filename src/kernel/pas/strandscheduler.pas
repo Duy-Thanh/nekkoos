@@ -43,7 +43,15 @@ const
 }
 function Strand_FindNextReady(strands: Pointer; strandCount: Integer; currentStrand: PInteger): Integer; cdecl; public name 'Strand_FindNextReady_Pas';
 
+{ Strand engine (ported from StrandScheduler.cs): a table of tiny run-to-
+  completion routines the boot thread's idle loop cycles through. }
+procedure Strand_Init;
+procedure Strand_Create(action: Pointer);
+procedure Strand_RunCycle;
+
 implementation
+
+uses kstring, pmm, libc, spinlock, terminal;
 
 function Strand_FindNextReady(strands: Pointer; strandCount: Integer; currentStrand: PInteger): Integer; cdecl;
 var
@@ -89,6 +97,99 @@ begin
   end;
 
   { No Ready strand found }
+end;
+
+{ ── Engine state and API ──────────────────────────────────────────────────── }
+
+const
+  MAX_STRANDS = 256;
+
+type
+  TStrandAction = procedure;
+
+var
+  Strands: PByte = nil;
+  StrandCount: Integer = 0;
+  CurrentStrand: Integer = 0;
+  StrandLock: Cardinal = 0;
+
+procedure Strand_Init;
+begin
+  StrandCount := 0;
+  Strands := PByte(Pmm_AllocatePage);       { zeroed by the allocator }
+  Terminal_SetColor_Pas($00FF00FF);
+  Terminal_Print_Pas(W('[+] Zero-Context Strands Engine Forged in Steel!'#13#10));
+end;
+
+procedure Strand_Create(action: Pointer);
+var
+  irq: Byte;
+  i: Integer;
+  entry: PByte;
+begin
+  if action = nil then Exit;
+  irq := Spinlock_AcquireSafe_Pas(@StrandLock);
+
+  { Reuse a dead slot before growing the table. }
+  for i := 0 to StrandCount - 1 do
+  begin
+    entry := Strands + i * STRAND_SIZE;
+    if entry[STRAND_ACTIVE_OFFSET] = STRAND_DEAD then
+    begin
+      PPointer(entry)^ := action;
+      entry[STRAND_ACTIVE_OFFSET] := STRAND_READY;
+      Spinlock_ReleaseSafe_Pas(@StrandLock, irq);
+      Exit;
+    end;
+  end;
+
+  if StrandCount < MAX_STRANDS then
+  begin
+    entry := Strands + StrandCount * STRAND_SIZE;
+    PPointer(entry)^ := action;
+    entry[STRAND_ACTIVE_OFFSET] := STRAND_READY;
+    Inc(StrandCount);
+  end;
+  Spinlock_ReleaseSafe_Pas(@StrandLock, irq);
+end;
+
+procedure Strand_RunCycle;
+var
+  irq: Byte;
+  selected: Integer;
+  entry: PByte;
+  action: Pointer;
+begin
+  irq := Spinlock_AcquireSafe_Pas(@StrandLock);
+
+  if StrandCount = 0 then
+  begin
+    Spinlock_ReleaseSafe_Pas(@StrandLock, irq);
+    Exit;
+  end;
+
+  selected := Strand_FindNextReady(Strands, StrandCount, @CurrentStrand);
+  if selected <> -1 then
+  begin
+    entry := Strands + selected * STRAND_SIZE;
+    entry[STRAND_ACTIVE_OFFSET] := STRAND_RUNNING;
+  end;
+
+  Spinlock_ReleaseSafe_Pas(@StrandLock, irq);
+
+  { The routine runs outside the lock: it may itself create strands. }
+  if selected <> -1 then
+  begin
+    entry := Strands + selected * STRAND_SIZE;
+    action := PPointer(entry)^;
+    if action <> nil then TStrandAction(action)();
+
+    irq := Spinlock_AcquireSafe_Pas(@StrandLock);
+    { Only go back to Ready if nothing killed it while it ran. }
+    if entry[STRAND_ACTIVE_OFFSET] = STRAND_RUNNING then
+      entry[STRAND_ACTIVE_OFFSET] := STRAND_READY;
+    Spinlock_ReleaseSafe_Pas(@StrandLock, irq);
+  end;
 end;
 
 end.
