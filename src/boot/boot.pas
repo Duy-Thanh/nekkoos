@@ -465,28 +465,28 @@ type
   procedural type and called. Each UEFI_* wrapper does that cast once.
   ========================================================================== }
 type
-  TfnAllocatePages = function(This: Pointer; AllocType, MemoryType: Cardinal;
+  TfnAllocatePages = function(AllocType, MemoryType: Cardinal;
                               Pages: QWord; Memory: PQWord): QWord; cdecl;
-  TfnGetMemoryMap  = function(This: Pointer; MemoryMapSize: PQWord;
-                              MemoryMap: PPointer; MapKey: PQWord;
+  TfnGetMemoryMap  = function(MemoryMapSize: PQWord;
+                              MemoryMap: Pointer; MapKey: PQWord;
                               DescriptorSize: PQWord;
                               DescriptorVersion: PCardinal): QWord; cdecl;
-  TfnAllocatePool  = function(This: Pointer; PoolType: Cardinal; Size: QWord;
+  TfnAllocatePool  = function(PoolType: Cardinal; Size: QWord;
                               Buffer: PPointer): QWord; cdecl;
-  TfnFreePool      = function(This: Pointer; Buffer: Pointer): QWord; cdecl;
-  TfnStall         = function(This: Pointer; Microseconds: QWord): QWord; cdecl;
-  TfnExitBootServices = function(This: Pointer; ImageHandle: Pointer;
+  TfnFreePool      = function(Buffer: Pointer): QWord; cdecl;
+  TfnStall         = function(Microseconds: QWord): QWord; cdecl;
+  TfnExitBootServices = function(ImageHandle: Pointer;
                                  MapKey: QWord): QWord; cdecl;
-  TfnGetNextMonotonicCount = function(This: Pointer; Count: PCardinal): QWord; cdecl;
-  TfnLocateProtocol = function(This: Pointer; Protocol: PEfiGuid;
+  TfnGetNextMonotonicCount = function(Count: PCardinal): QWord; cdecl;
+  TfnLocateProtocol = function(Protocol: PEfiGuid;
                                Registration: Pointer;
                                OutInterface: PPointer): QWord; cdecl;
-  TfnHandleProtocol = function(This: Pointer; Handle: Pointer;
+  TfnHandleProtocol = function(Handle: Pointer;
                                Protocol: PEfiGuid;
                                OutInterface: PPointer): QWord; cdecl;
-  TfnGetTime        = function(This: Pointer; Time: PEfiTime;
+  TfnGetTime        = function(Time: PEfiTime;
                                Capabilities: PCardinal): QWord; cdecl;
-  TfnResetSystem    = procedure(This: Pointer; ResetType: Cardinal;
+  TfnResetSystem    = procedure(ResetType: Cardinal;
                                 Data: Pointer; DataSize: QWord;
                                 ResetData: Pointer); cdecl;
   TfnOutputString   = function(This: Pointer; Str: PWord): QWord; cdecl;
@@ -566,19 +566,39 @@ var
   returns, which covers every use (the pointer is always consumed by the
   immediately following Print).
   ========================================================================== }
-function U16(s: AnsiString): PWord;
+const
+  { Rotating pool of widened literals. A pointer returned by U16 stays valid
+    for U16_SLOTS further calls, which covers every use here (the result is
+    always handed straight to Print). It must NOT point into U16's own frame:
+    that frame is gone the moment U16 returns and the very next call reuses
+    the same stack. }
+  U16_SLOTS = 8;
+
 var
-  buffer: array[0..UEFI_STR_MAX] of Word;
+  { Long-lived constants for pointers that outlive the pool (held in locals
+    across many Print calls). }
+  NewlineW: array[0..2] of Word = (13, 10, 0);
+  SpaceW: array[0..1] of Word = (32, 0);
+  U16Pool: array[0..U16_SLOTS - 1, 0..UEFI_STR_MAX] of Word;
+  U16Next: Integer = 0;
+
+function U16(s: PChar): PWord;
+var
+  slot: PWord;
   i: Integer;
 begin
+  if U16Next >= U16_SLOTS then U16Next := 0;
+  slot := @U16Pool[U16Next, 0];
+  Inc(U16Next);
+
   i := 0;
-  while (i < Length(s)) and (i < UEFI_STR_MAX) do
+  while (s[i] <> #0) and (i < UEFI_STR_MAX) do
   begin
-    buffer[i] := Byte(s[i + 1]);
+    slot[i] := Byte(s[i]);
     Inc(i);
   end;
-  buffer[i] := 0;
-  U16 := @buffer[0];
+  slot[i] := 0;
+  U16 := slot;
 end;
 
 { ==========================================================================
@@ -590,17 +610,17 @@ var
   f: TfnAllocatePages;
 begin
   f := TfnAllocatePages(bs^.AllocatePages);
-  Uefi_AllocatePages := f(bs, allocType, memType, pages, memory);
+  Uefi_AllocatePages := f(allocType, memType, pages, memory);
 end;
 
 function Uefi_GetMemoryMap(bs: PEfiBootServices; mapSize: PQWord;
-                           map: PPointer; mapKey: PQWord;
+                           map: Pointer; mapKey: PQWord;
                            descSize: PQWord; descVersion: PCardinal): QWord;
 var
   f: TfnGetMemoryMap;
 begin
   f := TfnGetMemoryMap(bs^.GetMemoryMap);
-  Uefi_GetMemoryMap := f(bs, mapSize, map, mapKey, descSize, descVersion);
+  Uefi_GetMemoryMap := f(mapSize, map, mapKey, descSize, descVersion);
 end;
 
 function Uefi_AllocatePool(bs: PEfiBootServices; poolType: Cardinal;
@@ -609,7 +629,7 @@ var
   f: TfnAllocatePool;
 begin
   f := TfnAllocatePool(bs^.AllocatePool);
-  Uefi_AllocatePool := f(bs, poolType, size, buffer);
+  Uefi_AllocatePool := f(poolType, size, buffer);
 end;
 
 function Uefi_FreePool(bs: PEfiBootServices; buffer: Pointer): QWord;
@@ -617,7 +637,7 @@ var
   f: TfnFreePool;
 begin
   f := TfnFreePool(bs^.FreePool);
-  Uefi_FreePool := f(bs, buffer);
+  Uefi_FreePool := f(buffer);
 end;
 
 function Uefi_Stall(bs: PEfiBootServices; microseconds: QWord): QWord;
@@ -625,7 +645,7 @@ var
   f: TfnStall;
 begin
   f := TfnStall(bs^.Stall);
-  Uefi_Stall := f(bs, microseconds);
+  Uefi_Stall := f(microseconds);
 end;
 
 function Uefi_ExitBootServices(bs: PEfiBootServices; imageHandle: Pointer;
@@ -634,7 +654,7 @@ var
   f: TfnExitBootServices;
 begin
   f := TfnExitBootServices(bs^.ExitBootServices);
-  Uefi_ExitBootServices := f(bs, imageHandle, mapKey);
+  Uefi_ExitBootServices := f(imageHandle, mapKey);
 end;
 
 function Uefi_GetNextMonotonicCount(bs: PEfiBootServices; count: PCardinal): QWord;
@@ -642,7 +662,7 @@ var
   f: TfnGetNextMonotonicCount;
 begin
   f := TfnGetNextMonotonicCount(bs^.GetNextMonotonicCount);
-  Uefi_GetNextMonotonicCount := f(bs, count);
+  Uefi_GetNextMonotonicCount := f(count);
 end;
 
 function Uefi_LocateProtocol(bs: PEfiBootServices; protocol: PEfiGuid;
@@ -652,7 +672,7 @@ var
   f: TfnLocateProtocol;
 begin
   f := TfnLocateProtocol(bs^.LocateProtocol);
-  Uefi_LocateProtocol := f(bs, protocol, registration, OutInterface);
+  Uefi_LocateProtocol := f(protocol, registration, OutInterface);
 end;
 
 function Uefi_HandleProtocol(bs: PEfiBootServices; handle: Pointer;
@@ -661,7 +681,7 @@ var
   f: TfnHandleProtocol;
 begin
   f := TfnHandleProtocol(bs^.HandleProtocol);
-  Uefi_HandleProtocol := f(bs, handle, protocol, OutInterface);
+  Uefi_HandleProtocol := f(handle, protocol, OutInterface);
 end;
 
 function Uefi_GetTime(rs: PEfiRuntimeServices; t: PEfiTime;
@@ -670,7 +690,7 @@ var
   f: TfnGetTime;
 begin
   f := TfnGetTime(rs^.GetTime);
-  Uefi_GetTime := f(rs, t, capabilities);
+  Uefi_GetTime := f(t, capabilities);
 end;
 
 procedure Uefi_ResetSystem(rs: PEfiRuntimeServices; resetType: Cardinal;
@@ -679,7 +699,7 @@ var
   f: TfnResetSystem;
 begin
   f := TfnResetSystem(rs^.ResetSystem);
-  f(rs, resetType, data, dataSize, resetData);
+  f(resetType, data, dataSize, resetData);
 end;
 
 function Uefi_OutputString(conOut: PEfiSimpleTextOutput; str: PWord): QWord;
@@ -1156,7 +1176,7 @@ begin
 
     { r := r << 1, carrying out of the top limb into `carry`. }
     carry := 0;
-    for j := RSA_LEN - 1 downto 0 do
+    for j := 0 to RSA_LEN - 1 do      { low limb first: the carry climbs }
     begin
       nextCarry := r[j] shr 31;
       r[j] := (r[j] shl 1) or carry;
@@ -1412,11 +1432,12 @@ end;
 
 function IsKernelMain(name: PByte): Boolean;
 begin
+  { "KernelMain" + NUL. }
   IsKernelMain := (name <> nil) and
     (name[0] = Ord('K')) and (name[1] = Ord('e')) and (name[2] = Ord('r')) and
-    (name[3] = Ord('n')) and (name[4] = Ord('n')) and (name[5] = Ord('e')) and
-    (name[6] = Ord('l')) and (name[7] = Ord('M')) and (name[8] = Ord('a')) and
-    (name[9] = Ord('i')) and (name[10] = Ord('n')) and (name[11] = 0);
+    (name[3] = Ord('n')) and (name[4] = Ord('e')) and (name[5] = Ord('l')) and
+    (name[6] = Ord('M')) and (name[7] = Ord('a')) and (name[8] = Ord('i')) and
+    (name[9] = Ord('n')) and (name[10] = 0);
 end;
 
 { Walk the PE export directory for the real address of KernelMain, which the
@@ -1594,7 +1615,7 @@ begin
   buffer := nil;
   Uefi_AllocatePool(bs, 2, memoryMapSize, @buffer);
   memoryMap := PEfiMemoryDescriptor(buffer);
-  Uefi_GetMemoryMap(bs, @memoryMapSize, @buffer, @mapKey, @descriptorSize,
+  Uefi_GetMemoryMap(bs, @memoryMapSize, buffer, @mapKey, @descriptorSize,
                     @descriptorVersion);
 
   totalPages := 0;
@@ -1804,8 +1825,8 @@ begin
     cols := LongInt(width div 8);
     targetRow := (cy + r + 1) div 16;
 
-    one := U16(' ');
-    nl := U16(#13#10);
+    one := @SpaceW[0];
+    nl := @NewlineW[0];
     for lineLoop := 0 to targetRow - 1 do Print(conOut, nl);
 
     pad1 := (cols - 22) div 2;
@@ -1983,7 +2004,7 @@ begin
   finalMemoryMap := PEfiMemoryDescriptor(finalBuffer);
 
   finalMemoryMapSize := allocatedMapCapacity;
-  Uefi_GetMemoryMap(bs, @finalMemoryMapSize, @finalBuffer, @finalMapKey,
+  Uefi_GetMemoryMap(bs, @finalMemoryMapSize, finalBuffer, @finalMapKey,
                     @finalDescriptorSize, @finalDescriptorVersion);
 
   bootInfo^.FrameBufferBase := QWord(frameBuffer);
@@ -2008,8 +2029,8 @@ begin
     Print(conOut, U16('Type ''H'' for Help.'#13#10));
 
     debugging := True;
-    nl := U16(#13#10);
-    one := U16(' ');
+    nl := @NewlineW[0];
+    one := @SpaceW[0];
     while debugging do
     begin
       Print(conOut, U16('NekkoBoot> '));
@@ -2126,7 +2147,7 @@ begin
     { The map key went stale, so the spec allows exactly one retry with a
       freshly fetched map. }
     finalMemoryMapSize := allocatedMapCapacity;
-    Uefi_GetMemoryMap(bs, @finalMemoryMapSize, @finalBuffer, @finalMapKey,
+    Uefi_GetMemoryMap(bs, @finalMemoryMapSize, finalBuffer, @finalMapKey,
                       @finalDescriptorSize, @finalDescriptorVersion);
     bootInfo^.MemoryMapSize := finalMemoryMapSize;
     exitStatus := Uefi_ExitBootServices(bs, imageHandle, finalMapKey);

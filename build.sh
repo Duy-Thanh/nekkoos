@@ -189,7 +189,8 @@ openssl rsa -in private.pem -modulus -noout | cut -d'=' -f2 | xxd -r -p > pubkey
 # Sign Kernel
 openssl dgst -sha256 -sign private.pem -out Kernel.exe.mui Kernel.exe
 
-# Inject 256-byte public key into src/boot/Boot.cs (must contain marker /* INJECT_PUBKEY */)
+# Inject the 256-byte public key into src/boot/boot.pas (the declaration must keep
+# its trailing { INJECT_PUBKEY } marker; Pascal hex literals use $, not 0x).
 python3 - <<'PY'
 import sys, re
 try:
@@ -200,22 +201,24 @@ if len(b) < 256:
     print("[!] LOI FATAL: pubkey.bin bi thieu byte! Xoa private.pem va build lai!", file=sys.stderr)
     sys.exit(1)
 b = b[-256:]
-fmt = ', '.join('0x{:02X}'.format(x) for x in b)
-new = f"byte* publicKeyN = stackalloc byte[256] {{ {fmt} }}; /* INJECT_PUBKEY */"
-s = open('src/boot/Boot.cs','r',encoding='utf-8').read()
+fmt = ', '.join('${:02X}'.format(x) for x in b)
+new = f"Boot_PublicKeyN: array[0..255] of Byte = ( {fmt} ); {{ INJECT_PUBKEY }}"
+s = open('src/boot/boot.pas','r',encoding='utf-8').read()
 
-# Use a more flexible regex to match existing declaration + marker (handles whitespace / large initializer)
-pattern = r'byte\*\s*publicKeyN\s*=\s*stackalloc\s*byte\s*\[\s*256\s*\][\s\S]*?/\*\s*INJECT_PUBKEY\s*\*/'
-s2, n = re.subn(pattern, new, s, flags=re.S)
+pattern = r'Boot_PublicKeyN\s*:\s*array\s*\[\s*0\s*\.\.\s*255\s*\]\s*of\s*Byte\s*=\s*\([\s\S]*?\)\s*;\s*\{\s*INJECT_PUBKEY\s*\}'
+s2, n = re.subn(pattern, lambda m: new, s, flags=re.S)
 if n == 0:
-    print("Failed to inject public key: pattern not found in src/boot/Boot.cs", file=sys.stderr); sys.exit(1)
-open('src/boot/Boot.cs','w',encoding='utf-8').write(s2)
+    print("Failed to inject public key: pattern not found in src/boot/boot.pas", file=sys.stderr); sys.exit(1)
+open('src/boot/boot.pas','w',encoding='utf-8').write(s2)
 print("[+] Public Key injected successfully into Bootloader Source!")
 PY
 
-# Build Bootloader (stub)
+# Build Bootloader: Pascal + NASM, linked by lld as a UEFI application.
 echo "[2/4] Dang build Loader (Stub)..."
-$BF build src/boot/Boot.cs src/boot/BootContract.cs -Os --map maps/bootx64.map --os uefi --stdlib zero -o "efi/boot/bootx64.efi" --ldflags "-entry:NekkoBoot boot_io.obj"
+./compile_boot.sh
+mkdir -p efi/boot
+"$HOME/bflat/bin/lld" -flavor link -subsystem:efi_application -entry:NekkoBoot \
+    -out:"efi/boot/bootx64.efi" boot_io.obj build/boot.o
 
 # =========================================================================
 # [AUTH DB] Sinh PASSWD + SUDOERS truoc khi dong dia.
