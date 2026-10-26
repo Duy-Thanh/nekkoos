@@ -1003,7 +1003,6 @@ Cách phát hiện hiệu quả: **đối chiếu từng hàm với bản gốc,
 - `grep -B`/`-A` rộng trên repo lớn sẽ tràn context — dùng `grep -c`/`-l` trước.
 
 ### 15.3 Điểm lệch còn tồn tại (chủ ý giữ nguyên hành vi cũ)
-- `libc.MsToTicks`: `ms/10 + 1` (đúng cho 100 Hz, PIT thực chạy 250 Hz) — dùng bởi syscall 97 (sleep)
-- builtin `uptime` chia tick thô cho 1000 rồi in hex
+- ✅ `libc.MsToTicks` và builtin `uptime` đã đổi sang 250 Hz (sửa 2026-10-26)
 - `Pit_MsToTicks` mới là bản đúng; `power.pas` giữ nguyên các hằng tick cũ (5000/1000/3000 tick)
 - `IsValidUserPtr_Pas(…, totalPages)`: một số caller C# cũ truyền số **byte** (nới lỏng giới hạn gấp 4096 lần); bản Pascal luôn truyền số trang

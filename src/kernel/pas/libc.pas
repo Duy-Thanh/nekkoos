@@ -413,7 +413,10 @@ end;
 { MsToTicks: convert milliseconds to scheduler ticks. }
 function MsToTicks(ms: UInt64): UInt64; cdecl;
 begin
-  MsToTicks := (ms div 10) + 1;
+  { The PIT runs at 250 Hz (4 ms per tick). Round up, at least one tick, so a
+    sleep never returns early. }
+  MsToTicks := ((ms * 250) + 999) div 1000;
+  if MsToTicks = 0 then MsToTicks := 1;
 end;
 
 { StrAppend_Pas: append wide string to dest at given index. }

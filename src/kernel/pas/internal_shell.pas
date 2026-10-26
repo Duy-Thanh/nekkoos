@@ -42,7 +42,7 @@ function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolea
 implementation
 
 uses arch_interface, console, kstring, heap, pmm, scheduler, syscall_security,
-  syscall_impl, fat16_kernel, pe_loader, power, pci, rtc, terminal;
+  syscall_impl, fat16_kernel, pe_loader, power, pci, rtc, pit, terminal;
 
 { TShellAction lives here, not in the interface: an enum reachable from the
   interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
@@ -418,9 +418,10 @@ begin
       end;
     SA_UPTIME:
       begin
-        { currentTicks is raw ticks, not milliseconds; kept as the C# had it. }
-        totalSeconds := currentTicks div 1000;
-        ms := currentTicks mod 1000;
+        { currentTicks counts timer ticks, not milliseconds. }
+        ms := currentTicks * 1000 div Pit_GetFrequency;
+        totalSeconds := ms div 1000;
+        ms := ms mod 1000;
         Say('System Uptime: ');
         Con_PrintHex(totalSeconds);
         Say(' seconds, ');
