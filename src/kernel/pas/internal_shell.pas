@@ -33,7 +33,16 @@ procedure InternalShell_SetSchedulerState(threads: Pointer; threadCount: Integer
 function InternalShell_ParseCommand_Pas(cmdStr: PWord; outAction: PByte; outArg: PWord; outArgLen: PWord): Byte; cdecl;
   public name 'InternalShell_ParseCommand_Pas';
 
+{ Execute the command in the NUL-terminated user string at ctx arg 1 (syscall 88).
+  Sets the syscall return (1 handled, 0 refused) and returns 0; the dispatcher
+  must ignore the value (it is not an RSP). }
+function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolean;
+  ctx: PQWord): QWord;
+
 implementation
+
+uses arch_interface, console, kstring, heap, pmm, scheduler, syscall_security,
+  syscall_impl, fat16_kernel, pe_loader, power, pci, rtc, terminal;
 
 { TShellAction lives here, not in the interface: an enum reachable from the
   interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
@@ -206,6 +215,262 @@ begin
   outAction^ := Byte(action);
   outArgLen^ := argLen;
   InternalShell_ParseCommand_Pas := 1;
+end;
+
+{ ========================================================================
+  Execution of parsed commands (ported from InternalShell.cs)
+  ======================================================================== }
+
+function UserPtrOk(ptr: QWord): Boolean;
+var
+  tid: Integer;
+begin
+  UserPtrOk := False;
+  if (ptr < $1000) or (ptr > $00007FFFFFFFFFFF) then Exit;
+  tid := Sched_GetCurrentThreadId;
+  if (tid < 0) or (tid >= Sched_GetThreadCount) then Exit;
+  UserPtrOk := IsValidUserPtr_Pas(tid, ptr, Sched_GetThreadAddrSpaceRaw(tid),
+    Pmm_GetTotalPages) <> 0;
+end;
+
+procedure Say(const msg: AnsiString);
+begin
+  Con_Print(W(msg));
+end;
+
+procedure SayRed(const msg: AnsiString);
+begin
+  Con_SetColor($00FF0000);
+  Con_Print(W(msg));
+end;
+
+procedure PrintArg(arg: PWord; len: Word);
+var
+  i: Word;
+begin
+  i := 0;
+  while i < len do
+  begin
+    if arg[i] = 0 then Break;
+    Con_DrawChar(arg[i]);
+    Inc(i);
+  end;
+end;
+
+procedure HandleCat(arg: PWord; argLen: Word);
+var
+  fSize, i: Cardinal;
+  fBuf: PByte;
+  c: Word;
+begin
+  if (argLen = 0) or (arg[0] = 0) then Exit;
+  fSize := 0;
+  fBuf := Fat16K_ReadFile(arg, @fSize, -1);
+  if fBuf = nil then
+  begin
+    SayRed('[!] cat: File not found on FAT16.'#13#10);
+    Exit;
+  end;
+
+  if fSize > 16384 then
+    SayRed('[!] File too large (>16KB). Refusing to print to prevent Terminal freeze.'#13#10)
+  else
+  begin
+    Con_SetColor($00FFFFFF);
+    for i := 0 to fSize - 1 do
+    begin
+      c := fBuf[i];
+      if c = 13 then Continue;
+      if IsPrintableChar(c) <> 0 then Con_DrawChar(c)
+      else Con_DrawChar(Ord('.'));
+    end;
+    Say(#13#10);
+  end;
+  Heap_Free(fBuf);
+end;
+
+procedure HandleRunOrDaemon(id: Integer; arg: PWord; argLen: Word; isDaemon: Boolean; ctx: PQWord);
+var
+  fileSize: Cardinal;
+  rawData: PByte;
+  isJailed: Boolean;
+begin
+  if (argLen = 0) or (arg[0] = 0) then
+  begin
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  fileSize := 0;
+  Arch_EnableInterrupts;
+  rawData := Fat16K_ReadFile(arg, @fileSize, id);
+
+  if rawData = nil then
+  begin
+    SayRed('[!] Kernel: Execute failed! File not found or OOM: ');
+    Con_Print(arg);
+    Say(#13#10);
+    Exit;
+  end;
+
+  if (rawData[0] <> Ord('M')) or (rawData[1] <> Ord('Z')) then
+  begin
+    SayRed('[!] Kernel FATAL: Corrupted PE Header!'#13#10);
+    Heap_Free(rawData);
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  Con_SetColor($00FFFF00);
+  isJailed := (Sched_GetThreadUID(id) <> 0) or (Sched_GetThreadGID(id) <> 0);
+  if isJailed then
+  begin
+    Con_SetColor($00FF00FF);
+    Say('[!] ZERO TRUST: Untrusted App detected! Jailing in Phantom Sandbox...'#13#10);
+  end;
+
+  PELoader_LoadAndRun(rawData, isDaemon, isJailed, False, arg, 1);
+
+  if isDaemon then Con_SetColor($0000FF00);
+end;
+
+procedure HandleLogout(id: Integer; ctx: PQWord);
+var
+  currentUid, fileSize: Cardinal;
+  rawData: PByte;
+  irq: Boolean;
+  i: Integer;
+begin
+  currentUid := Sched_GetThreadUID(id);
+  Con_SetColor($00FFFF00);
+  Say(#13#10'[*] Saving session... Logging out...'#13#10);
+
+  fileSize := 0;
+  Arch_EnableInterrupts;
+
+  { Reload the login program from the volume root. (The C# port of this
+    handler read ETC/PASSWD here and then tested it for an MZ header, which
+    could never succeed; it was a botched edit of the original, which read
+    syslogon.exe.) }
+  Fat16K_Cd(W(''), -1);
+  rawData := Fat16K_ReadFile(W('syslogon.exe'), @fileSize, id);
+  if (rawData <> nil) and (rawData[0] = Ord('M')) and (rawData[1] = Ord('Z')) then
+    PELoader_LoadAndRun(rawData, False, False, True, W('syslogon.exe'), 1)
+  else
+  begin
+    SayRed('[!] FATAL: Cannot find syslogon.exe! System Halt!'#13#10);
+    if rawData <> nil then Heap_Free(rawData);
+    while True do Arch_Halt;
+  end;
+
+  if currentUid <> 0 then
+  begin
+    { Take down everything the logging-out user still has running. }
+    irq := Sched_AcquireSchedLockSafe;
+    for i := 1 to Sched_GetThreadCount - 1 do
+      if (i <> id) and (Sched_GetThreadActive(i) = 1) and (Sched_GetThreadUID(i) = currentUid) then
+      begin
+        Sched_SetThreadActive(i, 0);
+        Sched_SetThreadUID(i, 9999);
+      end;
+    Sched_ReleaseSchedLockSafe(irq);
+  end;
+  Sched_TerminateCurrentTask;
+end;
+
+function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolean;
+  ctx: PQWord): QWord;
+var
+  cmdPtr: QWord;
+  action: Byte;
+  argLen: Word;
+  arg: array[0..255] of Word;
+  isDaemon: Boolean;
+  totalSeconds, ms: QWord;
+begin
+  InternalShell_Dispatch := 0;
+
+  cmdPtr := Ctx_GetArg(ctx, 1);
+  if (cmdPtr = 0) or (not UserPtrOk(cmdPtr)) then
+  begin
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  action := 0;
+  argLen := 0;
+  if InternalShell_ParseCommand_Pas(PWord(cmdPtr), @action, @arg[0], @argLen) = 0 then
+  begin
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  case TShellAction(action) of
+    SA_CLEAR:
+      Con_Clear($00111111);
+    SA_HELP:
+      Say('NekkoOS Microkernel'#13#10'Commands: clear, help, mem, uptime, pci, date, uname, run, daemon, ls, cat, cd, write'#13#10);
+    SA_MEM:
+      begin
+        Say('Free memory:'#9#9);
+        Con_PrintHex(PMM_GetFreePages * 4096 div (1024 * 1024));
+        Say(' MB'#13#10);
+      end;
+    SA_UPTIME:
+      begin
+        { currentTicks is raw ticks, not milliseconds; kept as the C# had it. }
+        totalSeconds := currentTicks div 1000;
+        ms := currentTicks mod 1000;
+        Say('System Uptime: ');
+        Con_PrintHex(totalSeconds);
+        Say(' seconds, ');
+        Con_PrintHex(ms);
+        Say(' ms'#13#10#13#10);
+      end;
+    SA_PCI:
+      Pci_ScanBus;
+    SA_DATE:
+      RTC_PrintCurrentTime;
+    SA_POWEROFF:
+      if isKing then Power_Shutdown
+      else SayRed('[!] Permission Denied: Only Root can shutdown the system!'#13#10);
+    SA_REBOOT:
+      if isKing then Power_Reboot
+      else SayRed('[!] Permission Denied: Only Root can reboot the system!'#13#10);
+    SA_UNAME:
+      Say('NekkoOS Microkernel x86_64'#13#10);
+    SA_CAT:
+      HandleCat(@arg[0], argLen);
+    SA_RUN, SA_DAEMON:
+      begin
+        isDaemon := TShellAction(action) = SA_DAEMON;
+        if (not isKing) and isDaemon then
+        begin
+          SayRed('[!] Permission Denied: Only Root can spawn Daemons!'#13#10);
+          Con_SetColor($00FFFFFF);
+          Ctx_SetRet(ctx, 0);
+          Exit;
+        end;
+        HandleRunOrDaemon(id, @arg[0], argLen, isDaemon, ctx);
+      end;
+    SA_LOGOUT:
+      HandleLogout(id, ctx);
+  else
+    begin
+      SayRed('Kernel: Unknown Command or handled by Ring 3: ');
+      PrintArg(@arg[0], argLen);
+      Say(#13#10);
+    end;
+  end;
+
+  Con_SetColor($00FFFFFF);
+  Ctx_SetRet(ctx, 1);
+end;
+
+function InternalShell_Dispatch_Pas(id: Integer; currentTicks: QWord; isKing: Byte;
+  ctx: PQWord): QWord; cdecl; public name 'InternalShell_Dispatch_Pas';
+begin
+  InternalShell_Dispatch_Pas := InternalShell_Dispatch(id, currentTicks, isKing <> 0, ctx);
 end;
 
 end.
