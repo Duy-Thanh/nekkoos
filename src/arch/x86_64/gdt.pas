@@ -356,4 +356,33 @@ begin
   Terminal_Print_Pas(W('[+] Core GDT and Ring 3 TSS Jail Forged in Steel!'#13#10));
 end;
 
+{ ── cdecl exports for the remaining C# glue (src/arch/x86_64/GDT.cs) ────── }
+
+procedure Gdt_Init_Pas; cdecl; public name 'Gdt_Init_Pas';
+begin
+  Gdt_Init;
+end;
+
+procedure Gdt_GrantPortAccess_Pas(port: Word; coreCount: Cardinal); cdecl; public name 'Gdt_GrantPortAccess_Pas';
+begin
+  { APIC.CoreCount is still owned by C#; it is handed over on each call. }
+  Gdt_SetCoreCount(coreCount);
+  Gdt_GrantPortAccess(port);
+end;
+
+function Gdt_GetTss_Pas: Pointer; cdecl; public name 'Gdt_GetTss_Pas';
+begin
+  Gdt_GetTss_Pas := Gdt_GetTss;
+end;
+
+procedure Gdt_SetCoreTss_Pas(coreIndex: Cardinal; tssPtr: Pointer); cdecl; public name 'Gdt_SetCoreTss_Pas';
+begin
+  Gdt_SetCoreTss(coreIndex, tssPtr);
+end;
+
+function Gdt_GetCoreTss_Pas(coreIndex: Cardinal): Pointer; cdecl; public name 'Gdt_GetCoreTss_Pas';
+begin
+  Gdt_GetCoreTss_Pas := Gdt_GetCoreTss(coreIndex);
+end;
+
 end.

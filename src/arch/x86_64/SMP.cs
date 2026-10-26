@@ -93,7 +93,7 @@ public static unsafe class SMP
         ulong iopbAddr = (ulong)&(tss->Iopb[0]);
         tss->IopbOffset = (ushort)(iopbAddr - tssAddr);
 
-        CoreTssList[myId] = tss; 
+        CoreTssList[myId] = tss; GDT.RegisterCoreTss(myId, tss);
 
         uint tssLimit = (uint)sizeof(TSSEntry) - 1;
         ulong limitLow = tssLimit & 0xFFFF;
