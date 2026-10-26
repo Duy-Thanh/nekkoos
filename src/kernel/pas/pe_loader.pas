@@ -44,9 +44,14 @@ function PELoader_FindAppMainExport_Pas(appBasePhys: Pointer; sizeOfImage: UInt3
   and injects vdsoVirt in-place. Returns: 1 = injected, 0 = not found }
 function PELoader_FindKaslrMagic_Pas(appBasePhys: Pointer; sizeToScan: UInt64; vdsoVirt: UInt64): Byte; cdecl; public name 'PELoader_FindKaslrMagic_Pas';
 
+{ Load a PE image and start it as a user process. Takes ownership of rawFile
+  (always freed). Returns the new thread id, or -1 when nothing was started. }
+function PELoader_LoadAndRun(rawFile: PByte; runInBackground, isJailed, forceRoot: Boolean;
+  processName: PWord; priority: Byte): Integer;
+
 implementation
 
-uses fpc_runtime;
+uses fpc_runtime, libc, kstring, console, pmm, vmm, heap, vdso, prng, scheduler;
 
 { ========================================================================
   [VALIDATE] — validates PE header and extracts key fields
@@ -346,6 +351,205 @@ begin
       Exit;
     end;
   end;
+end;
+
+{ ========================================================================
+  [LOAD AND RUN] — orchestration (ported from PELoader.cs LoadAndRun)
+  ======================================================================== }
+
+const
+  APP_VIRTUAL_BASE = QWord($0000400000000000);
+  MAX_PE_PAGES     = 131072;      { 512 MB: defence in depth against huge images }
+
+procedure PeFail(const msg: AnsiString);
+begin
+  Con_SetColor($00FF0000);
+  Con_Print(W(msg));
+end;
+
+{ Give back every page of a half-built image and its PML4, plus the raw file. }
+procedure Abort(physBase, pages: QWord; appPml4: Pointer; rawFile: PByte);
+var
+  i: QWord;
+begin
+  if pages > 0 then
+    for i := 0 to pages - 1 do Pmm_FreePage(Pointer(physBase + i * 4096));
+  Pmm_FreePage(appPml4);
+  Heap_Free(rawFile);
+end;
+
+function PELoader_LoadAndRun(rawFile: PByte; runInBackground, isJailed, forceRoot: Boolean;
+  processName: PWord; priority: Byte): Integer;
+var
+  sizeOfImage, sizeOfHeaders, relocRVA, relocSize, exportRVA, exportSize, addressOfEntry: UInt32;
+  numSections, optHeaderSize: Word;
+  e_lfanew: Integer;
+  ntHeader: PByte;
+  appPml4: Pointer;
+  pages, physBase, originalImageBase, vdsoVirt, localVdso, sizeToScan, virtualEntry: QWord;
+  delta: Int64;
+  appBasePhys: PByte;
+  i: QWord;
+  kaslrBase: QWord;
+  tid: Integer;
+begin
+  PELoader_LoadAndRun := -1;
+  if rawFile = nil then Exit;
+
+  if PELoader_ValidateHeaders_Pas(rawFile, $FFFFFFFF, sizeOfImage, sizeOfHeaders,
+       numSections, optHeaderSize) = 0 then Exit;
+
+  if (sizeOfHeaders = 0) or (sizeOfHeaders > sizeOfImage) then
+  begin
+    PeFail('[!] FATAL: Invalid PE headers size!'#13#10);
+    Heap_Free(rawFile);
+    Exit;
+  end;
+
+  e_lfanew := PInteger(rawFile + $3C)^;
+  ntHeader := rawFile + e_lfanew;
+
+  { The app starts from a copy of the kernel's PML4, so the kernel stays
+    mapped for syscalls. Page 0 is deliberately left unmapped: it is the trap
+    for NULL dereferences. }
+  appPml4 := Pmm_AllocatePage;
+  if appPml4 = nil then
+  begin
+    PeFail('[!] PELoader OOM: Cannot allocate PML4 Table!'#13#10);
+    Heap_Free(rawFile);
+    Exit;
+  end;
+  MemCopy(appPml4, Vmm_GetPml4, 4096);
+
+  pages := (QWord(sizeOfImage) + 4095) div 4096;
+  if pages > MAX_PE_PAGES then
+  begin
+    PeFail('[!] PELoader BLOCKED: PE SizeOfImage exceeds 512MB security limit!'#13#10);
+    Pmm_FreePage(appPml4);
+    Heap_Free(rawFile);
+    Exit;
+  end;
+
+  physBase := QWord(Pmm_AllocateContiguousPages(pages));
+  if physBase = 0 then
+  begin
+    PeFail('[!] PELoader OOM: Cannot allocate Physical Memory for App!'#13#10);
+    Pmm_FreePage(appPml4);
+    Heap_Free(rawFile);
+    Exit;
+  end;
+
+  appBasePhys := PByte(physBase);
+  MemSet(appBasePhys, 0, Cardinal(pages * 4096));
+  MemCopy(appBasePhys, rawFile, sizeOfHeaders);
+
+  if PELoader_CopySections_Pas(appBasePhys, rawFile, sizeOfImage, numSections,
+       optHeaderSize, ntHeader) <> 0 then
+  begin
+    PeFail('[!] FATAL: PE section exceeds image bounds!'#13#10);
+    Abort(physBase, pages, appPml4, rawFile);
+    Exit;
+  end;
+
+  originalImageBase := PQWord(ntHeader + 48)^;
+  delta := Int64(APP_VIRTUAL_BASE) - Int64(originalImageBase);
+
+  if delta <> 0 then
+  begin
+    relocRVA := PCardinal(ntHeader + 176)^;
+    relocSize := PCardinal(ntHeader + 180)^;
+
+    if (relocRVA > sizeOfImage) or (relocSize > sizeOfImage) or
+       (QWord(relocRVA) + relocSize > sizeOfImage) then
+    begin
+      PeFail('[!] FATAL: Invalid PE relocation data!'#13#10);
+      Abort(physBase, pages, appPml4, rawFile);
+      Exit;
+    end;
+
+    PELoader_ApplyRelocations_Pas(appBasePhys, sizeOfImage, relocRVA, relocSize, delta);
+  end;
+
+  { Per-process vDSO at a randomised address (KASLR for userland). }
+  kaslrBase := PRNG_Next_Range($5000, $7FFF);
+  vdsoVirt := kaslrBase shl 32;
+
+  localVdso := QWord(Pmm_AllocatePage);
+  MemCopy(Pointer(localVdso), Pointer(Vdso_GetPhysPage), 4096);
+  Vmm_MapPageIn(localVdso, vdsoVirt, $07, appPml4);
+
+  { Patch the app's KASLR magic with the real vDSO address. The scan is
+    byte-by-byte because the compiler's padding and alignment are unknown. }
+  sizeToScan := pages * 4096;
+  if PELoader_FindKaslrMagic_Pas(appBasePhys, sizeToScan, vdsoVirt) = 0 then
+  begin
+    Con_SetColor($00FF00FF);
+    Con_Print(W('   [?] Warning: Legacy App detected (No KASLR Magic Signature).'#13#10));
+    Con_SetColor($00FFFFFF);
+  end;
+
+  for i := 0 to pages - 1 do
+    Vmm_MapPageIn(physBase + i * 4096, APP_VIRTUAL_BASE + i * 4096, $07, appPml4);
+
+  addressOfEntry := 0;
+  exportRVA := PCardinal(ntHeader + 136)^;
+
+  if exportRVA > sizeOfImage then
+  begin
+    PeFail('[!] FATAL: Invalid PE export directory RVA!'#13#10);
+    Abort(physBase, pages, appPml4, rawFile);
+    Exit;
+  end;
+
+  if exportRVA <> 0 then
+  begin
+    exportSize := PCardinal(ntHeader + 140)^;
+    if PELoader_FindAppMainExport_Pas(appBasePhys, sizeOfImage, exportRVA, exportSize,
+         addressOfEntry) = 0 then
+    begin
+      Con_SetColor($00FF0000);
+      Abort(physBase, pages, appPml4, rawFile);
+      Exit;
+    end;
+  end;
+
+  if addressOfEntry = 0 then
+  begin
+    PeFail('[!] PELoader: Entry point not found!'#13#10);
+    Con_SetColor($00FFFFFF);
+    Abort(physBase, pages, appPml4, rawFile);
+    Exit;
+  end;
+
+  virtualEntry := APP_VIRTUAL_BASE + addressOfEntry;
+  if (virtualEntry < APP_VIRTUAL_BASE) or (virtualEntry >= APP_VIRTUAL_BASE + sizeOfImage) then
+  begin
+    PeFail('[!] FATAL: Invalid PE entry point address!'#13#10);
+    Abort(physBase, pages, appPml4, rawFile);
+    Exit;
+  end;
+
+  if Sched_GetThreads = nil then
+  begin
+    PeFail('[!] FATAL: Scheduler not initialized!'#13#10);
+    Abort(physBase, pages, appPml4, rawFile);
+    Exit;
+  end;
+
+  tid := Sched_CreateUserTask(virtualEntry, QWord(appPml4), not runInBackground,
+    isJailed, forceRoot, processName, Cardinal(pages), priority);
+
+  Con_Print(W('[+] Process Started!'#13#10));
+
+  Heap_Free(rawFile);
+  PELoader_LoadAndRun := tid;
+end;
+
+function PELoader_LoadAndRun_Pas(rawFile: PByte; runInBackground, isJailed, forceRoot: Byte;
+  processName: PWord; priority: Byte): Integer; cdecl; public name 'PELoader_LoadAndRun_Pas';
+begin
+  PELoader_LoadAndRun_Pas := PELoader_LoadAndRun(rawFile, runInBackground <> 0,
+    isJailed <> 0, forceRoot <> 0, processName, priority);
 end;
 
 end.

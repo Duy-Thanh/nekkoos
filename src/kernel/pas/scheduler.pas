@@ -175,6 +175,13 @@ function Sched_GetThreadTextColor(index: Integer): Cardinal;
 procedure Sched_SetThreadTextColor(index: Integer; v: Cardinal);
 function Sched_GetThreadFpuState(index: Integer): Pointer;
 procedure Sched_SetThreadAddrSpace(index: Integer; v: QWord);
+{ Address-space root regardless of the thread's state (the _Pas accessor the
+  APIC uses answers 0 for an inactive thread). }
+function Sched_GetThreadAddrSpaceRaw(index: Integer): QWord;
+function Sched_GetThreadSharedMemPhys(index: Integer): QWord;
+procedure Sched_SetThreadSharedMemPhys(index: Integer; v: QWord);
+function Sched_GetThreadSharedMemVirt(index: Integer): QWord;
+procedure Sched_SetThreadSharedMemVirt(index: Integer; v: QWord);
 
 { Read a live thread's address-space root (physical PML4), or 0 when the
   index is out of range or the thread is inactive. The APIC uses this to map
@@ -1443,6 +1450,36 @@ procedure Sched_SetThreadTextColor(index: Integer; v: Cardinal);
 var t: PThread;
 begin
   if ThreadAt(index, t) then t^.TextColor := v;
+end;
+
+function Sched_GetThreadAddrSpaceRaw(index: Integer): QWord;
+var t: PThread;
+begin
+  if ThreadAt(index, t) then Result := t^.AddrSpace else Result := 0;
+end;
+
+function Sched_GetThreadSharedMemPhys(index: Integer): QWord;
+var t: PThread;
+begin
+  if ThreadAt(index, t) then Result := t^.SharedMemPhys else Result := 0;
+end;
+
+procedure Sched_SetThreadSharedMemPhys(index: Integer; v: QWord);
+var t: PThread;
+begin
+  if ThreadAt(index, t) then t^.SharedMemPhys := v;
+end;
+
+function Sched_GetThreadSharedMemVirt(index: Integer): QWord;
+var t: PThread;
+begin
+  if ThreadAt(index, t) then Result := t^.SharedMemVirt else Result := 0;
+end;
+
+procedure Sched_SetThreadSharedMemVirt(index: Integer; v: QWord);
+var t: PThread;
+begin
+  if ThreadAt(index, t) then t^.SharedMemVirt := v;
 end;
 
 procedure Sched_SetThreadAddrSpace(index: Integer; v: QWord);

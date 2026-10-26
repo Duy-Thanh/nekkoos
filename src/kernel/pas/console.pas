@@ -49,6 +49,9 @@ procedure Con_DrawChar(c: Word);
 procedure Con_Clear(color: Cardinal);
 
 function Con_GetFb: PCardinal;
+{ Physical base of the UEFI framebuffer as handed over at boot (never changes
+  when output is redirected). }
+function Con_GetBootFbBase: QWord;
 function Con_GetWidth: Cardinal;
 function Con_GetHeight: Cardinal;
 function Con_GetScanLine: Cardinal;
@@ -63,6 +66,7 @@ var
   gFb: PCardinal = nil;
   gWidth, gHeight, gScanLine: Cardinal;
   gBackbuffer: PCardinal = nil;
+  gBootFbBase: QWord = 0;
   gScreenLock: Cardinal = 0;
 
   { Colour used before the scheduler exists, or when no thread owns this core. }
@@ -179,6 +183,7 @@ end;
 
 procedure Con_Init(fbBase: QWord; width, height, scanLine: Cardinal);
 begin
+  gBootFbBase := fbBase;
   gFb := PCardinal(Pointer(fbBase));
   gWidth := width;
   gHeight := height;
@@ -241,6 +246,11 @@ end;
 function Con_GetFb: PCardinal;
 begin
   Con_GetFb := gFb;
+end;
+
+function Con_GetBootFbBase: QWord;
+begin
+  Con_GetBootFbBase := gBootFbBase;
 end;
 
 function Con_GetWidth: Cardinal;
