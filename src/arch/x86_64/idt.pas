@@ -198,4 +198,20 @@ begin
   Idt_SetGateCommon(interruptNumber, handlerAddress, $EE);
 end;
 
+{ ── cdecl exports for IDT.cs ── }
+procedure Idt_Init_Pas; cdecl; public name 'Idt_Init_Pas';
+begin
+  Idt_Init;
+end;
+
+procedure Idt_SetGate_Pas(interruptNumber: Integer; handlerAddress: Pointer); cdecl; public name 'Idt_SetGate_Pas';
+begin
+  Idt_SetGate(interruptNumber, handlerAddress);
+end;
+
+function Idt_GetTable_Pas: Pointer; cdecl; public name 'Idt_GetTable_Pas';
+begin
+  Idt_GetTable_Pas := Idt_GetTable;
+end;
+
 end.

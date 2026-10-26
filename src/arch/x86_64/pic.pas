@@ -98,4 +98,25 @@ begin
   Io_Out8(PIC1_CMD, $20);
 end;
 
+{ ── cdecl exports for PIC.cs ── }
+procedure Pic_Remap_Pas; cdecl; public name 'Pic_Remap_Pas';
+begin
+  Pic_Remap;
+end;
+
+procedure Pic_Disable_Pas; cdecl; public name 'Pic_Disable_Pas';
+begin
+  Pic_Disable;
+end;
+
+procedure Pic_MaskAllIrqs_Pas; cdecl; public name 'Pic_MaskAllIrqs_Pas';
+begin
+  Pic_MaskAllIrqs;
+end;
+
+procedure Pic_SendEOI_Pas; cdecl; public name 'Pic_SendEOI_Pas';
+begin
+  Pic_SendEOI;
+end;
+
 end.

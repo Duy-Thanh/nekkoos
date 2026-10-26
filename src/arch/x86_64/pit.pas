@@ -163,4 +163,25 @@ begin
     Arch_ForceYield;
 end;
 
+{ ── cdecl exports for PIT.cs ── }
+procedure Pit_Init_Pas(frequency: Cardinal); cdecl; public name 'Pit_Init_Pas';
+begin
+  Pit_Init(frequency);
+end;
+
+function Pit_MsToTicks_Pas(ms: QWord): QWord; cdecl; public name 'Pit_MsToTicks_Pas';
+begin
+  Pit_MsToTicks_Pas := Pit_MsToTicks(ms);
+end;
+
+function Pit_GetFrequency_Pas: Cardinal; cdecl; public name 'Pit_GetFrequency_Pas';
+begin
+  Pit_GetFrequency_Pas := Pit_GetFrequency;
+end;
+
+procedure Pit_Sleep_Pas(ms: QWord); cdecl; public name 'Pit_Sleep_Pas';
+begin
+  Pit_Sleep(ms);
+end;
+
 end.

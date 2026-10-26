@@ -3,42 +3,20 @@
 // Copyright (C) 2026 Nguyen Duy Thanh (Nekkochan)
 // Licensed under the GNU General Public License v3.0 (GPLv3)
 // =========================================================================
+using System.Runtime.InteropServices;
 
 namespace NekkoOS.Kernel;
 
+// [PASCAL PORT] Logic lives in pic.pas.
 public static unsafe class PIC
 {
-    public static void Remap()
-    {
-        IO.Out8(0x20, 0x11); IO.Wait(); IO.Out8(0xA0, 0x11); IO.Wait();
-        IO.Out8(0x21, 0x20); IO.Wait(); IO.Out8(0xA1, 0x28); IO.Wait();
-        IO.Out8(0x21, 0x04); IO.Wait(); IO.Out8(0xA1, 0x02); IO.Wait();
-        IO.Out8(0x21, 0x01); IO.Wait(); IO.Out8(0xA1, 0x01); IO.Wait();
-        
-        // Bật ngắt Bàn phím (Bit 1) và Timer (Bit 0)
-        IO.Out8(0x21, 0xFC); IO.Wait(); IO.Out8(0xA1, 0xFF); IO.Wait();
-    }
-    public static void SendEOI() => IO.Out8(0x20, 0x20);
-    
-    // ==========================================================
-    // BỨC TỬ 8259 PIC - NHƯỜNG NGÔI CHO I/O APIC
-    // ==========================================================
-    public static void Disable()
-    {
-        // Ghi 0xFF vào thanh ghi Data của cả 2 chip Master và Slave 
-        // để mask (che) TOÀN BỘ ngắt phần cứng Legacy!
-        IO.Out8(0xA1, 0xFF);
-        IO.Out8(0x21, 0xFF);
-        
-        Terminal.SetColor(0x00FF00FF);
-        fixed (char* m = "[-] Legacy 8259 PIC has been completely silenced & disabled.\n\0") Terminal.Print(m);
-    }
+    [DllImport("*", EntryPoint = "Pic_Remap_Pas")] private static extern void Remap_Pas();
+    [DllImport("*", EntryPoint = "Pic_Disable_Pas")] private static extern void Disable_Pas();
+    [DllImport("*", EntryPoint = "Pic_MaskAllIrqs_Pas")] private static extern void MaskAllIrqs_Pas();
+    [DllImport("*", EntryPoint = "Pic_SendEOI_Pas")] private static extern void SendEOI_Pas();
 
-    // [ISA LEGACY] Cắm cờ mask TẤT CẢ IRQ của 2 chip 8259 (0xFE/0xFF) - dùng lúc
-    // boot sau khi IOAPIC đã tiếp quản, để PIC không còn phát ngắt nào nữa.
-    public static void MaskAllIrqs()
-    {
-        IO.Out8(0x21, 0xFE); // master: chỉ giữ đường cascade 2
-        IO.Out8(0xA1, 0xFF); // slave: mute toàn bộ
-    }
+    public static void Remap() => Remap_Pas();
+    public static void SendEOI() => SendEOI_Pas();
+    public static void Disable() => Disable_Pas();
+    public static void MaskAllIrqs() => MaskAllIrqs_Pas();
 }
