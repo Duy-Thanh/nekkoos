@@ -8,281 +8,171 @@
 
 ## 1. Tổng quan dự án
 
-**NekkoOS** là hệ điều hành 64-bit giáo dục, đang trong giai đoạn **chuyển toàn bộ logic sang Pascal (FPC)** để chuẩn bị mục tiêu lớn hơn: **chạy được đa kiến trúc (x86_64 → ARM64 → RISC-V)**.
+**NekkoOS** là hệ điều hành 64-bit giáo dục. **Toàn bộ mã nguồn là Pascal (FPC) và NASM — không còn
+dòng C# nào** (hoàn tất 2026-10-26). Mục tiêu tiếp theo: **chạy đa kiến trúc (x86_64 → ARM64 → RISC-V)**.
 
 ### Toolchain (openSUSE Tumbleweed)
-- **bflat v10** (`~/bflat`): compile C# với `--stdlib zero` (không runtime, không GC)
-- **fpc 3.2.2**: compile Pascal → COFF `.o` cho Win64 target
-- **NASM**: assembly phần boot + hardware primitives (`src/arch/x86_64/Hardware.asm`)
-- **lld** (qua bflat): linker duy nhất
+- **fpc 3.2.2**: compile Pascal → COFF `.o` cho target Win64 (kernel, app, bootloader)
+- **NASM**: boot + hardware primitives (`src/arch/x86_64/Hardware.asm`, `src/boot/boot_io.asm`, `smp_x86.asm`)
+- **lld** (`lld-link`, gói `lld` của hệ thống): linker duy nhất cho **mọi** image
+- ~~bflat / C#~~: đã loại bỏ. `build.sh` **từ chối build** nếu còn bất kỳ `.cs` nào dưới `src/`.
 
 ```bash
-export PATH="$HOME/bflat:/usr/sbin:$PATH"
 ./build.sh       # build toàn bộ
 ./run.sh         # chạy QEMU
+make test        # smoke + extra + hwcheck
+./verify_pascal_link.sh   # không C#, không RTTI, entry point còn đủ
 ```
+
+### Ba loại image, một linker
+| Image | Nguồn | Link |
+|---|---|---|
+| `efi/boot/bootx64.efi` | `src/boot/boot.pas` + `boot_io.asm` | `lld-link -subsystem:efi_application -entry:NekkoBoot` |
+| `Kernel.exe` (PE DLL, export `KernelMain`) | toàn bộ unit kernel + arch + drivers + `Hardware.asm` | `lld-link /dll /noentry /export:KernelMain /dynamicbase ...` |
+| `*.exe` Ring-3 (export `AppMain`) | `src/apps/*_app.pas` + `app_api.pas` | `lld-link -entry:AppMain -export:AppMain` |
 
 ### Cấu trúc thư mục
 ```
 src/
-  boot/           # EFI bootloader (C# --stdlib zero)
-  kernel/         # Kernel C# + Pascal shims
-    pas/          # Tất cả Pascal modules (kernel-side)
-  apps/           # Ring-3 user apps (C# --stdlib zero)
-  arch/           # Architecture Abstraction Layer
-    Arch.cs       # DUY NHẤT được phép có DllImport cho Arch_*/HAL_*
-    arch_interface.pas  # Pascal twin của Arch.cs
-    hal/          # HAL interface definitions (arch-agnostic Pascal)
-      interrupt.pas
-      mmu.pas
-      platform.pas
-      timer.pas
-    x86_64/       # x86_64 implementations
-      Hardware.asm        # NASM: tất cả Arch_* primitives
-      interrupt_impl.pas
-      timer_impl.pas
-      mmu_impl.pas
-      platform_impl.pas
-      SyscallImpl.cs      # X86SyscallImpl static class
-  drivers/        # Drivers (C# + Pascal)
+  boot/            # boot.pas (UEFI bootloader), boot_io.asm
+  kernel/pas/      # kernel generic: scheduler, ipc_kernel, heap, pmm, fat16_kernel, ata_kernel,
+                   #   syscall_dispatch, kernel_main, console, sudo_dispatch, internal_shell, pe_loader ...
+  arch/
+    arch_interface.pas   # Pascal khai báo Arch_* primitives (implement trong Hardware.asm)
+    hal/                 # interface HAL (arch-agnostic): interrupt, mmu, platform, timer
+    x86_64/              # gdt idt vmm apic ioapic pic pit smp vdso interrupt_handlers syscall_impl
+                         #   hardware_checks + *_impl.pas (HAL x86_64) + Hardware.asm
+  drivers/         # power.pas, pci.pas, input_drv.pas
+  apps/            # app_api.pas + *_app.pas (Ring-3): shell, login, ata, fat16, mouse, acpi, top, dsrv, explorer, stress
+scripts/           # gen_auth.py, strip_coff_relocs.py
+test/automation/   # smoke_test.py, extra_test.py, hwcheck_test.py
 ```
 
 ---
 
 ## 2. GIỚI HẠN CỨNG — KHÔNG ĐƯỢC VI PHẠM
 
-### 2.1 `--stdlib zero` constraints (C#)
+### 2.1 Không có runtime, không có RTL
 
-**TUYỆT ĐỐI KHÔNG dùng trong C#:**
-- `interface` — cần `RhpInitialDynamicInterfaceDispatch` → runtime không có → crash tại vtable 0xB0000
-- `delegate` (trừ function pointer `delegate*`)
-- `virtual` / `override` / `abstract` trên class (vtable dispatch cần runtime)
-- `typeof()`, `is`, `as` (RTTI)
-- `new T[]` (GC heap)
-- `string` literals dài (rodata strings OK nếu `fixed`)
-- `try/catch/finally`
-- LINQ, reflection, dynamic
+Kernel chạy freestanding: **không heap của FPC, không exception, không RTTI**. Chỉ dùng:
+- kiểu thô (`Pointer`, `PByte`, `QWord`, `Cardinal`, mảng tĩnh), `packed record` **khai báo trong `implementation`**
+- `AnsiString` chỉ ở dạng **hằng literal truyền vào `W(...)`** (xem `kstring.pas`); **không** dùng
+  `AnsiString` làm biến/kết quả/ghép chuỗi (kéo theo `fpc_ansistr_*` mà lld không có — bootloader đã bị vướng chuyện này)
+- Chuỗi UTF-16 cho terminal/user: `PWord` + `W('text')` (pool xoay vòng 8 slot, **không giữ** con trỏ quá 8 lần gọi `W`)
 
-**Được phép:**
-- `static` methods và `static` fields
-- `unsafe` + pointers
-- `struct` (không có virtual methods)
-- `delegate*<...>` (function pointers thô)
-- `fixed (char* p = "literal\0")` cho string ngắn
-- `[DllImport]` đúng quy tắc (xem §2.2)
+### 2.2 Giới hạn của hạ tầng build
 
-**Lý do:** Crash cũ tại `0xB0000` (commit `36634e0`) là do dùng `new X86SyscallImpl()` qua interface `IArcSyscall`. vtable pointer uninitialized → CPU nhảy vào VGA memory → triple fault. Fix: xóa interface, dùng static class.
-
-### 2.2 Quy tắc `[DllImport]`
-
-**Lint gate trong `build.sh` tự động reject vi phạm (build fail):**
-
-```
-[DllImport] CHỈ được phép trong:
-  - src/arch/         (Arch_*, HAL_* symbols)
-  - src/boot/         (boot standalone: Out8, In8)
-  - Bất kỳ file nào  nếu EntryPoint kết thúc bằng _Pas
-  - Bất kỳ file nào  nếu là AppMainAsm
-```
-
-Mọi `[DllImport]` trong `src/kernel/`, `src/drivers/`, `src/apps/` mà KHÔNG có suffix `_Pas` → **build fail ngay lập tức**.
-
-**File duy nhất khai báo `Arch_*` / `HAL_*`:** `src/arch/Arch.cs`
+- `{$TYPEINFO OFF}` + `{$M-}` ở đầu mỗi unit; cờ `-CD` khi compile (chi tiết §2.4, §6.3)
+- Unit không có `uses` vòng. Lõi dùng chung nhau qua `kstate.pas` (state dùng chung, **không có `uses`**)
+- Một unit chỉ để xuất symbol (ISR handler, `SyscallHandler`, `KernelMain`) có `interface` rỗng và
+  `public name '...'` trong implementation — vẫn phải được đăng ký trong cả hai script (§5.1b)
 
 ### 2.3 SyscallHandler RSP contract — CỰC KỲ QUAN TRỌNG
 
 `IsrSyscall` (NASM) hoạt động như sau:
 ```nasm
-call SyscallHandler    ; RAX = return value của SyscallHandler
+call SyscallHandler    ; RAX = giá trị trả về
 mov rsp, rax           ; RSP = giá trị trả về
 iretq                  ; restore RIP, CS, RFLAGS, RSP, SS từ stack mới
 ```
 
-**SyscallHandler PHẢI trả về RSP hợp lệ.** Nếu trả về `1` (success code) → `mov rsp, 1` → `iretq` từ địa chỉ 1 → triple fault → CPU reset.
+**`SyscallHandler` PHẢI trả về RSP hợp lệ.** Trả `1` (mã thành công) → `mov rsp, 1` → triple fault → CPU reset.
 
-**Quy tắc bắt buộc trong `Syscall.cs`:**
-
-```csharp
-// ✅ ĐÚNG: gọi Dispatch rồi break → SyscallHandler trả về currentRsp
-case 12:
-{
-    X86SyscallImpl.DispatchMapPhysicalMemory(id, isKing, ctx);
-    break;   // trả về currentRsp (hợp lệ)
-}
-
-// ❌ SAI: return trả về 1 (success) thay vì RSP → triple fault
-case 12:
-{
-    return X86SyscallImpl.DispatchMapPhysicalMemory(id, isKing, ctx);
-}
-```
-
-**Ngoại lệ duy nhất — `DispatchKeyboardRead`:**
-```csharp
-case 4:
-    return X86SyscallImpl.DispatchKeyboardRead(id, isKing, ctx, currentRsp);
-    // DispatchKeyboardRead trả về RSP thật (có thể context switch sang thread khác)
-```
-
-Mọi `Dispatch*` function khác trong `X86SyscallImpl` trả về `ulong` là success/error code,
-KHÔNG PHẢI RSP. Gọi chúng bằng `return` trong switch → **auto-reboot/triple fault**.
-
-**Lịch sử bug:** commit `f2d002f` fix cases 12 và 50 vì lý do này. Kiểm tra mọi case mới.
+Trong `src/kernel/pas/syscall_dispatch.pas`:
+- Mọi `Disp_*` (trong `syscall_impl.pas`) trả về **mã thành công/lỗi**, KHÔNG phải RSP → gọi xong rồi để rơi xuống
+  `SyscallHandler := currentRsp` cuối hàm.
+- Chỉ hai nguồn được gán vào `switchedRsp`/`switched := True`: **`Sched_SwitchTask`** và **`Disp_KeyboardRead`**
+  (syscall 4, 97, 98, 100, và nhánh jailed-phantom).
+- Case mới: kiểm tra từng nhánh — đây đã gây auto-reboot 2 lần (`f2d002f`).
 
 ### 2.4 FPC / Pascal constraints
 
 **KHÔNG dùng:**
-- Record types với RTTI → FPC sinh `RTTI_$SYSTEM_*$indirect` → lld không resolve
-- `interface` trong Pascal (khác C# nhưng cũng tránh để nhất quán)
-- `{$TYPEINFO ON}` (default OFF là đúng)
+- `record`/`enum` khai báo trong `interface` → FPC sinh RTTI `RTTI_$SYSTEM_*$indirect` → lld không resolve (§6.3)
+- Tên hàm trùng tên unit (vd. hàm `Sudo_Dispatch` trong unit `sudo_dispatch` → FPC hiểu là `unit.xxx`)
+- Tên biến module trùng tên tham số (Pascal không phân biệt hoa thường: `Width` vs `width`)
+- Tên `result` làm tham số (từ khoá trong objfpc)
+- `{$TYPEINFO ON}`
 
-**Bắt buộc dùng:**
-- `{$TYPEINFO OFF}` ở đầu mỗi unit
-- Flag `-CD` trong FPC compile command (xem compile_pascal.sh)
-- Built-in types (`Pointer`, `PByte`, `QWord`, `Cardinal`) trong cdecl exports, không dùng type aliases
+**Bắt buộc:**
+- `{$TYPEINFO OFF}` ở đầu mỗi unit; kiểu built-in trong chữ ký `cdecl` export
 
-**FPC compile flags bắt buộc:**
+**Lệnh compile (xem `compile_pascal.sh`):**
 ```bash
 fpc -Twin64 -O1 -CX -Ur -g- -Si -CD @.fpc/fpc.cfg -FUbuild/ <file.pas>
 ```
+`.fpc/fpc.cfg` chứa các `-Fu` tới `src/**` nên FPC tự dựng lại unit phụ thuộc theo bất kỳ thứ tự nào.
+`-CD` tắt RTTI; thiếu → lỗi link.
 
-**Lý do `-CD`:** Disable RTTI generation. Thiếu flag này → link error với lld.
+**Win64:** `cdecl` của FPC trên target này chính là **Microsoft x64 ABI** — cùng ABI với UEFI và với `Hardware.asm`.
+Con trỏ hàm do firmware/asm cấp đọc ra rồi ép sang kiểu thủ tục `cdecl`.
 
-### 2.5 Pascal cdecl export naming
+### 2.5 Quy ước export
 
-Mọi function Pascal export sang C# **phải** có suffix `_Pas`:
-```pascal
-procedure MemSet_Pas(dest: Pointer; value: Byte; size: QWord); cdecl; public name 'MemSet_Pas';
-```
-
-C# shim:
-```csharp
-[DllImport("*", EntryPoint = "MemSet_Pas")]
-static extern void MemSet_Pas(void* dest, byte value, ulong size);
-```
-
-Signature phải khớp HOÀN TOÀN (số tham số, kiểu, thứ tự). Sai một tham số → stack corruption → crash không có thông báo rõ ràng.
+- Hàm gọi từ asm: tên cố định theo `extern` trong `Hardware.asm` (`SyscallHandler`, `TimerHandler`,
+  `YieldHandler`, `KeyboardHandler`, `MouseHandler`, `DivideByZeroHandler`, `GPFHandler`, `PageFaultHandler`).
+- Hàm gọi giữa các image hoặc từ tên-cố-định khác: `cdecl; public name '<Tên>_Pas'`.
+- Chữ ký phải khớp **hoàn toàn** giữa nơi khai báo `external name` và nơi định nghĩa — sai một tham số → stack
+  corruption không báo lỗi (§6.4).
 
 ---
 
-## 3. Kiến trúc Pascal migration
+## 3. Kiến trúc
 
-### 3.1 Trạng thái hiện tại (2026-09-29)
+### 3.0 Bảng đối chiếu C# (đã xoá) → Pascal
 
-**Pascal modules đã port (PASCAL_MODULES trong compile_pascal.sh):**
-```
-libc            kstring        kstate          ata_hw
-prng            kerncrypto      pmm            heap
-strandscheduler ipc             terminal       arch_interface
-rtc             fat16           fpc_runtime    pe_loader
-syscall_security memmap_scan    scheduler_dispatch
-acpi_parse      passwd_parser   spinlock        ata_driver
-sudo_dispatch   scheduler       io             serial
-```
+| C# cũ | Pascal hiện tại |
+|---|---|
+| Kernel.cs | `kernel/pas/kernel_main.pas` (`KernelMain`, `KernelIdleLoop`, vòng chờ daemon) |
+| Syscall.cs / SyscallImpl.cs | `kernel/pas/syscall_dispatch.pas` / `arch/x86_64/syscall_impl.pas` |
+| InterruptHandlers.cs | `arch/x86_64/interrupt_handlers.pas` |
+| Thread.cs (Scheduler) | `kernel/pas/scheduler.pas` (state sở hữu bởi Pascal) |
+| SMP.cs | `arch/x86_64/smp.pas` |
+| HardwareChecks.cs | `arch/x86_64/hardware_checks.pas` |
+| GDT / IDT / PIC / PIT / APIC / IOAPIC / VMM / vDSO .cs | cùng tên `.pas` trong `arch/x86_64/` |
+| Terminal.cs | `terminal.pas` (vẽ) + `console.pas` (khoá màn hình, màu theo thread, shadow buffer) |
+| ATA.cs / FAT16.cs | `ata_kernel.pas` / `fat16_kernel.pas` |
+| Heap.cs / IPC.cs / PMM.cs | `heap.pas` / `ipc_kernel.pas` (+`ipc.pas`) / `pmm.pas` |
+| Power.cs / PCI.cs | `drivers/power.pas` / `drivers/pci.pas` |
+| KeyboardDriver.cs / MouseDriver.cs | `drivers/input_drv.pas` |
+| Sudo.cs / InternalShell.cs / PELoader.cs | `sudo_dispatch.pas` / `internal_shell.pas` / `pe_loader.pas` |
+| Boot.cs | `boot/boot.pas` |
+| acpi.cs / API.cs | `apps/acpi_app.pas` / `apps/app_api.pas` |
 
-**x86_64 arch modules (ARCH_X86_64_MODULES):**
-```
-interrupt_impl  timer_impl      mmu_impl        platform_impl
-gdt             idt             context         vdso
-vmm             pic             isr             pit
-apic            ioapic          platform_bootstrap
-```
+### 3.1 Trình tự khởi động (`kernel_main.pas`)
 
-**Đã port nhưng CHƯA nối vào C#** (link rồi, chưa được gọi — C# vẫn dùng bản
-C# cũ của chúng: `GDT.cs`, `IDT.cs`, `VMM.cs`, `vDSO.cs`, `PIC.cs`, `ISR.cs`,
-`PIT.cs`, `APIC.cs`, `IOAPIC.cs`, `PlatformBootstrap.cs`):
-`io serial gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap`
+1. console + serial → 2. PMM (từ UEFI memory map) → VMM → heap → shadow buffer → FAT16 raw →
+3. GDT/TSS, IDT, remap PIC, tắt bus-master DMA PCI → 4. PIT, IPC, PRNG, vDSO, strands, **scheduler**, bật ngắt →
+5. `HwChecks_CheckHardwareError` (cổng xác thực nền tảng qua fw_cfg) →
+6. spawn ACPI.EXE → chờ APIC/IOAPIC → IOAPIC + SMP → spawn ATA, FAT16, MOUSE → chờ 3 handshake IPC
+(có deadline `Pit_MsToTicks`, mouse được kill + respawn 1 lần) → spawn SYSLOGON.EXE → idle loop.
 
-Đây là lý do các unit mới **không thể** gây ra boot stall: chúng được link
-nhưng chưa được invoke. Xem §6.10.
-
-**Còn lại trong C# (chưa port):**
-- `Syscall.cs` (607) — dispatcher chính
-- `Kernel.cs` (483) — kernel main
-- `Thread.cs` (678) — **chặn cảnh**: SMP/InterruptHandlers/SyscallImpl đều cần nó
-- `InterruptHandlers.cs` (459), `SMP.cs` (430), `SyscallImpl.cs` (399)
-- `HardwareChecks.cs` (220), `FAT16.cs` (1337), `PELoader.cs` (293),
-  `Sudo.cs` (288), `InternalShell.cs` (284), `Terminal.cs` (227)
-- `src/boot/Boot.cs` (1246) — đã có bản nháp `src/boot/boot.pas` (2111 dòng,
-  compile sạch, RTTI=0, giữ marker INJECT_PUBKEY) nhưng **chưa** nối vào build
-- `src/apps/*.cs` — toàn bộ userland Ring-3
-- `src/drivers/x86-legacy/*.cs` — Power, PCI, KeyboardDriver, MouseDriver
-
-**Thứ tự port tiếp theo (quan trọng):**
-1. `Thread.cs` → `thread.pas` (đây là nút thắt — 3 file kia đều phụ thuộc nó)
-2. `InterruptHandlers.cs`, `SMP.cs`, `SyscallImpl.cs` (sẽ thành Pascal thuần)
-3. `Syscall.cs`, `Kernel.cs` → entry point `KernelMain` do Pascal export
-4. Đổi `build.sh` sang `lld` thuần, bỏ bflat
-5. `src/apps/*`, `src/drivers/*`, rồi xóa toàn bộ `.cs`
-
-
-### 3.2 Roadmap port C# → Pascal
-
-**Mục tiêu:** 100% logic kernel sang Pascal. C# chỉ là thin glue.
-
-**Thứ tự ưu tiên:**
-1. Port từng subsystem một, không port nhiều cùng lúc
-2. Mỗi port phải pass smoke test trước khi commit
-3. Không port app Ring-3 cho đến khi kernel Pascal ổn định hoàn toàn
-
-**Quy trình port (bắt buộc):**
-```
-1. Đọc C# file cần port → hiểu logic
-2. Tạo/mở .pas unit tương ứng trong src/kernel/pas/
-3. Export cdecl function với tên *_Pas
-4. Thêm module vào PASCAL_MODULES trong compile_pascal.sh
-5. Thêm [DllImport] shim mỏng vào C# (chỉ forward call)
-6. ./build.sh → kiểm tra không có link error
-7. ./run.sh → smoke test boot thành công
-8. Commit ngắn gọn: "Port X sang Pascal"
-```
-
-### 3.3 HAL (Hardware Abstraction Layer) — cấu trúc
+### 3.2 HAL (Hardware Abstraction Layer)
 
 HAL là cầu nối giữa kernel Pascal (arch-agnostic) và hardware x86_64.
 
-**Interface files (src/arch/hal/):**
-- `interrupt.pas` — IRQ routing, EOI, IPI, masking
-- `mmu.pas` — page table, TLB, memory mapping
-- `platform.pas` — CPU info, NUMA, power management
-- `timer.pas` — local timer, frequency calibration
+**Interface (src/arch/hal/):** `interrupt.pas` (IRQ routing, EOI, IPI), `mmu.pas` (page table, TLB),
+`platform.pas` (CPU info, power), `timer.pas` (local timer).
 
-**x86_64 implementations (src/arch/x86_64/):**
-- `interrupt_impl.pas` → dùng APIC + IOAPIC
-- `timer_impl.pas` → dùng Local APIC timer / PIT
-- `mmu_impl.pas` → dùng x86_64 4-level paging
-- `platform_impl.pas` → dùng CPUID, ACPI
+**x86_64 (src/arch/x86_64/):** `interrupt_impl.pas` (APIC+IOAPIC), `timer_impl.pas`, `mmu_impl.pas`,
+`platform_impl.pas` (CPUID/ACPI).
 
-**ARM64 (tương lai):**
-- `interrupt_impl.pas` → GIC (Generic Interrupt Controller)
-- `timer_impl.pas` → Generic Timer (CNTV_CVAL_EL0)
-- `mmu_impl.pas` → ARMv8 4-level paging
-- `platform_impl.pas` → PSCI, device tree
+**ARM64 / RISC-V (tương lai):** GIC + Generic Timer + ARMv8 MMU + PSCI / PLIC+CLINT + mtime + Sv39/48 + SBI.
 
-**RISC-V (tương lai):**
-- `interrupt_impl.pas` → PLIC + CLINT
-- `timer_impl.pas` → mtime/mtimecmp CSR
-- `mmu_impl.pas` → Sv39/Sv48 paging
-- `platform_impl.pas` → SBI (Supervisor Binary Interface)
+**Quy tắc:** kernel Pascal arch-agnostic KHÔNG gọi APIC/IOAPIC trực tiếp. *Thực tế hiện tại:* `scheduler.pas`,
+`syscall_impl.pas`, `interrupt_handlers.pas`, `smp.pas`, `kernel_main.pas` còn gọi thẳng `apic`/`gdt`/`vmm`
+(x86_64). Muốn thêm kiến trúc thì các điểm đó là thứ phải trừu tượng hoá trước (§7, §11).
 
-**Quy tắc:** Kernel Pascal code KHÔNG BAO GIỜ gọi APIC/IOAPIC trực tiếp. Luôn qua HAL interface.
+### 3.3 arch_interface.pas — AAL primitives
 
-### 3.4 arch_interface.pas — AAL primitives
+`src/arch/arch_interface.pas` khai báo mọi `Arch_*` implement trong `Hardware.asm`:
 
-`src/arch/arch_interface.pas` khai báo tất cả `Arch_*` primitives được implement trong `Hardware.asm`:
+**I/O:** `Arch_WritePort8/16/32`, `Arch_ReadPort8/16/32`, `Arch_IoWait` · **MMIO:** `Arch_WriteMmio32/ReadMmio32` ·
+**CPU:** `Arch_EnableInterrupts/DisableInterrupts/Halt`, `Arch_GetFlags` · **Atomics:** `Arch_AtomicExchange/Add64`, `Arch_CmpXchg` ·
+**Fences:** `Arch_{Compiler,Store,Load,Full}Fence` · **Paging:** `Arch_LoadPageTable/ReadPageTable/FlushTLB` ·
+**GDT/IDT/TSS:** `Arch_LoadGDT/LoadIDT/LoadTSS` · **ISR entry:** `Arch_GetIsr*` · **Scheduler:** `Arch_LockScheduler/UnlockScheduler/ForceYield`.
 
-**I/O Ports:** `Arch_WritePort8/16/32`, `Arch_ReadPort8/16/32`, `Arch_IoWait`
-**MMIO:** `Arch_WriteMmio32`, `Arch_ReadMmio32`
-**CPU Control:** `Arch_EnableInterrupts`, `Arch_DisableInterrupts`, `Arch_Halt`
-**Atomics:** `Arch_AtomicExchange`, `Arch_AtomicAdd64`, `Arch_CmpXchg`
-**Fences:** `Arch_CompilerFence`, `Arch_StoreFence`, `Arch_LoadFence`, `Arch_FullFence`
-**Spinlocks:** `Arch_SpinlockAcquire`, `Arch_SpinlockRelease`
-**Paging:** `Arch_LoadPageTable`, `Arch_ReadPageTable`, `Arch_GetFaultAddress`, `Arch_FlushTLB`
-**GDT/IDT/TSS:** `Arch_LoadGDT`, `Arch_LoadIDT`, `Arch_LoadTSS`
-**ISR entry points:** `Arch_GetIsrDiv0`, `Arch_GetIsrGPF`, `Arch_GetIsrPageFault`, `Arch_GetIsrTimer`, `Arch_GetIsrKeyboard`, `Arch_GetIsrMouse`, `Arch_GetIsrSyscall`, `Arch_GetIsrYield`
-**Scheduler:** `Arch_LockScheduler`, `Arch_UnlockScheduler`, `Arch_ForceYield`
-
-Khi port sang ARM64: thêm `src/arch/arm64/arch_interface_arm64.pas` với cùng API, implement bằng ARM64 instructions. Không sửa file x86_64.
+Thêm kiến trúc: tạo `src/arch/<arch>/arch_interface_<arch>.pas` cùng API; không sửa file x86_64.
 
 ---
 
@@ -341,14 +231,16 @@ Khi port sang ARM64: thêm `src/arch/arm64/arch_interface_arm64.pas` với cùng
 ```
 User app → INT/SYSCALL → IsrSyscall (NASM)
   → push registers
-  → call SyscallHandler (C#)
+  → call SyscallHandler (syscall_dispatch.pas)
     → switch(syscallId)
-      → X86SyscallImpl.DispatchXxx() hoặc inline logic
+      → Disp_Xxx() (syscall_impl.pas) hoặc inline logic
       → break (trả về currentRsp)   ← PHẢI LÀM VẬY
   → return currentRsp (hoặc newRsp nếu context switch)
   → mov rsp, rax
   → iretq
 ```
+
+---
 
 ---
 
@@ -359,47 +251,35 @@ User app → INT/SYSCALL → IsrSyscall (NASM)
 ```bash
 ./build.sh
 ```
+1. **Guard "no C#"** — fail nếu còn `.cs` dưới `src/`
+2. **`compile_pascal.sh`** — compile mọi unit → `build/*.o`, rồi **strip relocation type-0** (§5.3)
+3. **NASM** — `Hardware.obj`, `boot_io.obj`, `smp.bin`
+4. **Link** (đều bằng `lld-link`): `Kernel.exe`, các `*.exe` Ring-3
+5. Kiểm tra chữ ký KASLR trong `Shell.exe`, sinh RSA key (`private.pem`, gitignored), **ký** `Kernel.exe` → `Kernel.exe.mui`
+6. **Chèn public key vào `src/boot/boot.pas`** (marker `{ INJECT_PUBKEY }`, hex dạng `$XX`), `compile_boot.sh`, link bootloader
+7. `scripts/gen_auth.py` (PASSWD/SUDOERS) → tạo `hdd.img` FAT16 và `mcopy`
 
-Thứ tự:
-1. **Lint gate** — reject DllImport vi phạm
-2. **Compile Pascal** — `compile_pascal.sh` → build/ *.o
-3. **NASM** — Hardware.asm, boot_io.asm → *.obj
-4. **bflat** — C# kernel + apps → PE/COFF
-5. **lld link** — ghép tất cả thành NekkoOS.efi
+`build.sh` giữ artifact cũ nếu build lỗi (§13.1). Dùng `LLD=<đường dẫn>` để đổi linker.
 
-**Đã chứng minh khả thi (2026-09-29):** bước 4-5 cuối cùng CÓ THỂ bỏ bflat.
-Một PE thuần Pascal+NASM link thành công bằng `lld -flavor link`
-(`~/bflat/bin/lld`) với `-subsystem:efi_application -entry:<Pascal export>`.
-Lệnh mẫu đã test thành công:
-
-```bash
-~/bflat/bin/lld -flavor link -subsystem:efi_application \
-  -entry:KernelMain_Pas -out:kernel.efi build/*.o Hardware.obj
-```
-
-(kèm relocation strip như `compile_pascal.sh` làm). Đây là đường đi cuối
-cùng để xóa C#.
-
-### 5.1b ⚠️ Đăng ký unit mới — phảI SỬA CẢ HAI script
-
-Thêm unit vào đúng một chỗ sẽ hỏng theo hai kiểu khác nhau:
+### 5.1b ⚠️ Đăng ký unit mới — phải sửa CẢ HAI script
 
 | Thiếu ở | Lỗi |
 |---|---|
 | `compile_pascal.sh` | `lld: error: unsupported relocation type 0x0 in build/<mod>.o` |
-| `build.sh` | `lld: error: undefined symbol: <UNIT>_$$_...` |
+| `build.sh` (`KERNEL_OBJS`) | `lld: error: undefined symbol: ...` |
 
-`compile_pascal.sh` vừa compile vừa chạy script strip relocation — bỏ nó khỏi
-đây là nguyên nhân hầu hết lỗi reloc. Chi tiết: §6.3c.
+`compile_pascal.sh` có 3 danh sách: `PASCAL_MODULES` (kernel generic + drivers), `ARCH_X86_64_MODULES`
+(`src/arch/x86_64/<mod>.pas`) và `APP_MODULES`. Hàm `mod_src` ánh xạ tên → đường dẫn cho `PASCAL_MODULES`
+(`src/drivers/*` cần được liệt kê ở đó). `compile_boot.sh` lo riêng `boot.pas`.
 
 ### 5.2 Thêm Pascal module mới
 
-1. Tạo `src/kernel/pas/<module>.pas` (hoặc `src/arch/<arch>/<module>.pas`)
-2. Thêm vào `PASCAL_MODULES` hoặc `ARCH_X86_64_MODULES` trong `compile_pascal.sh`
-3. Thêm `build/<module>.o` vào `--ldflags` trong `build.sh`
-4. `./build.sh` để kiểm tra link
+1. Tạo `src/kernel/pas/<module>.pas` (hoặc `src/arch/x86_64/`, `src/drivers/`)
+2. Thêm vào danh sách tương ứng trong `compile_pascal.sh` (+ `mod_src` nếu nằm ngoài `kernel/pas`)
+3. Thêm `build/<module>.o` vào `KERNEL_OBJS` trong `build.sh` (app: thêm một dòng `link_app`)
+4. `./build.sh` rồi `./verify_pascal_link.sh`
 
-Toàn bộ quy ước porting: `docs/PASCAL_PORTING.md`.
+Toàn bộ quy ước: `docs/PASCAL_PORTING.md`.
 
 ### 5.2b ⚠️ File chứa credential: `passwd` + `sudoers`
 
@@ -444,16 +324,18 @@ Serial log: QEMU redirect serial → `/tmp/serial.log` (dùng để debug).
 
 ---
 
+---
+
 ## 6. Bẫy đã biết — PHẢI ĐỌC
 
-### 6.1 ❌ C# interface → crash 0xB0000
+### 6.1 📜 (lịch sử) C# interface → crash 0xB0000
 
 **Triệu chứng:** Boot → crash/triple fault tại địa chỉ ~0xB0000 (VGA memory region)
 **Nguyên nhân:** `new SomeClass()` qua interface cần `RhpInitialDynamicInterfaceDispatch` → không có trong `--stdlib zero` → vtable pointer uninitialized → CPU nhảy vào VGA memory
 **Fix:** Dùng static class với static methods. Không dùng interface, không dùng virtual dispatch.
 **Commit:** `36634e0`
 
-### 6.2 ❌ SyscallHandler return wrong value → auto-reboot
+### 6.2 ❌ SyscallHandler return wrong value → auto-reboot (quy tắc vẫn nguyên giá trị)
 
 **Triệu chứng:** Kernel boot thành công, chạy được vài giây, sau đó tự reboot
 **Nguyên nhân:** `case 12: return X86SyscallImpl.DispatchMapPhysicalMemory(...)` — Dispatch trả về `1` (success). IsrSyscall thực hiện `mov rsp, 1` → `iretq` → triple fault → CPU reset
@@ -524,7 +406,7 @@ quên `compile_pascal.sh`, reloc type-0 chưa được strip →
 **Nguyên nhân:** 8042 keyboard controller có buffer giới hạn; keystroke dồn khi CPU đang busy dispatch → drop
 **Fix:** Poll serial log, chờ prompt xuất hiện trước mỗi keystroke. Không gõ dồn nhiều phím cùng lúc.
 
-### 6.6 ❌ Integer underflow trong ACPI parsing
+### 6.6 ❌ Integer underflow trong ACPI parsing (code nay ở `src/apps/acpi_app.pas`)
 
 **Triệu chứng:** `entriesCount` rất lớn (underflow từ uint) → loop đọc ra ngoài bộ nhớ → crash
 **Nguyên nhân:** `sdtRealLength - sizeof(ACPISDTHeader)` wrap around khi `sdtRealLength < 36`
@@ -536,7 +418,7 @@ int entriesCount = (sdtRealLength > headerSz)
     : 0;
 ```
 
-### 6.7 ❌ MapACPI null dereference
+### 6.7 ❌ MapAcpi null dereference (`acpi_app.pas`)
 
 **Triệu chứng:** Kernel crash khi parse ACPI tables
 **Nguyên nhân:** `MapACPI()` có thể trả về 0 nếu mapping thất bại, code dereference ngay không kiểm tra
@@ -586,6 +468,8 @@ thay chưa — nếu chưa thì đây là flaky, không phải regression.
 
 ---
 
+---
+
 ## 7. Mục tiêu đa kiến trúc
 
 ### 7.1 Kế hoạch
@@ -629,63 +513,51 @@ Giai đoạn 3: RISC-V 64
 
 ---
 
+---
+
 ## 8. Quy trình làm việc cho AI agents
 
 ### 8.1 Trước khi bắt đầu
-
 1. **Đọc file liên quan** — không suy luận từ tên file
-2. **Chạy build trước** — xem trạng thái hiện tại: `./build.sh 2>&1 | tail -30`
-3. **Đọc AGENTS.md** (file này) — đặc biệt §2 và §6
+2. **Chạy build trước** — `./build.sh 2>&1 | tail -30` và **kiểm tra exit code** (§13.1, §13.2)
+3. Đọc AGENTS.md này, đặc biệt §2, §6, §15
 
-### 8.2 Khi port C# → Pascal
-
+### 8.2 Khi sửa/thêm code kernel
 ```
-BẮT BUỘC theo thứ tự:
-1. Đọc C# function cần port
-2. Kiểm tra signature: số tham số, kiểu, thứ tự
-3. Viết Pascal function với cdecl + public name '*_Pas'
-4. Thêm {$TYPEINFO OFF} nếu dùng record
-5. Kiểm tra compile: fpc -Twin64 -O1 -CX -Ur -g- -Si -CD ...
-6. Kiểm tra link: ./build.sh
-7. Kiểm tra runtime: ./run.sh
-8. Commit
-
-KHÔNG được:
-- Port nhiều modules cùng lúc mà không test từng cái
-- Thêm DllImport ngoài src/arch/ mà không có _Pas suffix
-- Dùng C# interface để wrap Pascal code
+1. Đọc unit liên quan và các unit nó `uses`
+2. Viết Pascal theo §2 (record ở implementation, không AnsiString động, {$TYPEINFO OFF})
+3. Đăng ký unit mới ở CẢ HAI script (§5.1b)
+4. ./build.sh  →  ./verify_pascal_link.sh
+5. python3 test/automation/smoke_test.py   (+ extra_test.py nếu đụng syscall/shell/sudo/power/acpi,
+                                             hwcheck_test.py nếu đụng bootloader/hardware_checks)
+6. Commit nhỏ
 ```
+Một unit port/viết mới **chưa từng chạy** gần như chắc chắn có lỗi (xem §15: mọi unit "đã port" đều có lỗi khi nối thật).
+Đừng tin comment "compile sạch" — tin test.
 
 ### 8.3 Khi thêm syscall mới
-
 ```
-BẮT BUỘC:
-1. Chọn syscall ID chưa dùng (kiểm tra Syscall.cs)
-2. Thêm vDSO slot vào API.cs nếu cần app access
-3. Viết case trong Syscall.cs switch:
-   - Nếu Dispatch function trả về success code: DÙNG break
-   - Nếu Dispatch function trả về RSP (context switch): DÙNG return
-4. Document trong AGENTS.md §4.1
+1. Chọn ID chưa dùng (grep `case` trong syscall_dispatch.pas)
+2. Viết thân hàm Disp_* ở syscall_impl.pas (trả mã, KHÔNG phải RSP — §2.3)
+3. Thêm case vào syscall_dispatch.pas; chỉ Sched_SwitchTask/Disp_KeyboardRead được gán switchedRsp
+4. Nếu app cần gọi: thêm slot cuối bảng ở vdso.pas (chỉ append) + wrapper trong app_api.pas
+5. Ghi vào bảng §4.1
 ```
 
 ### 8.4 Debug crash
-
 ```
-Thứ tự debug:
-1. Đọc serial log: cat /tmp/serial.log
-2. Tìm dòng cuối cùng trước crash
-3. Nếu reboot sau syscall → kiểm tra Syscall.cs case tương ứng có dùng return không
-4. Nếu crash tại ~0xB0000 → kiểm tra có dùng C# interface không
-5. Nếu link error RTTI → kiểm tra Pascal unit có {$TYPEINFO OFF} không
-6. Nếu stack corruption → so sánh Pascal export signature với C# DllImport
+1. Serial log: test/automation/serial.log (smoke_test lưu bản sao ở test/automation/logs/ TRƯỚC khi kill QEMU)
+2. Dòng cuối trước crash
+3. Reboot sau syscall → case tương ứng có gán nhầm switchedRsp không (§2.3)
+4. Link error RTTI → record/enum ở interface (§6.3)
+5. Stack corruption → so chữ ký `external name` với định nghĩa (§6.4)
+6. Treo không log → `-monitor unix:...` + `info registers -a` / `info lapic` (đã tìm ra lỗi LVT timer one-shot nhờ cách này, §15)
 ```
+Mẹo tách lỗi: chèn `Out8($3F8, Ord('A'))` làm mốc ra COM1 (không phụ thuộc terminal).
 
 ### 8.5 Giới hạn agent
-
-- Mỗi agent chỉ làm một nhiệm vụ cụ thể
-- Agent có thể bị rate-limit (429) — nếu bị, đọc kết quả partial và tiếp tục thủ công
-- Không chạy hai agent song song cùng sửa một file
-- Luôn nghiệm thu kết quả agent trước khi dùng: đọc file đã sửa, kiểm tra build
+- Mỗi agent một nhiệm vụ; không chạy hai agent cùng sửa một file
+- Luôn nghiệm thu kết quả agent: đọc file đã sửa, build, chạy test
 
 ---
 
@@ -702,110 +574,50 @@ Commit nhỏ, thường xuyên. Không gộp port Pascal + fix bug vào 1 commit
 
 ---
 
-## 10. Smoke tests
+---
+
+## 10. Tests
 
 ```bash
-python3 test/automation/smoke_test.py
-# 9/9 phải pass: boot → login → ls → LS → cd.. → root listing → write → cat → shutdown
+python3 test/automation/smoke_test.py    # 10 bước: boot → login → ls → LS → cd.. → root listing → write → ls → cat → shutdown
+python3 test/automation/extra_test.py    # 19 bước: builtin kernel (uname/help/mem/uptime/date/pci/unknown), mkdir/rmdir,
+                                         #   sudo end-to-end (mkdir/ls/rmdir + sai mật khẩu), REBOOT thật, SHUTDOWN thật (QEMU thoát)
+python3 test/automation/hwcheck_test.py  # boot KHÔNG có fw_cfg key: phải dừng ở cổng xác thực, gõ key thì boot tiếp
+./verify_pascal_link.sh                  # không .cs, không RTTI, đủ entry point
 ```
 
-Phải pass trước mỗi commit ảnh hưởng đến kernel hoặc syscall.
+`smoke_test` không phủ builtin của kernel, sudo, reboot/shutdown thật hay cổng xác thực — đó là lý do có `extra_test`/`hwcheck_test`.
+Một refactor có thể pass 10/10 mà hỏng cả ba.
 
-⚠️ **Flaky ~1/3** — xem §6.10. Fail thì chạy lại, đừng debug code vội.
-
-### 10.1 Kiểm tra link thuần Pascal (bắt buộc khi thêm unit mới)
-
-```bash
-./verify_pascal_link.sh      # kernel image: build/*.o + Hardware.asm
-./verify_bootloader_link.sh  # EFI image: build/boot.o + boot_io.asm
-```
-
-Hai script này **link thật** bằng `lld` không có bflat — đó là bằng chứng
-rằng C# thực sự có thể bị xóa, không chỉ là chuyện toán học.
-
-`verify_pascal_link.sh` fail khi:
-- Bất kỳ unit nào có symbol RTTI (§6.3b)
-- Có symbol chưa resolve ngoài danh sách ISR/syscall entry còn lại
-- Module mới quên đăng ký (§6.3c)
-
-`verify_bootloader_link.sh` hiện trả exit code **2** với `KNOWN GAP`:
-`boot.pas` còn dùng `AnsiString` nên FPC sinh tham chiếu tới
-`fpc_ansistr_incr_ref` / `fpc_ansistr_decr_ref` / `__FPC_specific_handler`
-(bflat âm thầm cung cấp, lld thì không). Fix đúng cách là chuyển các
-chỗ dùng `AnsiString` sang `PChar`/`PByte` — hợp lý hơn cho bootloader
-freestanding. Không chặn build hiện tại vì bootloader đang ship bản C#.
+⚠️ **Flaky**: boot chậm do Mouse handshake (§6.10, §13.3) — `smoke_test` chạy lại nếu fail ở bước boot. Kernel hiện tại tự
+hồi phục sau ~53 s (deadline 45 s + respawn); nếu một boot treo **mãi** (không có dòng `[TIMER] mouse deadline hit`) thì đó là
+hồi quy thật (xem §15 — lỗi LVT timer one-shot trông y hệt "flake").
 
 ---
 
 ## 11. Việc tiếp theo (thứ tự ưu tiên)
 
-1. ~~Port ACPI parsing sang Pascal~~ ✅
-2. ~~Port PELoader sang Pascal~~ ✅
-3. ~~Port helper chuỗi vào libc.pas~~ ✅
-4. ~~Fix auto-reboot (syscall 12/50 return RSP bug)~~ ✅
-5. ~~Port toàn bộ tầng x86_64 arch sang Pascal~~ ✅ (gdt idt context vmm vdso
-   pic isr pit apic ioapic platform_bootstrap)
-6. ~~Chứng minh kernel link được bằng lld thuần~~ ✅ (`./verify_pascal_link.sh`)
-7. **Port `Thread.cs` vào `scheduler.pas`** — nút thắt. 3 file kia đều phụ thuộc nó
-8. **Port `InterruptHandlers.cs`, `SMP.cs`, `SyscallImpl.cs`** → 8 ISR/syscall
-   entry trong `Hardware.asm` lúc này mới thật sự thoát khỏi C#
-9. **Port `Syscall.cs` + `Kernel.cs`** → `KernelMain` do Pascal export
-10. **Đổi `build.sh` sang `lld` thuần, bỏ bflat**
-11. Sửa `boot.pas` dùng `AnsiString` → `PChar` để bootloader link thuần
-12. **Port `src/drivers/*` và `src/apps/*`**, rồi xóa toàn bộ `.cs`
+1. ✅ ~~Port toàn bộ C# sang Pascal~~ — kernel, app, bootloader, hạ tầng test (2026-10-26)
+2. ✅ ~~Bỏ bflat, link thuần lld~~
+3. **Tách phụ thuộc x86_64 khỏi kernel generic** để có thể thêm ARM64 (§7): `scheduler.pas`/`syscall_impl.pas`/
+   `interrupt_handlers.pas`/`kernel_main.pas` đang `uses apic, gdt, vmm` trực tiếp. Đưa qua `hal/*`.
+4. **Mouse handshake mất ~30–50% boot** — nguyên nhân gốc vẫn chưa biết (§13.3). Đã loại trừ lỗi dịch C# → Pascal vì
+   lỗi vẫn còn sau khi toàn bộ kernel là Pascal.
+5. **Dọn các điểm lệch đã ghi nhận** (§15.3): `MsToTicks_Pas` giả định 100 Hz (PIT chạy 250 Hz), builtin `uptime` in tick thô,
+   `Con_Print` có khoá còn `Terminal_Print_Pas` không (in chồng lên nhau giữa các lõi).
+6. Mở rộng test: `logout`, `chmod/chown` qua sudo, ghi tệp lớn, nhiều tiến trình đồng thời.
+7. ARM64 trên QEMU virt (§7.1 giai đoạn 2).
 
 ---
 
-## 12. Lộ trình loại bỏ bflat (đang thực hiện)
+## 12. Ghi chép từ giai đoạn chuyển app sang Pascal (còn hiệu lực)
 
-bflat là cản trở lớn nhất còn lại: nó không còn được phát triển, và mọi thứ
-nó tạo ra đều bị ràng buộc bởi `--stdlib zero`.
+bflat đã bị loại bỏ hoàn toàn (§1). Các mục dưới đây mô tả **hành vi của hệ thống**, không phải của bflat; tên file C#
+(`Kernel.cs`, `Syscall.cs`, `Thread.cs`...) trong đó nay là các file Pascal ở bảng §3.0.
 
-**Công thức build app thuần Pascal (đã chứng minh, xem `build.sh`):**
-
-```bash
-lld -flavor link -subsystem:console -entry:AppMain -export:AppMain \
-    -out:APP.exe build/APP.o build/app_api.o
-```
-
-Hai điểm dễ sai, đã mắc:
-
-- **`-export:AppMain` bắt buộc.** `PELoader` tra tên `AppMain` trong PE
-  **export directory** (`FindAppMainExport_Pas`), nó *không* đọc
-  `AddressOfEntryPoint` trong optional header. Thiếu `-export` thì image chạy
-  được ngoài đời nhưng loader báo `Entry point not found`.
-- **Record không được để trong `interface`** — kể cả app. FPC sinh RTTI cho
-  cả các kiểu field, lld fail với
-  `undefined symbol: RTTI_$SYSTEM_$$_LONGWORD$indirect`. Xem §6.3b.
-
-**KASLR của app không phụ thuộc compiler:** app khai báo một QWORD khởi tạo
-= `0x1337BEEFCAFE8BAD` trong `.data`; `PELoader` quét **byte-by-byte** toàn
-bộ ảnh rồi patch giá trị đó bằng địa chỉ vDSO thật. Magic phải nằm trong
-`.data` được khởi tạo — không được để compiler gấp thành immediate.
-
-### 12.1 Trạng thái app (Ring-3)
-
-**CẬP NHẬT: bảng dưới KHÔNG phản ánh trạng thái commit gần nhất.
-Một số app đã bị revert về C# khi phát hiện lỗi, xem §12.3.**
-
-| App | Unit Pascal | Ghi chú |
-|---|---|---|
-| Mouse.exe | `src/apps/mouse_app.pas` | ✅ lld. **Fix thứ tự handshake, xem §12.4** |
-| SysLogon.exe | `src/apps/login_app.pas` | ✅ lld, nhưng **đang lỗi, xem §12.3** |
-| Shell.exe | `src/apps/shell_app.pas` | ✅ lld, nhưng **đang lỗi qua Shell, xem §12.3** |
-| ATA.exe | `src/apps/ata_app.pas` | ✅ lld, daemon online |
-| FAT16.exe | `src/apps/fat16_app.pas` | ✅ lld, daemon online — **nghi vấn đọc sai nội dung file, xem §12.3** |
-| top.exe | `src/apps/top_app.pas` | ✅ lld |
-| dsrv.exe | `src/apps/dsrv_app.pas` | ✅ lld |
-| explorer.exe | `src/apps/explorer_app.pas` | ✅ lld |
-| stresstest.exe | `src/apps/stress_app.pas` | ✅ lld |
-| acpi.exe | *(chưa port)* | vẫn là C# qua bflat |
-
-`app_api.pas` thay cho `API.cs` — gateway syscall cho toàn bộ userland.
-
-Đăng ký app mới: thêm tên unit vào `APP_MODULES` trong `compile_pascal.sh`
-(cũng là chỗ chạy relocation stripper), rồi thêm một dòng `link_app` trong
-`build.sh` và **xoá** dòng `$BF build src/apps/<app>.cs ...` tương ứng.
+**Công thức link app (xem `build.sh`):** `lld-link -subsystem:console -entry:AppMain -export:AppMain -out:APP.exe build/APP_app.o build/app_api.o ...`
+`-export:AppMain` là bắt buộc: `pe_loader.pas` tra tên `AppMain` trong PE **export directory**, không đọc `AddressOfEntryPoint`.
+KASLR của app: `app_api` khai báo một QWORD `0x1337BEEFCAFE8BAD` trong `.data`; `PELoader` quét byte-by-byte rồi patch bằng địa chỉ vDSO thật.
 
 ### 12.1b ⚠️ ABI của vài syscall không theo tuần tự tham số thường
 
@@ -910,7 +722,6 @@ vòng chờ đó giờ đều park message lạ vào hàng đợi (gọi trong n
 nhánh WRITE), nên request của client khác còn nguyên và được xử lý sau khi
 transfer hiện tại xong. Xem §12.8 trước khi đụng vào đây.
 
-
 ### 12.5 ⚠️ Cạm bẫy khi chẩn đoán: log serial bị cắt khi kill QEMU
 
 Khi smoke test giết QEMU, buffer serial **chưa flush** — `serial.log` bị cắt
@@ -937,36 +748,6 @@ gì cả** (không phải `[FAIL]`, mà là không có output) — trông như h
 chết. Kiểm tra bằng `ps -eo comm | grep '^qemu-system-x86$'`. Lệnh kết
 thúc rồi thì xoá `hdd.img.lock` và **chờ QEMU thực sự biến mất** trước
 khi chạy lần kế tiếp, nếu không sẽ dính đúng lỗi tranh chấp disk này.
-
-### 12.6 Cờ RTTI của `verify_pascal_link.sh` khi có app
-
-`verify_pascal_link.sh` gom mọi `build/*.o`. Khi có nhiều app đều export
-`AppMain`, các object đó sẽ đụng tên nhau trong bản link kernel. Cần loại
-app objects khỏi kernel-link probe, hoặc chuyển app sang `build/apps/`.
-
-### 12.7 Thứ tự để xoá bflat khỏi Kernel.exe
-
-`Kernel.exe` vẫn là C# và là phần khó nhất: các handler ISR cần
-`Scheduler.Threads`, `Terminal.ScreenLock`, `Power`, `VMM` — lần lượt phải
-có bản Pascal trước khi chúng thành Pascal thuần.
-
-1. `Terminal.cs` → phần `ScreenLock` + `PrintUnsafe` (đang còn C#, **và là
-   thủ phạm của bug treo boot** — xem §6.10)
-2. `Power.cs` (HardReboot / LegacyReboot) — gọi từ các handler
-3. `InterruptHandlers.cs` → `interrupt_dispatch.pas`: 8 entry point
-   `SyscallHandler`, `DivideByZeroHandler`, `GPFHandler`,
-   `PageFaultHandler`, `TimerHandler`, `KeyboardHandler`, `MouseHandler`,
-   `YieldHandler`
-4. `SMP.cs`, `SyscallImpl.cs` → Pascal thuần
-5. `Syscall.cs` + `Kernel.cs` → `KernelMain` do Pascal export
-6. Đổi `build.sh` sang lld cho Kernel.exe, bỏ `$BF`
-7. `boot.pas`: sửa `AnsiString` → `PChar`/`PByte` (xem §10.1), rồi đổi
-   bootloader sang lld
-8. Xoá toàn bộ `.cs` và bflat
-
-Sau bước 3, `link_probe.pas` và danh sách `KNOWN_REMAINING` trong
-`verify_pascal_link.sh` phải được rút lại — đó là thước đo tiến độ khách
-quan, không phải việc làm cho có.
 
 ### 12.8 ⚠️ ĐỪNG gọi `App_GetProcessInfo` trong vòng lặp nóng của daemon
 
@@ -1030,6 +811,8 @@ không có giá trị chẩn đoán. Đã sửa hai thứ và thêm một thứ:
 **Bài học chung:** đừng dùng `wait_for(r"root@nekkoOS#")` làm bằng chứng.
 Prompt quay lại bất kể lệnh thành công hay không — chỉ có text của chính
 lệnh đó mới là bằng chứng.
+
+---
 
 ---
 
@@ -1126,6 +909,8 @@ thứ tự nhìn có vẻ đúng. Nếu phải chèn helper vào app Pascal, kha
 
 ---
 
+---
+
 ## 14. Đơn vị tick: mọi hằng số thời gian phải qua `MsToTicks` (2026-10-13)
 
 `PIT.CurrentFreq = 250` (nạp bởi `PlatformBootstrap.InitLegacyTimer(250)`), nên
@@ -1173,3 +958,40 @@ Kèm **10/10 smoke pass**. Không verify được thì coi như chưa sửa.
 > `DbSendIpc`), nên handshake vẫn chạy và test "pass" một cách vô nghĩa. Nếu
 > ép lỗi, phải xác nhận lỗi **thật sự** đã xảy ra bằng log.
 
+---
+
+## 15. Bài học từ lần port cuối (2026-10-26)
+
+### 15.1 Mọi unit "đã port, chưa nối" đều có lỗi khi nối thật
+
+Các unit `gdt idt vmm apic ioapic vdso scheduler ...` được ghi là "port xong, link sạch" nhưng chưa bao giờ chạy.
+Khi nối từng cái vào kernel (mỗi lần một cái, test sau mỗi lần), đã lộ:
+
+| Unit | Lỗi | Triệu chứng |
+|---|---|---|
+| `apic.pas` | LVT timer ghi `32` thay vì `0x20000 \| 32` (thiếu bit **periodic**) | core 0 chỉ nhận **một** ngắt timer → ~40% boot treo vĩnh viễn, trông như "flake Mouse" |
+| `vmm.pas` | `ENTRY_USER = 2` (đó là bit Writable; User là bit 4); bảng trung gian thiếu cờ U | app Ring-3 fault; `DestroyUserSpace` kiểm sai bit |
+| `kstate.pas` | khoá scheduler riêng, không phải `Arch_LockScheduler` | không loại trừ nhau với scheduler thật |
+| `sudo` (từ C#) | buffer salt 64 ký tự, parser giữ `cap-1` = 63 → salt thành 31 byte | **không mật khẩu sudo nào từng xác thực được** |
+| `sudo` (từ C#) | truyền con trỏ **byte** vào parser dòng PASSWD đọc **wide char** | không account nào khớp |
+| `boot.pas` | Boot Services là hàm thường (không có `This`) nhưng wrapper truyền `bs` làm tham số đầu | firmware nhận tham số lệch → page fault |
+| `boot.pas` | `GetMemoryMap` nhận buffer, wrapper truyền con trỏ-tới-biến | firmware ghi đè stack |
+| `boot.pas` | `U16` trả con trỏ vào mảng **local** của chính nó | chuỗi hỏng ngay lần gọi kế tiếp |
+| `boot.pas` | `RsaMod` dịch bit ngược chiều limb | chữ ký không bao giờ xác thực → "YOUR DEVICE IS CORRUPT" |
+| `boot.pas` | `IsKernelMain` so sai ký tự | "KernelMain not found" |
+| `InternalShell` (từ C#) | `logout` đọc `ETC/PASSWD` rồi kiểm tra header `MZ` | không bao giờ thành công (đã sửa về đọc `syslogon.exe`) |
+| `FAT16.cs` (từ C#) | `RemoveDir` gửi IPC hai lần, nhả khoá hai lần | reply thừa kẹt trong mailbox |
+
+Cách phát hiện hiệu quả: **đối chiếu từng hàm với bản gốc, test từng unit riêng, và dùng QEMU monitor
+(`info registers -a`, `info lapic`) khi hệ thống treo.**
+
+### 15.2 Bẫy khi đọc kết quả test
+- `ps -eo comm | grep '^qemu-system-x86$'` trước mỗi lần chạy QEMU mới (§12.5)
+- Chạy nhiều lần (≥10) trước khi kết luận về lỗi ngẫu nhiên: 4 lần pass liên tiếp từng che mất lỗi LVT (nguyên nhân thật chỉ gây ~40%).
+- `grep -B`/`-A` rộng trên repo lớn sẽ tràn context — dùng `grep -c`/`-l` trước.
+
+### 15.3 Điểm lệch còn tồn tại (chủ ý giữ nguyên hành vi cũ)
+- `libc.MsToTicks`: `ms/10 + 1` (đúng cho 100 Hz, PIT thực chạy 250 Hz) — dùng bởi syscall 97 (sleep)
+- builtin `uptime` chia tick thô cho 1000 rồi in hex
+- `Pit_MsToTicks` mới là bản đúng; `power.pas` giữ nguyên các hằng tick cũ (5000/1000/3000 tick)
+- `IsValidUserPtr_Pas(…, totalPages)`: một số caller C# cũ truyền số **byte** (nới lỏng giới hạn gấp 4096 lần); bản Pascal luôn truyền số trang
