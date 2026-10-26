@@ -232,4 +232,15 @@ begin
   Terminal_Print_Pas(W('[+] vDSO Gateway forged in RAM! Absolute KASLR Ready.'#13#10));
 end;
 
+{ ── cdecl exports for vDSO.cs ── }
+procedure Vdso_Init_Pas; cdecl; public name 'Vdso_Init_Pas';
+begin
+  Vdso_Init;
+end;
+
+function Vdso_GetPhysPage_Pas: QWord; cdecl; public name 'Vdso_GetPhysPage_Pas';
+begin
+  Vdso_GetPhysPage_Pas := Vdso_PhysPage;
+end;
+
 end.
