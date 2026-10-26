@@ -28,9 +28,9 @@ if [ -n "$stray" ]; then echo "[verify] FAIL: C# sources present:"; echo "$stray
 echo "[verify] no RTTI in any Pascal object..."
 for o in build/*.o; do
     [ -e "$o" ] || continue
-    if objdump -t "$o" 2>/dev/null | grep -qi rtti; then
+    if objdump -t "$o" 2>/dev/null | grep -qF 'RTTI_$'; then
         echo "[verify] FAIL: RTTI symbols in $o"
-        objdump -t "$o" | grep -i rtti | head -3
+        objdump -t "$o" | grep -F 'RTTI_$' | head -3
         fail=1
     fi
 done

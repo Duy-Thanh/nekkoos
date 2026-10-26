@@ -88,7 +88,7 @@ Use `{$PACKRECORDS 1}` so records match the C# `[StructLayout(Pack = 1)]`
 originals byte for byte. Always use `packed record` for anything that
 crosses a boundary with NASM or with data produced by another module.
 
-Verify with `objdump -t build/<mod>.o | grep -i rtti` — the count must be 0.
+Verify with `objdump -t build/<mod>.o | grep -F 'RTTI_$'` — the count must be 0.
 
 ## 5. Static state replaces static classes
 
@@ -175,7 +175,7 @@ keeps these out of kernel and app code.
 - [ ] `W()` for every string; no bare string literals passed as `PWord`
 - [ ] `$` hex literals, not `0x`
 - [ ] Struct sizes verified against the C# original (see §12)
-- [ ] `objdump -t build/<mod>.o | grep -i rtti` returns nothing
+- [ ] `objdump -t build/<mod>.o | grep -F 'RTTI_$'` returns nothing
 - [ ] Registered in **both** `compile_pascal.sh` and `build.sh`
 - [ ] `./build.sh` succeeds
 - [ ] `python3 test/automation/smoke_test.py` reports 9/9

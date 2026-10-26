@@ -159,9 +159,17 @@ HAL là cầu nối giữa kernel Pascal (arch-agnostic) và hardware x86_64.
 
 **ARM64 / RISC-V (tương lai):** GIC + Generic Timer + ARMv8 MMU + PSCI / PLIC+CLINT + mtime + Sv39/48 + SBI.
 
-**Quy tắc:** kernel Pascal arch-agnostic KHÔNG gọi APIC/IOAPIC trực tiếp. *Thực tế hiện tại:* `scheduler.pas`,
-`syscall_impl.pas`, `interrupt_handlers.pas`, `smp.pas`, `kernel_main.pas` còn gọi thẳng `apic`/`gdt`/`vmm`
-(x86_64). Muốn thêm kiến trúc thì các điểm đó là thứ phải trừu tượng hoá trước (§7, §11).
+**Quy tắc:** code kernel generic KHÔNG `uses apic/gdt/idt/vmm/pic/pit/ioapic/smp/vdso/...`. Nó `uses arch_hal` và chỉ gọi `Hal_*`.
+Mỗi kiến trúc cung cấp **một unit tên `arch_hal`** với cùng phần `interface` (`src/arch/<arch>/arch_hal.pas`); bản x86_64 chỉ chuyển tiếp
+sang các unit x86 sẵn có. Hợp đồng nằm ở phần interface của `src/arch/x86_64/arch_hal.pas` (đọc nó trước khi thêm kiến trúc):
+lõi (`Hal_CurrentCoreId`), address space dạng handle mờ (`Hal_CreateUserAddressSpace`, `Hal_MapPageIn`, `Hal_DestroyAddressSpace`),
+stack vào kernel (`Hal_SetKernelStack`), các pha boot (`Hal_InitMemory`, `Hal_InitInterrupts`, `Hal_StartTimer`, `Hal_StartSecondaryCores`...),
+thời gian (`Hal_Ticks`, `Hal_MsToTicks`), `Hal_FreezeOtherCores`.
+
+Đã chuyển sang `arch_hal`: `scheduler`, `pe_loader`, `power`, `kernel_main`. Còn là phần "kiến trúc cung cấp" theo thiết kế
+(không phải vi phạm): `syscall_impl` (thân syscall phụ thuộc phần cứng + `Ctx_*` truy cập thanh ghi), `interrupt_handlers`, `smp`,
+`hardware_checks`, và các driver legacy x86 (`input_drv`, `pci`). Cần chia tiếp: `syscall_dispatch`/`sudo_dispatch`/`internal_shell` gọi `Ctx_*`
+từ `syscall_impl` — khi thêm ARM64 hãy đưa `Ctx_*` vào `arch_hal`.
 
 ### 3.3 arch_interface.pas — AAL primitives
 
@@ -381,7 +389,7 @@ Ngay cả khi unit của bạn tự khai báo đúng, **một unit khác** expos
 `interface` sẽ kéo RTTI vào link. Kiểm tra trước khi build:
 
 ```bash
-objdump -t build/<module>.o | grep -i rtti    # phải = 0
+objdump -t build/<module>.o | grep "RTTI_\$"    # phải = 0
 ```
 
 ### 6.3c ❌ Module Pascal mới chưa được strip relocation
@@ -598,8 +606,8 @@ hồi quy thật (xem §15 — lỗi LVT timer one-shot và lỗi idle-loop nu�
 
 1. ✅ ~~Port toàn bộ C# sang Pascal~~ — kernel, app, bootloader, hạ tầng test (2026-10-26)
 2. ✅ ~~Bỏ bflat, link thuần lld~~
-3. **Tách phụ thuộc x86_64 khỏi kernel generic** để có thể thêm ARM64 (§7): `scheduler.pas`/`syscall_impl.pas`/
-   `interrupt_handlers.pas`/`kernel_main.pas` đang `uses apic, gdt, vmm` trực tiếp. Đưa qua `hal/*`.
+3. ✅ (một phần) **Tách phụ thuộc x86_64 khỏi kernel generic** — `scheduler`, `pe_loader`, `power`, `kernel_main` đã qua `arch_hal` (§3.2).
+   Còn: `Ctx_*` (truy cập thanh ghi syscall) và driver legacy x86; rồi mới tới viết `arch_hal` cho ARM64.
 4. ✅ ~~Mouse handshake mất ~30–50% boot~~ — **đã tìm ra và sửa** (§15.0). Boot giờ ổn định ~8 s.
 5. **Dọn các điểm lệch đã ghi nhận** (§15.3): `MsToTicks_Pas` giả định 100 Hz (PIT chạy 250 Hz), builtin `uptime` in tick thô,
    `Con_Print` có khoá còn `Terminal_Print_Pas` không (in chồng lên nhau giữa các lõi).

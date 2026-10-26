@@ -19,7 +19,7 @@
        then ATA, FAT16 and MOUSE; wait for their IPC handshakes; start login
 
   Every wait is bounded and every bound is written in milliseconds and
-  converted with Pit_MsToTicks. The PIT runs at 250 Hz: one tick is 4 ms, so
+  converted with Hal_MsToTicks. The PIT runs at 250 Hz: one tick is 4 ms, so
   a bare tick constant is four times what it looks like (AGENTS.md section 14).
   =========================================================================
 }
@@ -34,10 +34,9 @@ interface
 
 implementation
 
-uses arch_interface, io, kstring, libc, pmm, memmap_scan, vmm, heap, gdt, idt,
-  pic, pit, pci, platform_bootstrap, ipc_kernel, prng, vdso, strandscheduler,
-  scheduler, hardware_checks, ata_kernel, fat16_kernel, input_drv, pe_loader,
-  apic, ioapic, smp, console, terminal, kstate;
+uses arch_interface, arch_hal, io, kstring, libc, pmm, memmap_scan, heap,
+  ipc_kernel, prng, strandscheduler, scheduler, ata_kernel, fat16_kernel,
+  input_drv, pe_loader, console, terminal, kstate;
 
 const
   { How long a daemon may take to report ready before it is treated as stuck. }
@@ -48,13 +47,12 @@ const
     boot proceeds without one. }
   MOUSE_RESTARTS = 1;
 
-  PIT_FREQUENCY_HZ = 250;
+  TICK_FREQUENCY_HZ = 250;
 
   IPC_ATA_READY   = 9;
   IPC_FAT16_READY = 39;
   IPC_MOUSE_READY = 44;
 
-function HAL_GetTickCount: QWord; cdecl; external name 'HAL_GetTickCount';
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }
 
@@ -211,7 +209,7 @@ begin
   Arch_UnlockScheduler;
 
   { ── Phase 1: console ── }
-  Platform_EarlySerial;
+  Hal_EarlyInit;
 
   kstate_AcpiRsdp := BI_Q(bootInfo, 56);
   Con_Init(BI_Q(bootInfo, 0), BI_D(bootInfo, 16), BI_D(bootInfo, 20), BI_D(bootInfo, 24));
@@ -230,14 +228,7 @@ begin
 
   Pmm_Init(PByte(BI_Q(bootInfo, 32)), BI_Q(bootInfo, 40), BI_Q(bootInfo, 48), largestFreeStart);
 
-  Vmm_Init;
-
-  addr := 2097152;
-  while addr < maxPhysicalAddr do
-  begin
-    Vmm_MapHugePage(addr, addr);
-    Inc(addr, 2097152);
-  end;
+  Hal_InitMemory(maxPhysicalAddr);
 
   Say($00FF00FF, '[*] Enforcing 8GB Strict Identity Paging against UEFI fragmentation...'#13#10);
 
@@ -246,37 +237,16 @@ begin
   Fat16K_Init;
 
   { ── Phase 3: interrupts ── }
-  Gdt_Init;
-  Idt_Init;
-
-  { Every vector from 32 up lands on a harmless yield stub until a real handler
-    is installed over it. }
-  dummyIsr := Arch_GetIsrYield;
-  for i := 32 to 255 do Idt_SetGate(i, dummyIsr);
-
-  Idt_SetGateWithRing3(128, Arch_GetIsrSyscall);    { INT 0x80: syscalls }
-
-  Idt_SetGate(0, Arch_GetIsrDiv0);
-  Idt_SetGate(13, Arch_GetIsrGPF);
-  Idt_SetGate(14, Arch_GetIsrPageFault);
-  Idt_SetGate(32, Arch_GetIsrTimer);
-  Platform_HookPs2IsrGates;
-  Idt_SetGate(129, dummyIsr);                       { INT 0x81: yield }
-
-  Pic_Remap;
-  Pci_DisableAllBusMastering;
-
-  Platform_DrainPs2Buffers;
-  Pic_MaskAllIrqs;
+  Hal_InitInterrupts;
 
   Say($0000FF00, '[+] IDT Shield & Nuclear DMA Purge Active! Boot Sequence Proceeding...'#13#10);
 
   { ── Phase 4: scheduler core ── }
-  Platform_InitLegacyTimer(PIT_FREQUENCY_HZ);
+  Hal_StartTimer(TICK_FREQUENCY_HZ);
 
   IpcK_Init(8192);
-  PRNG_Init(HAL_GetTickCount);
-  Vdso_Init;
+  PRNG_Init(Hal_Ticks);
+  Hal_InitUserApi;
 
   Strand_Init;
   Strand_Create(Pointer(@StrandTask2));
@@ -284,22 +254,22 @@ begin
   Sched_SetIdleLoop(Pointer(@KernelIdleLoop));
   Sched_Init;
 
-  Io_EnableInterrupts;
+  Hal_EnableInterrupts;
 
   { ── Phase 5: platform gate ── }
-  HwChecks_CheckHardwareError;
+  Hal_PlatformGate;
 
   { ── Phase 6: daemons ── }
   SpawnDaemon(W('ACPI.EXE'), True, 3);
 
   Say($00FFFF00, '[*] Kernel: Waiting for ACPI Daemon to discover IOAPIC...'#13#10);
 
-  acpiWaitStart := HAL_GetTickCount;
-  while (Apic_GetIoApicBase = 0) or (Apic_GetBaseVirt = 0) do
+  acpiWaitStart := Hal_Ticks;
+  while not Hal_InterruptControllersKnown do
   begin
     Arch_CompilerFence;
 
-    if HAL_GetTickCount - acpiWaitStart > Pit_MsToTicks(ACPI_WAIT_MS) then
+    if Hal_Ticks - acpiWaitStart > Hal_MsToTicks(ACPI_WAIT_MS) then
     begin
       Say($00FF0000, '[!] TIMEOUT: ACPI Daemon failed to discover IOAPIC after 40s'#13#10);
       Con_Print(W('[!] System halted. Check ACPI.EXE for errors.'#13#10));
@@ -311,8 +281,7 @@ begin
 
   Say($0000FF00, '[+] ACPI Discovery Complete! Initializing SMP and IOAPIC...'#13#10);
 
-  Ioapic_Init;
-  Smp_InitAndWakeCores;
+  Hal_StartSecondaryCores;
 
   { Clear any stale handshakes before the next daemons start. }
   rType := 0; rSender := 0; rPayload := 0;
@@ -333,7 +302,7 @@ begin
   { Wait for the three handshakes. Halt rather than Yield: under KVM a bare
     yield does not always let the daemons run, whereas HLT sleeps until the
     next timer tick has driven the scheduler. }
-  daemonWaitStart := HAL_GetTickCount;
+  daemonWaitStart := Hal_Ticks;
   mouseRestarts := 0;
   while not (Ata_GetUseDaemon and Fat16K_GetUseDaemon and Mouse_GetUseDaemon) do
   begin
@@ -343,7 +312,7 @@ begin
 
     if Ata_GetUseDaemon and Fat16K_GetUseDaemon and Mouse_GetUseDaemon then Break;
 
-    if HAL_GetTickCount - daemonWaitStart > Pit_MsToTicks(DAEMON_READY_MS) then
+    if Hal_Ticks - daemonWaitStart > Hal_MsToTicks(DAEMON_READY_MS) then
     begin
       Con_SetColor($00FF0000);
       { ATA and FAT16 cannot be restarted: login is read off the FAT16 volume,
@@ -378,18 +347,18 @@ begin
           if newMouseId >= 0 then
           begin
             { Measured before the baseline is reset, or it reports one tick. }
-            elapsedTicks := HAL_GetTickCount - daemonWaitStart;
+            elapsedTicks := Hal_Ticks - daemonWaitStart;
 
             KillThread(oldMouseId);
             mouseDaemonId := newMouseId;
             Mouse_SetUseDaemon(False);
             Mouse_SetDaemonId(0);
             { The replacement gets a whole deadline of its own. }
-            daemonWaitStart := HAL_GetTickCount;
+            daemonWaitStart := Hal_Ticks;
 
             Con_SetColor($0000FF00);
             Con_Print(W('[TIMER] mouse deadline hit after '));
-            Terminal_PrintDec_Pas(elapsedTicks * 1000 div Pit_GetFrequency);
+            Terminal_PrintDec_Pas(elapsedTicks * 1000 div Hal_TickFrequency);
             Con_Print(W(' ms ('));
             Terminal_PrintDec_Pas(elapsedTicks);
             Con_Print(W(' ticks)'#13#10));

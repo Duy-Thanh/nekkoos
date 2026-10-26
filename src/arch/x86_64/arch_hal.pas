@@ -35,6 +35,48 @@ const
   HAL_MAP_KERNEL_RW = QWord($03);   { present + writable, supervisor only }
   HAL_MAP_USER_RW   = QWord($07);   { present + writable + user }
 
+{ ── Boot sequence ─────────────────────────────────────────────────────────── }
+{ kernel_main calls these in order; each does whatever its architecture needs
+  for that phase and nothing else. }
+
+{ Make diagnostics possible at all (x86: COM1). Must run before any output. }
+procedure Hal_EarlyInit;
+
+{ Build and switch to the kernel's own virtual memory layout. Needs the page
+  allocator. `maxPhysicalAddr` is the top of RAM that must stay addressable. }
+procedure Hal_InitMemory(maxPhysicalAddr: QWord);
+
+{ Install exception, device-interrupt and syscall entry points; quiet the
+  legacy interrupt hardware and stop devices DMAing into kernel memory. After
+  this the kernel can safely take interrupts, once Hal_StartTimer ran. }
+procedure Hal_InitInterrupts;
+
+{ Start the scheduler tick at roughly `hz`. Needs the scheduler. }
+procedure Hal_StartTimer(hz: Cardinal);
+
+{ Build the user-mode API page (x86: the vDSO). Needs the page allocator. }
+procedure Hal_InitUserApi;
+
+{ Allow interrupts on this CPU. }
+procedure Hal_EnableInterrupts;
+
+{ Platform authenticity gate; may block the boot until satisfied. }
+procedure Hal_PlatformGate;
+
+{ Has the firmware-table daemon told the kernel where the interrupt controllers
+  are? Until it has, secondary cores cannot be started. }
+function Hal_InterruptControllersKnown: Boolean;
+
+{ Bring up the I/O interrupt controller and start every other CPU. }
+procedure Hal_StartSecondaryCores;
+
+{ ── Time ──────────────────────────────────────────────────────────────────── }
+
+{ Monotonic tick counter since Hal_StartTimer, and its rate. }
+function Hal_Ticks: QWord;
+function Hal_TickFrequency: Cardinal;
+function Hal_MsToTicks(ms: QWord): QWord;
+
 { ── Cores ─────────────────────────────────────────────────────────────────── }
 
 { True once more than the boot CPU's interrupt controller is live, i.e. once
@@ -90,11 +132,108 @@ procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 
 implementation
 
-uses apic, gdt, vmm, vdso, pmm, libc;
+uses arch_interface, apic, gdt, idt, vmm, vdso, pic, pit, pci, ioapic, smp,
+  platform_bootstrap, hardware_checks, pmm, libc;
+
+function HAL_GetTickCount: QWord; cdecl; external name 'HAL_GetTickCount';
 
 function Hal_MultiCoreActive: Boolean;
 begin
   Hal_MultiCoreActive := Apic_IsAwake;
+end;
+
+procedure Hal_EarlyInit;
+begin
+  Platform_EarlySerial;
+end;
+
+procedure Hal_InitMemory(maxPhysicalAddr: QWord);
+var
+  addr: QWord;
+begin
+  Vmm_Init;
+  { Everything above the first 2 MiB is identity-mapped with huge pages. }
+  addr := 2097152;
+  while addr < maxPhysicalAddr do
+  begin
+    Vmm_MapHugePage(addr, addr);
+    Inc(addr, 2097152);
+  end;
+end;
+
+procedure Hal_InitInterrupts;
+var
+  dummyIsr: Pointer;
+  i: Integer;
+begin
+  Gdt_Init;
+  Idt_Init;
+
+  { Every vector from 32 up lands on a harmless yield stub until a real
+    handler replaces it. }
+  dummyIsr := Arch_GetIsrYield;
+  for i := 32 to 255 do Idt_SetGate(i, dummyIsr);
+
+  Idt_SetGateWithRing3(128, Arch_GetIsrSyscall);    { INT 0x80: syscalls }
+
+  Idt_SetGate(0, Arch_GetIsrDiv0);
+  Idt_SetGate(13, Arch_GetIsrGPF);
+  Idt_SetGate(14, Arch_GetIsrPageFault);
+  Idt_SetGate(32, Arch_GetIsrTimer);
+  Platform_HookPs2IsrGates;
+  Idt_SetGate(129, dummyIsr);                       { INT 0x81: yield }
+
+  Pic_Remap;
+  Pci_DisableAllBusMastering;
+
+  Platform_DrainPs2Buffers;
+  Pic_MaskAllIrqs;
+end;
+
+procedure Hal_StartTimer(hz: Cardinal);
+begin
+  Platform_InitLegacyTimer(hz);
+end;
+
+procedure Hal_InitUserApi;
+begin
+  Vdso_Init;
+end;
+
+procedure Hal_EnableInterrupts;
+begin
+  Arch_EnableInterrupts;
+end;
+
+procedure Hal_PlatformGate;
+begin
+  HwChecks_CheckHardwareError;
+end;
+
+function Hal_InterruptControllersKnown: Boolean;
+begin
+  Hal_InterruptControllersKnown := (Apic_GetIoApicBase <> 0) and (Apic_GetBaseVirt <> 0);
+end;
+
+procedure Hal_StartSecondaryCores;
+begin
+  Ioapic_Init;
+  Smp_InitAndWakeCores;
+end;
+
+function Hal_Ticks: QWord;
+begin
+  Hal_Ticks := HAL_GetTickCount;
+end;
+
+function Hal_TickFrequency: Cardinal;
+begin
+  Hal_TickFrequency := Pit_GetFrequency;
+end;
+
+function Hal_MsToTicks(ms: QWord): QWord;
+begin
+  Hal_MsToTicks := Pit_MsToTicks(ms);
 end;
 
 procedure Hal_FreezeOtherCores;
