@@ -534,7 +534,7 @@ public static unsafe class Syscall
                 bool irq = Scheduler.AcquireSchedLockSafe();
 
                 // [PASCAL PORT] HasMessageForReceiver_Pas replaces inline scan loop
-                if (HasMessageForReceiver_Pas(IPC.queue, IPC.MAX_MESSAGES, (uint)id) != 0)
+                if (IPC.HasMessageFor((uint)id))
                 {
                     Scheduler.ReleaseSchedLockSafe(irq);
                     ArchCtx.SetRet(ctx, 1);
