@@ -174,6 +174,7 @@ procedure Sched_SetThreadPriority(index: Integer; v: Byte);
 function Sched_GetThreadTextColor(index: Integer): Cardinal;
 procedure Sched_SetThreadTextColor(index: Integer; v: Cardinal);
 function Sched_GetThreadFpuState(index: Integer): Pointer;
+procedure Sched_SetThreadAddrSpace(index: Integer; v: QWord);
 
 { Read a live thread's address-space root (physical PML4), or 0 when the
   index is out of range or the thread is inactive. The APIC uses this to map
@@ -1442,6 +1443,12 @@ procedure Sched_SetThreadTextColor(index: Integer; v: Cardinal);
 var t: PThread;
 begin
   if ThreadAt(index, t) then t^.TextColor := v;
+end;
+
+procedure Sched_SetThreadAddrSpace(index: Integer; v: QWord);
+var t: PThread;
+begin
+  if ThreadAt(index, t) then t^.AddrSpace := v;
 end;
 
 function Sched_GetThreadFpuState(index: Integer): Pointer;

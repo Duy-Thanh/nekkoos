@@ -206,7 +206,6 @@ public static unsafe class Program
         Mem.ResetLock();
         Heap.HeapLock = new Spinlock();
         SMP.SmpLock = new Spinlock();
-        InterruptHandlers.PanicLock = new Spinlock();
         // Initialize Syscall shared-memory lock here to avoid static init ordering issues
         Syscall.SharedMemLock = new Spinlock();
 

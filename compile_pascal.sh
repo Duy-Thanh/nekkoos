@@ -15,15 +15,15 @@ mod_src() {
         arch_interface) echo "src/arch/$1.pas" ;;
         gdt|idt|context|vmm|apic|ioapic|pit|pic|isr|vdso|smp|platform_bootstrap)
             echo "src/arch/x86_64/$1.pas" ;;
-        power) echo "src/drivers/$1.pas" ;;
+        power|input_drv) echo "src/drivers/$1.pas" ;;
         app_api|mouse_app|shell_app|login_app|ata_app|fat16_app|acpi_app|top_app|dsrv_app|explorer_app|stress_app)
             echo "src/apps/$1.pas" ;;
         *)              echo "src/kernel/pas/$1.pas" ;;
     esac
 }
 
-PASCAL_MODULES=(libc kstring kstate ata_hw fat16fs prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser internal_shell spinlock sudo_dispatch scheduler ipc_kernel ata_kernel power console io serial)
-ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap)
+PASCAL_MODULES=(libc kstring kstate ata_hw fat16fs prng kerncrypto pmm heap strandscheduler ipc terminal arch_interface rtc fat16 fpc_runtime pe_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser internal_shell spinlock sudo_dispatch scheduler ipc_kernel ata_kernel power console input_drv io serial)
+ARCH_X86_64_MODULES=(interrupt_impl timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap interrupt_handlers)
 APP_MODULES=(app_api link_probe mouse_app shell_app login_app ata_app fat16_app top_app dsrv_app explorer_app stress_app)
 
 for mod in "${PASCAL_MODULES[@]}"; do
