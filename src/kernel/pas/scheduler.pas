@@ -193,7 +193,7 @@ function Sched_GetThreadAddrSpace_Pas(index: Integer): QWord; cdecl;
 implementation
 
 uses
-  libc, kstring, prng, kstate, pmm, vmm, ipc, terminal, gdt, apic,
+  libc, kstring, prng, kstate, pmm, arch_hal, ipc, terminal,
   scheduler_dispatch;
 
 { ── TThread — implementation only, no RTTI ──────────────────────────────── }
@@ -284,7 +284,7 @@ end;
 { Physical PML4 of the kernel address space. VMM.PML4 in the C# original. }
 function KernelRoot: QWord; inline;
 begin
-  KernelRoot := QWord(Vmm_GetPml4);
+  KernelRoot := Hal_KernelAddressSpace;
 end;
 
 { Physical-memory bound in bytes, used to reject bogus CR3 / stack values. }
@@ -293,11 +293,10 @@ begin
   PhysLimit := PMM_GetTotalPages * 4096;
 end;
 
-{ Raw APIC core id. Thread.cs applies its own range check where it matters. }
+{ Raw core id from the platform; callers range-check it where it matters. }
 function ReadCoreId: Cardinal; inline;
 begin
-  if Apic_IsAwake then Result := Apic_Read($020) shr 24
-  else Result := 0;
+  Result := Hal_CurrentCoreId;
 end;
 
 { Mirror the table into kstate so Sched_GetThreadAddrSpace_Pas and the APIC
@@ -505,7 +504,7 @@ begin
   St.IdleIds[0]    := 0;
 
   St.Threads[0].Active          := 1;
-  St.Threads[0].KernelStackTop  := Gdt_GetTssRsp0;
+  St.Threads[0].KernelStackTop  := Hal_BootKernelStackTop;
   St.Threads[0].AddrSpace       := KernelRoot;
   St.Threads[0].UID             := 0;
   St.Threads[0].GID             := 0;
@@ -606,7 +605,7 @@ begin
   Dec(kStackTop); kStackTop^ := rspValue;
   Dec(kStackTop); kStackTop^ := $202;
   Dec(kStackTop); kStackTop^ := cs;
-  if (idleAddr < 4096) or (not Vmm_IsCanonical(idleAddr)) then
+  if (idleAddr < 4096) or (not Hal_IsCanonical(idleAddr)) then
   begin
     TermWarn('[WARN] KernelIdleLoop pointer invalid, using fallback'#13#10);
     Dec(kStackTop); kStackTop^ := QWord(Pointer(@Sched_IdleLoopProc));
@@ -649,7 +648,6 @@ var
   nextRsp:      QWord;
   nextKStack:   QWord;
   nextPml4:     QWord;
-  tss:          Pointer;
   selected:     Byte;
 begin
   if not s.Ready then
@@ -686,7 +684,7 @@ begin
     if (zombiePml4 <> 0) and (zombiePml4 <> KernelRoot) then
     begin
       Arch_UnlockScheduler;
-      Vmm_DestroyUserSpace(zombiePml4);
+      Hal_DestroyAddressSpace(zombiePml4);
       Arch_LockScheduler;
     end;
   end;
@@ -700,7 +698,7 @@ begin
       if (zombiePml4 <> 0) and (zombiePml4 <> KernelRoot) then
       begin
         Arch_UnlockScheduler;
-        Vmm_DestroyUserSpace(zombiePml4);
+        Hal_DestroyAddressSpace(zombiePml4);
         Arch_LockScheduler;
       end;
     end;
@@ -760,16 +758,10 @@ begin
   nextKStack := s.Threads[bestId].KernelStackTop;
   nextPml4   := s.Threads[bestId].AddrSpace;
 
-  { The TSS ring-0 stack must follow the thread we are switching to. Rsp0
-    sits at byte offset 4 of the TSS (a 4-byte reserved field precedes it). }
-  if nextKStack <> 0 then
-  begin
-    if coreId = 0 then tss := Gdt_GetTss
-    else tss := Gdt_GetCoreTss(coreId);
-    if tss <> nil then PQWord(PByte(tss) + 4)^ := nextKStack;
-  end;
+  { The ring-0 entry stack must follow the thread we are switching to. }
+  if nextKStack <> 0 then Hal_SetKernelStack(coreId, nextKStack);
 
-  if (nextPml4 = 0) or (not Vmm_IsCanonical(nextPml4)) or
+  if (nextPml4 = 0) or (not Hal_IsCanonical(nextPml4)) or
      (nextPml4 >= PhysLimit) then
   begin
     nextPml4 := KernelRoot;
@@ -858,7 +850,7 @@ begin
   Dec(stackTop); stackTop^ := cs;
 
   epAddr := entryPoint;
-  if (epAddr < 4096) or (not Vmm_IsCanonical(epAddr)) then
+  if (epAddr < 4096) or (not Hal_IsCanonical(epAddr)) then
   begin
     TermWarn('[WARN] Invalid entryPoint in CreateTask, using KernelIdleLoop fallback'#13#10);
     Dec(stackTop); stackTop^ := QWord(Pointer(@Sched_IdleLoopProc));
@@ -904,7 +896,7 @@ var
   i:             Integer;
 begin
   Result := -1;
-  if (entryPoint < 4096) or (not Vmm_IsCanonical(entryPoint)) then
+  if (entryPoint < 4096) or (not Hal_IsCanonical(entryPoint)) then
   begin
     TermFatal('[!] Scheduler Blocked: Garbage PE EntryPoint! IPC/FAT16 Delivery Failed!'#13#10);
     Terminal_SetColor_Pas($00FFFFFF);
@@ -964,7 +956,7 @@ begin
       TermFatal('[!] FATAL: Failed to allocate stack page in CreateUserTask!'#13#10);
       Exit;
     end;
-    Vmm_MapPageIn(physPage, stackVirtBase + QWord(i * 4096), $07, Pointer(appPml4));
+    Hal_MapPageIn(physPage, stackVirtBase + QWord(i * 4096), HAL_MAP_USER_RW, appPml4);
   end;
   irq := Sched_AcquireSchedLockSafe;
 
@@ -1097,7 +1089,7 @@ begin
   s.Threads[id].AppHeapBase := 0;
   ClearMailbox(Cardinal(id));
 
-  { SharedMemPhys is already freed by Vmm_DestroyUserSpace walking the page
+  { SharedMemPhys is already freed by Hal_DestroyAddressSpace walking the page
     tables; freeing it again here would be a double free. }
   s.Threads[id].SharedMemPhys := 0;
   s.Threads[id].SharedMemVirt := 0;
@@ -1124,7 +1116,7 @@ begin
     { No preemption while physical pages are freed, matching the interrupt
       handler paths. }
     Arch_DisableInterrupts;
-    Vmm_DestroyUserSpace(dyingPml4);
+    Hal_DestroyAddressSpace(dyingPml4);
     Arch_EnableInterrupts;
   end;
 
@@ -1213,7 +1205,7 @@ begin
     Sched_GetCurrentThreadId := 0;
     Exit;
   end;
-  if not Apic_IsAwake then
+  if not Hal_MultiCoreActive then
   begin
     Sched_GetCurrentThreadId := St.CurrentIds[0];
     Exit;
