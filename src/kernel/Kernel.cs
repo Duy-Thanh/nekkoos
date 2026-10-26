@@ -43,6 +43,8 @@ public static unsafe class Program
 
     public static int spinner_frame = 0;
     public static ulong last_spinner_tick = 0;
+    [DllImport("*", EntryPoint = "Kstate_SetAcpiRsdp_Pas")] private static extern void Kstate_SetAcpiRsdp_Pas(ulong rsdp);
+
     public static NekkoBootInfo* GlobalBootInfo;
 
     // =========================================================================
@@ -205,7 +207,6 @@ public static unsafe class Program
 
         Mem.ResetLock();
         // Initialize Syscall shared-memory lock here to avoid static init ordering issues
-        Syscall.SharedMemLock = new Spinlock();
 
         if (NekkoInt.isDebug) {
             fixed (char* dbg2 = "[DBG] KM: after SharedMemLock init\n\0") Serial.WriteString(dbg2);
@@ -218,6 +219,7 @@ public static unsafe class Program
         }
 
         GlobalBootInfo = bootInfo;
+        Kstate_SetAcpiRsdp_Pas(bootInfo->AcpiRsdp);
         Terminal.Init(bootInfo);
         
         if (NekkoInt.isDebug) {

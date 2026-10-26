@@ -49,6 +49,10 @@ var
     layer, the FAT16/ATA kernel drivers and the IPC fast paths. }
   kstate_SharedMemLock: Cardinal = 0;
 
+  { Physical address of the ACPI RSDP, as found by the bootloader. Returned by
+    syscall 11 for the ACPI daemon. }
+  kstate_AcpiRsdp: QWord = 0;
+
 { ── Scheduler state that non-scheduler modules need to observe ─────────────
 
   The APIC initialisation pass must map its MMIO window into every live
@@ -115,6 +119,11 @@ end;
 function Kstate_SharedMemLockPtr_Pas: PCardinal; cdecl; public name 'Kstate_SharedMemLockPtr_Pas';
 begin
   Kstate_SharedMemLockPtr_Pas := @kstate_SharedMemLock;
+end;
+
+procedure Kstate_SetAcpiRsdp_Pas(rsdp: QWord); cdecl; public name 'Kstate_SetAcpiRsdp_Pas';
+begin
+  kstate_AcpiRsdp := rsdp;
 end;
 
 end.

@@ -34,7 +34,7 @@ interface
 
 { Dispatch syscall 94. Sets the return value and returns 0; the dispatcher
   must ignore the result (it is not an RSP). }
-function Sudo_Dispatch(id: Integer; ctx: PQWord): Integer;
+function Sudo_Handle(id: Integer; ctx: PQWord): Integer;
 
 function Sudo_Dispatch_Pas(id: Integer; ctx: Pointer): Integer; cdecl;
   public name 'Sudo_Dispatch_Pas';
@@ -240,7 +240,7 @@ begin
   dest[n] := 0;
 end;
 
-function Sudo_Dispatch(id: Integer; ctx: PQWord): Integer;
+function Sudo_Handle(id: Integer; ctx: PQWord): Integer;
 var
   appName, inputPass: PWord;
   writeContent: PByte;
@@ -269,7 +269,7 @@ var
   ret: Integer;
   origUid, origGid: Cardinal;
 begin
-  Sudo_Dispatch := 0;
+  Sudo_Handle := 0;
 
   if (not ValidUser(id, Ctx_GetArg(ctx, 1))) or (not ValidUser(id, Ctx_GetArg(ctx, 2))) then
   begin
@@ -418,7 +418,7 @@ end;
 
 function Sudo_Dispatch_Pas(id: Integer; ctx: Pointer): Integer; cdecl;
 begin
-  Sudo_Dispatch_Pas := Sudo_Dispatch(id, PQWord(ctx));
+  Sudo_Dispatch_Pas := Sudo_Handle(id, PQWord(ctx));
 end;
 
 end.
