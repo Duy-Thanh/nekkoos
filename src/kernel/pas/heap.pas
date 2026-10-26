@@ -40,7 +40,14 @@ procedure Heap_SetState(aHead: Pointer; aHeapStart: Pointer; aHeapTotalSize: QWo
 function Heap_AllocBlock(size: Cardinal; out userRam: Pointer): Byte; cdecl; public name 'Heap_AllocBlock_Pas';
 function Heap_FreeBlock(ptr: Pointer): Byte; cdecl; public name 'Heap_FreeBlock_Pas';
 
+{ Kernel-facing, locked allocator. Heap_Alloc returns nil on out-of-memory. }
+procedure Heap_Init;
+function Heap_Alloc(size: Cardinal): Pointer;
+procedure Heap_Free(ptr: Pointer);
+
 implementation
+
+uses pmm, terminal, kstring, scheduler, spinlock, io;
 
 const
   HEAP_MAGIC = $DEADBEEF;
@@ -291,6 +298,145 @@ begin
   end;
 
   Heap_FreeBlock := HEAP_OK;
+end;
+
+{ ── Kernel-facing allocator (ported from Heap.cs) ───────────────────────────
+  The block algorithm above is lock-free and trusts its caller; this layer
+  adds the lock and the policy for each failure code. }
+
+var
+  HeapLock: Cardinal = 0;
+
+procedure Heap_Init;
+const
+  HEAP_PAGES = 1000;     { 4 MB solid block }
+var
+  hb: Pointer;
+begin
+  hb := Pmm_AllocateContiguousPages(HEAP_PAGES);
+  if hb = nil then
+  begin
+    Terminal_SetColor_Pas($00FF0000);
+    Terminal_Print_Pas(W('[!] FATAL: Cannot allocate 4MB contiguous memory for Heap!'#13#10));
+    Io_Hlt;
+  end;
+
+  if (QWord(hb) and $FFF) <> 0 then
+  begin
+    Terminal_SetColor_Pas($00FF0000);
+    Terminal_Print_Pas(W('[!] FATAL: Heap is not page aligned!'#13#10));
+    Io_Hlt;
+  end;
+
+  HeapStart := hb;
+  HeapTotalSize := QWord(4096) * HEAP_PAGES;
+  Head := hb;
+
+  if HeapTotalSize < HEAP_BLOCK_SIZE + 8 then
+  begin
+    Terminal_SetColor_Pas($00FF0000);
+    Terminal_Print_Pas(W('[!] FATAL: Heap size is too small!'#13#10));
+    Io_Hlt;
+  end;
+
+  SetBlockQWord(Head, HEAP_BLOCK_SIZE_OFFSET, HeapTotalSize - HEAP_BLOCK_SIZE);
+  SetBlockByte(Head, HEAP_BLOCK_ISFREE_OFFSET, 1);
+  SetBlockCardinal(Head, HEAP_BLOCK_MAGIC_OFFSET, HEAP_MAGIC);
+  SetBlockQWord(Head, HEAP_BLOCK_EXACTSIZE_OFFSET, 0);
+  SetBlockPointer(Head, HEAP_BLOCK_NEXT_OFFSET, nil);
+
+  { The first block must be in RAM before any other core can see the heap. }
+  Arch_StoreFence;
+
+  Terminal_SetColor_Pas($0000FF00);
+  Terminal_Print_Pas(W('[+] Fortress MPU Heap Initialized! (4MB Solid Block)'#13#10));
+end;
+
+function Heap_Alloc(size: Cardinal): Pointer;
+var
+  irq: Byte;
+  userRam: Pointer;
+  code: Byte;
+begin
+  Heap_Alloc := nil;
+  if size > $100000 then Exit;
+
+  irq := Spinlock_AcquireSafe_Pas(@HeapLock);
+
+  if (size = 0) or (size >= HeapTotalSize) then
+  begin
+    Spinlock_ReleaseSafe_Pas(@HeapLock, irq);
+    Exit;
+  end;
+
+  userRam := nil;
+  code := Heap_AllocBlock(size, userRam);
+  Spinlock_ReleaseSafe_Pas(@HeapLock, irq);
+
+  if code = HEAP_OK then
+    Heap_Alloc := userRam
+  else if code = HEAP_CORRUPTION then
+  begin
+    Terminal_SetColor_Pas($00FF0000);
+    Terminal_Print_Pas(W('[!] MPU FATAL: HEAP CORRUPTION DETECTED DURING ALLOC!'#13#10));
+    Sched_TerminateCurrentTask;
+    while True do Io_Hlt;
+  end;
+  { HEAP_OOM and anything else: nil. }
+end;
+
+procedure Heap_Free(ptr: Pointer);
+var
+  irq: Byte;
+  code: Byte;
+begin
+  irq := Spinlock_AcquireSafe_Pas(@HeapLock);
+  code := Heap_FreeBlock(ptr);
+  Spinlock_ReleaseSafe_Pas(@HeapLock, irq);
+
+  case code of
+    HEAP_OK: ;
+    HEAP_CORRUPTION:
+      begin
+        Terminal_SetColor_Pas($00FF0000);
+        Terminal_Print_Pas(W('[!] MPU FATAL: HEAP CORRUPTION! INVALID HEADER MAGIC!'#13#10));
+        Sched_TerminateCurrentTask;
+        while True do Io_Hlt;
+      end;
+    HEAP_INVALID_PTR:
+      begin
+        Terminal_SetColor_Pas($00FF0000);
+        Terminal_Print_Pas(W('[!] MPU BLOCKED: INVALID POINTER FREE DETECTED!'#13#10));
+        Sched_TerminateCurrentTask;
+      end;
+    HEAP_DOUBLE_FREE:
+      begin
+        Terminal_SetColor_Pas($00FF0000);
+        Terminal_Print_Pas(W('[!] MPU WARNING: DOUBLE FREE DETECTED!'#13#10));
+      end;
+    HEAP_OVERFLOW:
+      begin
+        Terminal_SetColor_Pas($00FF0000);
+        Terminal_Print_Pas(W(#13#10'[!] MPU FATAL: HEAP BUFFER OVERFLOW DETECTED!'#13#10));
+        Sched_TerminateCurrentTask;
+        while True do Io_Hlt;
+      end;
+  end;
+end;
+
+procedure Heap_Init_Pas; cdecl; public name 'Heap_Init_Pas';
+begin
+  Heap_Init;
+end;
+
+function Heap_Alloc_Pas(size: Cardinal): Pointer; cdecl; public name 'Heap_Alloc_Pas';
+begin
+  Heap_Alloc_Pas := Heap_Alloc(size);
+end;
+
+procedure Heap_Free_Pas(ptr: Pointer); cdecl; public name 'Heap_Free_Pas';
+begin
+  Heap_Free(ptr);
 end;
 
 end.
