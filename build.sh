@@ -45,21 +45,19 @@ rm -rf efi/boot *.pdb *.lib
 mkdir -p efi/boot
 
 # =========================================================================
-# [ARCH LINT] Ranh giới AAL: cấm khai báo Arch_* rải rác ngoài src/arch/.
-# Kernel/apps chỉ được gọi qua src/arch/Arch.cs - port arch mới = cung cấp
-# Hardware asm export đúng symbol + các file trong src/arch/<arch>/.
+# [NO C#] The tree is Pascal + NASM only. A stray .cs file means someone has
+# reintroduced the toolchain this project removed; fail early and say so.
 # =========================================================================
-# Ngoai le: shim "_Pas" (interop unit Pascal dung chung - arch-neutral)
-ARCH_VIOLATIONS=$(grep -rn '\[DllImport(' src/kernel src/drivers src/apps --include='*.cs' 2>/dev/null \
-    | grep -vE '//\s*\[DllImport' \
-    | grep -v '_Pas' \
-    | grep -v 'AppMainAsm' \
-    | cut -d: -f1 | sort -u || true)
-if [ -n "$ARCH_VIOLATIONS" ]; then
-    echo "[ARCH LINT] VIOLATION: non-_Pas DllImport outside src/arch/ (boot tu do: EFI standalone):"
-    echo "$ARCH_VIOLATIONS"
+STRAY_CS=$(find src -name '*.cs' -print 2>/dev/null || true)
+if [ -n "$STRAY_CS" ]; then
+    echo "[NO C#] Source files in C# are not allowed (AGENTS.md section 2):"
+    echo "$STRAY_CS"
     exit 1
 fi
+
+# One linker for every image: lld in link (MSVC-compatible) mode.
+LLD="${LLD:-lld-link}"
+command -v "$LLD" >/dev/null || { echo "[!] $LLD not found (install the lld package)"; exit 1; }
 
 echo "[1.2/4] Dang build Pascal modules..."
 ./compile_pascal.sh
@@ -72,18 +70,15 @@ nasm -f win64 src/boot/boot_io.asm -o boot_io.obj
 nasm -f bin src/arch/x86_64/smp_x86.asm -o smp.bin
 # nasm -f win64 src/app_syscall.asm -o app_syscall.obj
 
-BF="bflat"
-
 # Build Kernel + apps (no-pie, deterministic, map files)
 # Kernel.exe is pure Pascal + NASM, linked by lld alone. The bootloader loads it as
 # a PE (a DLL exporting KernelMain), applies its base relocations when it
 # moves the image for KASLR, and calls the export.
 #   /dll /noentry     no DllMain: KernelMain is the only way in
-#   /dynamicbase ...  same DllCharacteristics bflat gave it (ASLR-capable, NX)
-#   /export:KernelMain   the symbol Boot.cs searches the export table for
-KERNEL_LLD="$HOME/bflat/bin/lld"
+#   /dynamicbase ...  ASLR-capable, NX (what the bootloader expects of a relocatable image)
+#   /export:KernelMain   the symbol boot.pas searches the export table for
 KERNEL_OBJS="build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap.o build/fat16_kernel.o build/strandscheduler.o build/ipc.o build/terminal.o build/arch_interface.o build/interrupt_impl.o build/timer_impl.o build/mmu_impl.o build/platform_impl.o build/rtc.o build/fat16.o build/fpc_runtime.o build/pe_loader.o build/syscall_security.o build/memmap_scan.o build/scheduler_dispatch.o build/passwd_parser.o build/internal_shell.o build/spinlock.o build/sudo_dispatch.o build/syscall_dispatch.o build/kernel_main.o build/scheduler.o build/ipc_kernel.o build/ata_kernel.o build/power.o build/console.o build/input_drv.o build/pci.o build/kstring.o build/kstate.o build/io.o build/serial.o build/gdt.o build/idt.o build/context.o build/vdso.o build/vmm.o build/pic.o build/isr.o build/pit.o build/apic.o build/ioapic.o build/ata_hw.o build/fat16fs.o build/platform_bootstrap.o build/interrupt_handlers.o build/smp.o build/syscall_impl.o build/hardware_checks.o"
-"$KERNEL_LLD" -flavor link /dll /noentry /subsystem:console /out:Kernel.exe /Brepro \
+"$LLD" /dll /noentry /subsystem:console /out:Kernel.exe /Brepro \
     /incremental:no /opt:ref /dynamicbase /highentropyva /nxcompat /largeaddressaware \
     /export:KernelMain Hardware.obj $KERNEL_OBJS
 
@@ -119,11 +114,10 @@ KERNEL_OBJS="build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap
 # -subsystem:console: kernel nạp app như một PE bình thường, không phải UEFI
 # image, nên subsystem phải khác efi_application.
 # =========================================================================
-echo "[*] Linking Pascal apps with lld (no bflat)..."
-LLD="$HOME/bflat/bin/lld"
+echo "[*] Linking Pascal apps with lld..."
 link_app() {
     local out="$1"; shift
-    "$LLD" -flavor link \
+    "$LLD" \
         -subsystem:console \
         -entry:AppMain \
         -export:AppMain \
@@ -217,7 +211,7 @@ PY
 echo "[2/4] Dang build Loader (Stub)..."
 ./compile_boot.sh
 mkdir -p efi/boot
-"$HOME/bflat/bin/lld" -flavor link -subsystem:efi_application -entry:NekkoBoot \
+"$LLD" -subsystem:efi_application -entry:NekkoBoot \
     -out:"efi/boot/bootx64.efi" boot_io.obj build/boot.o
 
 # =========================================================================
