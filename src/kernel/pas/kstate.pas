@@ -70,16 +70,22 @@ procedure Kstate_ReleaseSchedLock(irq: Byte);
 
 implementation
 
-uses spinlock;
+uses arch_interface;
 
+{ The scheduler lock is the global one in Hardware.asm, the same lock
+  Sched_AcquireSchedLockSafe takes; a private lock here would not exclude the
+  scheduler at all. }
 function Kstate_AcquireSchedLock: Byte;
 begin
-  Kstate_AcquireSchedLock := Spinlock_AcquireSafe_Pas(@kstate_SchedLock);
+  Kstate_AcquireSchedLock := Ord((Arch_GetFlags and $200) <> 0);
+  Arch_DisableInterrupts;
+  Arch_LockScheduler;
 end;
 
 procedure Kstate_ReleaseSchedLock(irq: Byte);
 begin
-  Spinlock_ReleaseSafe_Pas(@kstate_SchedLock, irq);
+  Arch_UnlockScheduler;
+  if irq <> 0 then Arch_EnableInterrupts;
 end;
 
 { Until the scheduler itself is Pascal, its C# owner publishes the thread table

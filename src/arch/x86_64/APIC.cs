@@ -26,7 +26,6 @@ public static unsafe class APIC
     [DllImport("*", EntryPoint = "Apic_GetIoApicBase_Pas")] private static extern ulong GetIoApicBase_Pas();
     [DllImport("*", EntryPoint = "Apic_SetIoApicBase_Pas")] private static extern void SetIoApicBase_Pas(ulong b);
     [DllImport("*", EntryPoint = "Apic_GetTicksPerQuantum_Pas")] private static extern uint GetTicksPerQuantum_Pas();
-    [DllImport("*", EntryPoint = "Kstate_PublishThreads_Pas")] private static extern void PublishThreads_Pas(void* threads, int count);
 
     public static ulong LocalApicBaseVirt { get => GetBaseVirt_Pas(); set => SetBaseVirt_Pas(value); }
     public static bool IsAwake { get => IsAwake_Pas() != 0; set => SetIsAwake_Pas((byte)(value ? 1 : 0)); }
@@ -40,8 +39,6 @@ public static unsafe class APIC
 
     public static void Init(ulong physAddress)
     {
-        // apic.pas walks the thread table through kstate; the C# scheduler still owns it.
-        PublishThreads_Pas(Scheduler.Threads, Scheduler.ThreadCount);
         Init_Pas(physAddress);
     }
 }

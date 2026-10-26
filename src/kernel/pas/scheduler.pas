@@ -33,6 +33,7 @@ unit scheduler;
 {$inline on}
 {$TYPEINFO OFF}
 {$PACKRECORDS 1}
+{$DEFINE SCHED_OWN_YIELD_HANDLER}
 
 interface
 
@@ -174,84 +175,12 @@ function Sched_GetThreadTextColor(index: Integer): Cardinal;
 procedure Sched_SetThreadTextColor(index: Integer; v: Cardinal);
 function Sched_GetThreadFpuState(index: Integer): Pointer;
 
-{ ── Legacy cdecl shims ────────────────────────────────────────────────────
-  Thread.cs calls these; they are kept until it is deleted. Each one adapts
-  the caller's explicit state into a TSchedState, runs the same core the
-  state-owning API uses, and copies the mutated fields back. }
-
-procedure Sched_SetCallbacks_Pas(
-  pmmAllocContigFn, pmmAllocPageFn, pmmFreePageFn,
-  getKernelRootFn, isCanonicalFn, destroyUserFn,
-  mapPageFn, ipcClearBoxFn,
-  termPrintFn, termSetColorFn, prngNextFn,
-  getGdtTssRsp0Fn, getCoreTssRsp0Fn,
-  apicReadFn, apicIsAwakeFn,
-  getCurrentIdsFn, getIdleIdsFn, getDyingIdsFn,
-  selectNextFn, getIdleLoopPtrFn,
-  getCSFn, getSSFn, saveFpuFn, restoreFpuFn: Pointer
-); cdecl;
-
-procedure Sched_Init_Pas(
-  out threadsOut: Pointer;
-  out threadCountOut: Integer;
-  out readyOut: Byte
-); cdecl;
-
-function Sched_GetFreeSlot_Pas(threads: Pointer; threadCount: Integer): Integer; cdecl;
-
 { Read a live thread's address-space root (physical PML4), or 0 when the
   index is out of range or the thread is inactive. The APIC uses this to map
   its MMIO window into every live address space. TThread's layout stays
   private to this unit, which is why the field is reached through an
   accessor instead of a shared struct. }
 function Sched_GetThreadAddrSpace_Pas(index: Integer): QWord; cdecl;
-
-procedure Sched_CreateIdleTask_Pas(
-  coreId: Cardinal;
-  threads: Pointer; var threadCount: Integer;
-  currentThreadIds: PInteger; idleThreadIds: PInteger
-); cdecl;
-
-function Sched_SwitchTask_Pas(
-  currentRsp: QWord;
-  threads: Pointer;
-  var threadCount: Integer;
-  ready: Byte;
-  systemTicks: QWord;
-  var foregroundTask: Integer;
-  currentThreadIds: PInteger;
-  idleThreadIds: PInteger;
-  dyingThreadIds: PInteger
-): QWord; cdecl;
-
-function Sched_CreateUserTask_Pas(
-  entryPoint: QWord;
-  appPml4: QWord;
-  isForeground: Byte;
-  isJailed: Byte;
-  forceRoot: Byte;
-  processName: PWord;
-  imagePages: Cardinal;
-  priority: Byte;
-  threads: Pointer;
-  var threadCount: Integer;
-  currentThreadIds: PInteger;
-  var foregroundTask: Integer
-): Integer; cdecl;
-
-procedure Sched_CreateTask_Pas(
-  entryPoint: QWord;
-  threads: Pointer;
-  var threadCount: Integer
-); cdecl;
-
-procedure Sched_TerminateTask_Pas(
-  id: Integer;
-  threads: Pointer;
-  threadCount: Integer;
-  currentThreadIds: PInteger;
-  var foregroundTask: Integer
-); cdecl;
 
 implementation
 
@@ -1521,56 +1450,6 @@ begin
   if ThreadAt(index, t) then Result := @t^.FpuState[0] else Result := nil;
 end;
 
-{ ── Legacy cdecl shims ──────────────────────────────────────────────────── }
-
-{ The 25 callees are now imported directly (see the unit header), so only two
-  of the pointers still carry meaning: the IPC mailbox clear and the idle-loop
-  entry, both of which are C#-owned resources. They are kept as fallbacks for
-  a caller that registers them before the equivalent handle is published. The
-  other 23 are accepted and ignored so the ABI stays byte-for-byte compatible. }
-procedure Sched_SetCallbacks_Pas(
-  pmmAllocContigFn, pmmAllocPageFn, pmmFreePageFn,
-  getKernelRootFn, isCanonicalFn, destroyUserFn,
-  mapPageFn, ipcClearBoxFn,
-  termPrintFn, termSetColorFn, prngNextFn,
-  getGdtTssRsp0Fn, getCoreTssRsp0Fn,
-  apicReadFn, apicIsAwakeFn,
-  getCurrentIdsFn, getIdleIdsFn, getDyingIdsFn,
-  selectNextFn, getIdleLoopPtrFn,
-  getCSFn, getSSFn, saveFpuFn, restoreFpuFn: Pointer
-); cdecl; public name 'Sched_SetCallbacks_Pas';
-begin
-  cb_IpcClearBox := ipcClearBoxFn;
-  cb_GetIdleLoop := getIdleLoopPtrFn;
-  { pmmAllocContigFn, pmmAllocPageFn, pmmFreePageFn, getKernelRootFn,
-    isCanonicalFn, destroyUserFn, mapPageFn, termPrintFn, termSetColorFn,
-    prngNextFn, getGdtTssRsp0Fn, getCoreTssRsp0Fn, apicReadFn,
-    apicIsAwakeFn, getCurrentIdsFn, getIdleIdsFn, getDyingIdsFn,
-    selectNextFn, getCSFn, getSSFn, saveFpuFn, restoreFpuFn:
-    superseded by direct pmm/vmm/terminal/prng/gdt/apic/scheduler_dispatch
-    and arch_interface bindings. }
-  if pmmAllocContigFn = nil then ;
-  if getCurrentIdsFn = nil then ;
-  if selectNextFn = nil then ;
-end;
-
-procedure Sched_Init_Pas(out threadsOut: Pointer; out threadCountOut: Integer;
-  out readyOut: Byte); cdecl; public name 'Sched_Init_Pas';
-begin
-  Sched_Init;
-  threadsOut     := Pointer(St.Threads);
-  threadCountOut := St.ThreadCount;
-  if St.Ready then readyOut := 1 else readyOut := 0;
-end;
-
-{ Historical behaviour: a pure query. The caller owns the increment, which is
-  why the state-owning Sched_GetFreeThreadSlot grows the table itself instead. }
-function Sched_GetFreeSlot_Pas(threads: Pointer; threadCount: Integer): Integer; cdecl;
-  public name 'Sched_GetFreeSlot_Pas';
-begin
-  Sched_GetFreeSlot_Pas := FindFreeSlot(PThread(threads), threadCount);
-end;
-
 function Sched_GetThreadAddrSpace_Pas(index: Integer): QWord; cdecl;
   public name 'Sched_GetThreadAddrSpace_Pas';
 var
@@ -1584,112 +1463,133 @@ begin
   Result := t[index].AddrSpace;
 end;
 
-procedure Sched_CreateIdleTask_Pas(coreId: Cardinal; threads: Pointer;
-  var threadCount: Integer; currentThreadIds: PInteger;
-  idleThreadIds: PInteger); cdecl; public name 'Sched_CreateIdleTask_Pas';
-var
-  tmp: TSchedState;
+{ ── cdecl exports for the C# glue (src/kernel/Thread.cs) ──────────────────
+  Thread.cs keeps only the Thread record layout; every Scheduler.* member
+  forwards to one of these. The record layout is shared by offset, never by
+  type, so nothing here exposes TThread. }
+
+function Sched_GetThreads_Pas: Pointer; cdecl; public name 'Sched_GetThreads_Pas';
 begin
-  tmp.Threads        := PThread(threads);
-  tmp.ThreadCount    := threadCount;
-  tmp.Ready          := St.Ready;
-  tmp.ForegroundTask := St.ForegroundTask;
-  tmp.CurrentIds     := currentThreadIds;
-  tmp.IdleIds        := idleThreadIds;
-  tmp.DyingIds       := St.DyingIds;
-  tmp.SystemTicks    := St.SystemTicks;
-
-  CreateIdleTaskForCore(tmp, coreId);
-
-  threadCount := tmp.ThreadCount;
+  Sched_GetThreads_Pas := Sched_GetThreads;
 end;
 
-function Sched_SwitchTask_Pas(currentRsp: QWord; threads: Pointer;
-  var threadCount: Integer; ready: Byte; systemTicks: QWord;
-  var foregroundTask: Integer; currentThreadIds, idleThreadIds,
-  dyingThreadIds: PInteger): QWord; cdecl; public name 'Sched_SwitchTask_Pas';
-var
-  tmp: TSchedState;
+function Sched_GetThreadCount_Pas: Integer; cdecl; public name 'Sched_GetThreadCount_Pas';
 begin
-  tmp.Threads        := PThread(threads);
-  tmp.ThreadCount    := threadCount;
-  tmp.Ready          := ready <> 0;
-  tmp.ForegroundTask := foregroundTask;
-  tmp.CurrentIds     := currentThreadIds;
-  tmp.IdleIds        := idleThreadIds;
-  tmp.DyingIds       := dyingThreadIds;
-  tmp.SystemTicks    := systemTicks;
+  Sched_GetThreadCount_Pas := St.ThreadCount;
+end;
 
-  { The caller holds the scheduler lock around this shim, matching the C# side. }
-  Sched_SwitchTask_Pas := SwitchTask(tmp, currentRsp);
+function Sched_IsReady_Pas: Byte; cdecl; public name 'Sched_IsReady_Pas';
+begin
+  Sched_IsReady_Pas := Ord(St.Ready);
+end;
 
-  threadCount    := tmp.ThreadCount;
-  foregroundTask := tmp.ForegroundTask;
+procedure Sched_SetReady_Pas(v: Byte); cdecl; public name 'Sched_SetReady_Pas';
+begin
+  St.Ready := v <> 0;
+end;
+
+function Sched_GetForegroundTask_Pas: Integer; cdecl; public name 'Sched_GetForegroundTask_Pas';
+begin
+  Sched_GetForegroundTask_Pas := St.ForegroundTask;
+end;
+
+procedure Sched_SetForegroundTask_Pas(v: Integer); cdecl; public name 'Sched_SetForegroundTask_Pas';
+begin
+  St.ForegroundTask := v;
+end;
+
+function Sched_GetCurrentThreadIds_Pas: PInteger; cdecl; public name 'Sched_GetCurrentThreadIds_Pas';
+begin
+  Sched_GetCurrentThreadIds_Pas := St.CurrentIds;
+end;
+
+function Sched_GetIdleThreadIds_Pas: PInteger; cdecl; public name 'Sched_GetIdleThreadIds_Pas';
+begin
+  Sched_GetIdleThreadIds_Pas := St.IdleIds;
+end;
+
+function Sched_GetDyingThreadPerCore_Pas: PInteger; cdecl; public name 'Sched_GetDyingThreadPerCore_Pas';
+begin
+  Sched_GetDyingThreadPerCore_Pas := St.DyingIds;
+end;
+
+function Sched_GetSystemTicks_Pas: QWord; cdecl; public name 'Sched_GetSystemTicks_Pas';
+begin
+  Sched_GetSystemTicks_Pas := St.SystemTicks;
+end;
+
+procedure Sched_SetSystemTicks_Pas(v: QWord); cdecl; public name 'Sched_SetSystemTicks_Pas';
+begin
+  St.SystemTicks := v;
+end;
+
+function Sched_BumpSystemTicks_Pas(delta: QWord): QWord; cdecl; public name 'Sched_BumpSystemTicks_Pas';
+begin
+  Sched_BumpSystemTicks_Pas := Sched_BumpSystemTicks(delta);
+end;
+
+function Sched_GetCurrentThreadId_Pas: Integer; cdecl; public name 'Sched_GetCurrentThreadId_Pas';
+begin
+  Sched_GetCurrentThreadId_Pas := Sched_GetCurrentThreadId;
+end;
+
+procedure Sched_Init_Pas; cdecl; public name 'Sched_Init_Pas';
+begin
+  Sched_Init;
+end;
+
+procedure Sched_SetIdleLoop_Pas(idleLoop: Pointer); cdecl; public name 'Sched_SetIdleLoop_Pas';
+begin
+  Sched_SetIdleLoop(idleLoop);
+end;
+
+procedure Sched_SetIpcQueue_Pas(queue: Pointer; maxMessages: Integer); cdecl; public name 'Sched_SetIpcQueue_Pas';
+begin
+  Sched_SetIpcQueue(queue, maxMessages);
+end;
+
+procedure Sched_CreateIdleTaskForCore_Pas(coreId: Cardinal); cdecl; public name 'Sched_CreateIdleTaskForCore_Pas';
+begin
+  Sched_CreateIdleTaskForCore(coreId);
+end;
+
+function Sched_SwitchTask_Pas(currentRsp: QWord): QWord; cdecl; public name 'Sched_SwitchTask_Pas';
+begin
+  Sched_SwitchTask_Pas := Sched_SwitchTask(currentRsp);
+end;
+
+function Sched_GetFreeThreadSlot_Pas: Integer; cdecl; public name 'Sched_GetFreeThreadSlot_Pas';
+begin
+  Sched_GetFreeThreadSlot_Pas := Sched_GetFreeThreadSlot;
+end;
+
+procedure Sched_CreateTask_Pas(entryPoint: QWord); cdecl; public name 'Sched_CreateTask_Pas';
+begin
+  Sched_CreateTask(entryPoint);
 end;
 
 function Sched_CreateUserTask_Pas(entryPoint, appPml4: QWord;
   isForeground, isJailed, forceRoot: Byte; processName: PWord;
-  imagePages: Cardinal; priority: Byte; threads: Pointer;
-  var threadCount: Integer; currentThreadIds: PInteger;
-  var foregroundTask: Integer): Integer; cdecl;
-  public name 'Sched_CreateUserTask_Pas';
-var
-  tmp: TSchedState;
+  imagePages: Cardinal; priority: Byte): Integer; cdecl; public name 'Sched_CreateUserTask_Pas';
 begin
-  tmp.Threads        := PThread(threads);
-  tmp.ThreadCount    := threadCount;
-  tmp.Ready          := St.Ready;
-  tmp.ForegroundTask := foregroundTask;
-  tmp.CurrentIds     := currentThreadIds;
-  tmp.IdleIds        := St.IdleIds;
-  tmp.DyingIds       := St.DyingIds;
-  tmp.SystemTicks    := St.SystemTicks;
-
-  Sched_CreateUserTask_Pas := CreateUserTask(tmp, entryPoint, appPml4,
+  Sched_CreateUserTask_Pas := Sched_CreateUserTask(entryPoint, appPml4,
     isForeground <> 0, isJailed <> 0, forceRoot <> 0, processName,
     imagePages, priority);
-
-  threadCount    := tmp.ThreadCount;
-  foregroundTask := tmp.ForegroundTask;
 end;
 
-procedure Sched_CreateTask_Pas(entryPoint: QWord; threads: Pointer;
-  var threadCount: Integer); cdecl; public name 'Sched_CreateTask_Pas';
-var
-  tmp: TSchedState;
+procedure Sched_TerminateTask_Pas(id: Integer); cdecl; public name 'Sched_TerminateTask_Pas';
 begin
-  tmp.Threads        := PThread(threads);
-  tmp.ThreadCount    := threadCount;
-  tmp.Ready          := St.Ready;
-  tmp.ForegroundTask := St.ForegroundTask;
-  tmp.CurrentIds     := St.CurrentIds;
-  tmp.IdleIds        := St.IdleIds;
-  tmp.DyingIds       := St.DyingIds;
-  tmp.SystemTicks    := St.SystemTicks;
-
-  CreateTask(tmp, entryPoint);
-
-  threadCount := tmp.ThreadCount;
+  Sched_TerminateTask(id);
 end;
 
-procedure Sched_TerminateTask_Pas(id: Integer; threads: Pointer;
-  threadCount: Integer; currentThreadIds: PInteger;
-  var foregroundTask: Integer); cdecl; public name 'Sched_TerminateTask_Pas';
-var
-  tmp: TSchedState;
+function Sched_AcquireSchedLockSafe_Pas: Byte; cdecl; public name 'Sched_AcquireSchedLockSafe_Pas';
 begin
-  tmp.Threads        := PThread(threads);
-  tmp.ThreadCount    := threadCount;
-  tmp.Ready          := St.Ready;
-  tmp.ForegroundTask := foregroundTask;
-  tmp.CurrentIds     := currentThreadIds;
-  tmp.IdleIds        := St.IdleIds;
-  tmp.DyingIds       := St.DyingIds;
-  tmp.SystemTicks    := St.SystemTicks;
+  Sched_AcquireSchedLockSafe_Pas := Ord(Sched_AcquireSchedLockSafe);
+end;
 
-  TerminateTask(tmp, id);
-
-  foregroundTask := tmp.ForegroundTask;
+procedure Sched_ReleaseSchedLockSafe_Pas(irq: Byte); cdecl; public name 'Sched_ReleaseSchedLockSafe_Pas';
+begin
+  Sched_ReleaseSchedLockSafe(irq <> 0);
 end;
 
 end.

@@ -104,6 +104,7 @@ public static unsafe class IPC
 
         LibC.MemSet((byte*)queue, 0, (uint)(numPages * 4096));
         StoreFence();
+        Scheduler.SetIpcQueue(queue, MAX_MESSAGES); // scheduler.pas clears mailboxes on thread exit
 
         Terminal.SetColor(0x00FFFF00);
         fixed (char* msg = "[+] IPC Mailbox (Atomic XCHG MPMC): \0") Terminal.Print(msg); Terminal.PrintDec((uint)MAX_MESSAGES);

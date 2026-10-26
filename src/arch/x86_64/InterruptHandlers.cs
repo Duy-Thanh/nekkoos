@@ -388,7 +388,7 @@ public static unsafe class InterruptHandlers
         if (!APIC.IsAwake)
         {
             PIT.IncrementTicksHal();
-            fixed (ulong* q = &Scheduler.SystemTicks) AtomicAdd64(q, 1);
+            Scheduler.BumpSystemTicks(1);
             PIC.SendEOI();
             if (!Scheduler.Ready) return currentRsp;
             return Scheduler.SwitchTask(currentRsp);
@@ -397,7 +397,7 @@ public static unsafe class InterruptHandlers
         uint coreId = APIC.Read(0x020) >> 24;
         if (coreId == 0) {
             PIT.IncrementTicksHal();
-            fixed (ulong* q = &Scheduler.SystemTicks) AtomicAdd64(q, 1);
+            Scheduler.BumpSystemTicks(1);
 
             // ==========================================================
             // [BỌC THÉP TRÁI TIM OS] ĐỒNG BỘ THỜI GIAN TUYỆT ĐỐI!
