@@ -204,7 +204,6 @@ public static unsafe class Program
         LibC.RtcInterruptHandler_Ptr = 0; 
 
         Mem.ResetLock();
-        SMP.SmpLock = new Spinlock();
         // Initialize Syscall shared-memory lock here to avoid static init ordering issues
         Syscall.SharedMemLock = new Spinlock();
 
