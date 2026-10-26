@@ -105,6 +105,7 @@ const
 const
   LVT_MASKED        = $10000;   { bit 16: suppress delivery }
   LVT_TIMER_VECTOR  = 32;
+  LVT_PERIODIC      = $20000;   { bit 17: timer mode = periodic }
 
 var
   Apic_BaseVirt: QWord = 0;
@@ -373,11 +374,77 @@ begin
   Apic_Awake := True;
 
   { Unmask the LVT and start the periodic timer. }
-  Apic_Write(APIC_LVT_TIMER, LVT_TIMER_VECTOR);
+  Apic_Write(APIC_LVT_TIMER, LVT_PERIODIC or LVT_TIMER_VECTOR);
   Apic_Write(APIC_TIMER_INIT, Apic_TicksPerQuantum);
 
   Terminal_Print_Pas(W('[+] Multi-Core Timer Engaged at 250Hz! The PIT is Officially DEAD!'#13#10));
   Terminal_SetColor_Pas($00FFFFFF);
+end;
+
+{ ── cdecl exports for APIC.cs ── }
+procedure Apic_Init_Pas(physAddress: QWord); cdecl; public name 'Apic_Init_Pas';
+begin
+  Apic_Init(physAddress);
+end;
+
+function Apic_Read_Pas(offset: Cardinal): Cardinal; cdecl; public name 'Apic_Read_Pas';
+begin
+  Apic_Read_Pas := Apic_Read(offset);
+end;
+
+procedure Apic_Write_Pas(offset, value: Cardinal); cdecl; public name 'Apic_Write_Pas';
+begin
+  Apic_Write(offset, value);
+end;
+
+procedure Apic_SendEOI_Pas; cdecl; public name 'Apic_SendEOI_Pas';
+begin
+  Apic_SendEOI;
+end;
+
+function Apic_GetBaseVirt_Pas: QWord; cdecl; public name 'Apic_GetBaseVirt_Pas';
+begin
+  Apic_GetBaseVirt_Pas := Apic_BaseVirt;
+end;
+
+procedure Apic_SetBaseVirt_Pas(v: QWord); cdecl; public name 'Apic_SetBaseVirt_Pas';
+begin
+  Apic_BaseVirt := v;
+end;
+
+function Apic_IsAwake_Pas: Byte; cdecl; public name 'Apic_IsAwake_Pas';
+begin
+  Apic_IsAwake_Pas := Ord(Apic_Awake);
+end;
+
+procedure Apic_SetIsAwake_Pas(v: Byte); cdecl; public name 'Apic_SetIsAwake_Pas';
+begin
+  Apic_Awake := v <> 0;
+end;
+
+function Apic_GetCoreCount_Pas: Cardinal; cdecl; public name 'Apic_GetCoreCount_Pas';
+begin
+  Apic_GetCoreCount_Pas := Apic_CoreCount;
+end;
+
+procedure Apic_SetCoreCount_Pas(c: Cardinal); cdecl; public name 'Apic_SetCoreCount_Pas';
+begin
+  Apic_CoreCount := c;
+end;
+
+function Apic_GetIoApicBase_Pas: QWord; cdecl; public name 'Apic_GetIoApicBase_Pas';
+begin
+  Apic_GetIoApicBase_Pas := Apic_IoApicBase;
+end;
+
+procedure Apic_SetIoApicBase_Pas(b: QWord); cdecl; public name 'Apic_SetIoApicBase_Pas';
+begin
+  Apic_IoApicBase := b;
+end;
+
+function Apic_GetTicksPerQuantum_Pas: Cardinal; cdecl; public name 'Apic_GetTicksPerQuantum_Pas';
+begin
+  Apic_GetTicksPerQuantum_Pas := Apic_TicksPerQuantum;
 end;
 
 end.

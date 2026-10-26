@@ -82,4 +82,12 @@ begin
   Spinlock_ReleaseSafe_Pas(@kstate_SchedLock, irq);
 end;
 
+{ Until the scheduler itself is Pascal, its C# owner publishes the thread table
+  here so apic.pas can walk it. }
+procedure Kstate_PublishThreads_Pas(threads: Pointer; count: Integer); cdecl; public name 'Kstate_PublishThreads_Pas';
+begin
+  kstate_Threads := threads;
+  kstate_ThreadCount := count;
+end;
+
 end.
