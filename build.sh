@@ -89,7 +89,7 @@ KERNEL_OBJS="build/libc.o build/prng.o build/kerncrypto.o build/pmm.o build/heap
 
 # ATA_Driver is Pascal - see LINK_APP below.
 # FAT16_Driver is Pascal - see LINK_APP below.
-$BF build src/apps/acpi.cs src/apps/API.cs -Ot --no-pie --deterministic --map maps/ACPI.map --os windows --arch x64 --stdlib zero -o acpi.exe --ldflags "-export:AppMain build/acpi_parse.o build/fpc_runtime.o"
+# acpi.exe is Pascal - see the LINK_APP block below.
 # Shell.exe is Pascal - see the LINK_APP block below.
 # SysLogon.exe is Pascal - see the LINK_APP block below.
 # top is Pascal - see LINK_APP below.
@@ -145,6 +145,7 @@ link_app top.exe       build/top_app.o       build/app_api.o build/libc.o
 link_app dsrv.exe      build/dsrv_app.o      build/app_api.o build/libc.o
 link_app explorer.exe  build/explorer_app.o  build/app_api.o build/libc.o
 link_app stresstest.exe build/stress_app.o  build/app_api.o build/libc.o
+link_app acpi.exe       build/acpi_app.o      build/app_api.o build/kstring.o build/acpi_parse.o build/fpc_runtime.o
 
 echo "[*] Waiting for FS to flush..."
 sync

@@ -84,7 +84,31 @@ def main():
                   r"obliterated", "sudo rmdir")
         step_sudo(res, "sudo ls", "wrongpassword", r"Sorry, try again",
                   "sudo rejects a wrong password")
-        st.step_shutdown(res)
+
+        # The ACPI daemon (acpi_app.pas) is the only thing that can really reset
+        # or power off the machine, so prove both by effect, not by log text.
+        before = st.read_serial_log().count("Username:")
+        st.type_text("reboot\n")
+        deadline = time.time() + 240
+        rebooted = False
+        while time.time() < deadline:
+            if st.read_serial_log().count("Username:") > before:
+                rebooted = True
+                break
+            time.sleep(1)
+        res.record("reboot restarts the machine (ACPI daemon)", rebooted)
+
+        if rebooted:
+            st.step_login(res)
+            st.type_text("shutdown\n")
+            off = False
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                if qemu_proc.poll() is not None:
+                    off = True
+                    break
+                time.sleep(1)
+            res.record("shutdown powers the machine off (QEMU exits)", off)
     except KeyboardInterrupt:
         print("\n[INTERRUPTED]")
     finally:
