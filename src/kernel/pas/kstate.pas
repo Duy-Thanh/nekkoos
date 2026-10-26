@@ -45,6 +45,10 @@ var
   { Number of pages in the shared window. 0 = not allocated. }
   kstate_SharedRAM_Pages: QWord = 0;
 
+  { Lock around reads/writes of the shared-memory window. Taken by the syscall
+    layer, the FAT16/ATA kernel drivers and the IPC fast paths. }
+  kstate_SharedMemLock: Cardinal = 0;
+
 { ── Scheduler state that non-scheduler modules need to observe ─────────────
 
   The APIC initialisation pass must map its MMIO window into every live
@@ -94,6 +98,23 @@ procedure Kstate_PublishThreads_Pas(threads: Pointer; count: Integer); cdecl; pu
 begin
   kstate_Threads := threads;
   kstate_ThreadCount := count;
+end;
+
+{ Addresses of the shared cells, for the C# glue that still reads them by
+  reference. }
+function Kstate_SharedRamPtr_Pas: PQWord; cdecl; public name 'Kstate_SharedRamPtr_Pas';
+begin
+  Kstate_SharedRamPtr_Pas := @kstate_SharedRAM_Phys;
+end;
+
+function Kstate_MpuTrapPtr_Pas: PQWord; cdecl; public name 'Kstate_MpuTrapPtr_Pas';
+begin
+  Kstate_MpuTrapPtr_Pas := @kstate_MpuTrapPage_Phys;
+end;
+
+function Kstate_SharedMemLockPtr_Pas: PCardinal; cdecl; public name 'Kstate_SharedMemLockPtr_Pas';
+begin
+  Kstate_SharedMemLockPtr_Pas := @kstate_SharedMemLock;
 end;
 
 end.

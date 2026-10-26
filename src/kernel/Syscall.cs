@@ -51,9 +51,14 @@ public static unsafe class Syscall
     [DllImport("*", EntryPoint = "StrCpyLimited_Pas")]
     private static extern uint StrCpyLimited_Pas(char* dest, char* src, uint cap);
 
-    public static ulong GlobalSharedRAM_Phys = 0;
-    public static ulong MpuTrapPage_Phys = 0;
-    public static Spinlock SharedMemLock;
+    // These three cells live in kstate.pas so the Pascal kernel (vmm, ata, ...) sees
+    // the same storage; the ref properties keep every C# use (including `fixed (... = &x)`) valid.
+    [DllImport("*", EntryPoint = "Kstate_SharedRamPtr_Pas")] private static extern ulong* SharedRamPtr_Pas();
+    [DllImport("*", EntryPoint = "Kstate_MpuTrapPtr_Pas")] private static extern ulong* MpuTrapPtr_Pas();
+    [DllImport("*", EntryPoint = "Kstate_SharedMemLockPtr_Pas")] private static extern Spinlock* SharedMemLockPtr_Pas();
+    public static ref ulong GlobalSharedRAM_Phys => ref *SharedRamPtr_Pas();
+    public static ref ulong MpuTrapPage_Phys => ref *MpuTrapPtr_Pas();
+    public static ref Spinlock SharedMemLock => ref *SharedMemLockPtr_Pas();
     private static ulong SyscallLogCounter = 0;
 
     // [SUDO-DBG] Stage mirror của syscall 94 (sudo) tại PA cố định 0x8000 - nằm trong

@@ -530,12 +530,8 @@ begin
   Vmm_MapHugePage(physAddr, virtAddr);
 end;
 
-{ Shared-window addresses are still owned by C# (Syscall.cs); it hands them
-  over before every teardown. }
-procedure Vmm_DestroyUserSpace_Pas(pml4Phys, sharedRamPhys, mpuTrapPhys: QWord); cdecl; public name 'Vmm_DestroyUserSpace_Pas';
+procedure Vmm_DestroyUserSpace_Pas(pml4Phys: QWord); cdecl; public name 'Vmm_DestroyUserSpace_Pas';
 begin
-  kstate_SharedRAM_Phys := sharedRamPhys;
-  kstate_MpuTrapPage_Phys := mpuTrapPhys;
   Vmm_DestroyUserSpace(pml4Phys);
 end;
 

@@ -22,7 +22,7 @@ public static unsafe class VMM
     [DllImport("*", EntryPoint = "Vmm_MapPage_Pas")] private static extern void MapPage_Pas(ulong phys, ulong virt, ulong flags);
     [DllImport("*", EntryPoint = "Vmm_MapPageIn_Pas")] private static extern void MapPageIn_Pas(ulong phys, ulong virt, ulong flags, ulong* pml4);
     [DllImport("*", EntryPoint = "Vmm_MapHugePage_Pas")] private static extern void MapHugePage_Pas(ulong phys, ulong virt);
-    [DllImport("*", EntryPoint = "Vmm_DestroyUserSpace_Pas")] private static extern void DestroyUserSpace_Pas(ulong pml4, ulong sharedRam, ulong mpuTrap);
+    [DllImport("*", EntryPoint = "Vmm_DestroyUserSpace_Pas")] private static extern void DestroyUserSpace_Pas(ulong pml4);
     [DllImport("*", EntryPoint = "Vmm_GetPml4_Pas")] private static extern ulong* GetPml4_Pas();
 
     public static void LoadPML4_ASM(void* pml4Address) => HAL_LoadPageTable(pml4Address);
@@ -41,5 +41,5 @@ public static unsafe class VMM
     public static void MapHugePage(ulong physAddr, ulong virtAddr) => MapHugePage_Pas(physAddr, virtAddr);
     public static void MapPage(ulong physAddr, ulong virtAddr, ulong flags) => MapPage_Pas(physAddr, virtAddr, flags);
     public static void MapPage(ulong physAddr, ulong virtAddr, ulong flags, ulong* pml4Dir) => MapPageIn_Pas(physAddr, virtAddr, flags, pml4Dir);
-    public static void DestroyUserSpace(ulong pml4_phys) => DestroyUserSpace_Pas(pml4_phys, Syscall.GlobalSharedRAM_Phys, Syscall.MpuTrapPage_Phys);
+    public static void DestroyUserSpace(ulong pml4_phys) => DestroyUserSpace_Pas(pml4_phys);
 }
