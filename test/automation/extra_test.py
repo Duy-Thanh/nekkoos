@@ -30,6 +30,21 @@ def step_builtin(res, cmd, pattern, name):
     return ok and hit and not bad
 
 
+def step_sudo(res, cmd, password, pattern, name):
+    """Type `cmd`, answer the [sudo] Password prompt, check the reply."""
+    offset = st.serial_size()
+    st.type_text(cmd + "\n")
+    if not st.wait_for(r"\[sudo\] Password:", timeout=20, window=300):
+        res.record(name, False, "no [sudo] Password: prompt")
+        return False
+    st.type_text(password + "\n")
+    st.wait_quiet(timeout=25, quiet_for=1.5)
+    out = st.tail_since_bytes(offset).replace("\r", "")
+    hit = re.search(pattern, out) is not None
+    res.record(name, hit, "" if hit else f"expected /{pattern}/ in: {out[-200:]!r}")
+    return hit
+
+
 def main():
     print("=" * 60)
     print(" NekkoOS builtin-command test")
@@ -62,6 +77,13 @@ def main():
         step_builtin(res, "mkdir extradir", r"root@nekkoOS#", "mkdir via daemon")
         step_builtin(res, "ls", r"(?i)extradir", "mkdir result visible in ls")
         step_builtin(res, "rmdir extradir", r"root@nekkoOS#", "rmdir via daemon")
+        step_sudo(res, "sudo mkdir sdir", st.PASSWD_PASS,
+                  r"Directory Created Successfully", "sudo mkdir (kernel relays to FAT16 daemon)")
+        step_sudo(res, "sudo ls", st.PASSWD_PASS, r"(?i)sdir", "sudo ls lists the new directory")
+        step_sudo(res, "sudo rmdir sdir", st.PASSWD_PASS,
+                  r"obliterated", "sudo rmdir")
+        step_sudo(res, "sudo ls", "wrongpassword", r"Sorry, try again",
+                  "sudo rejects a wrong password")
         st.step_shutdown(res)
     except KeyboardInterrupt:
         print("\n[INTERRUPTED]")

@@ -249,7 +249,10 @@ var
 
   lineWide: array[0..255] of Word;
   lineUser: array[0..31] of Word;
-  lineSalt: array[0..63] of Word;
+  { 64 hex digits plus the terminator. The C# buffer held exactly 64 and the
+    parser keeps cap-1, so the last digit was dropped and every salt decoded
+    to 31 bytes; no sudo password could ever verify. }
+  lineSalt: array[0..71] of Word;
   lineHash: array[0..79] of Word;
   lineUID: array[0..15] of Word;
   matchedUser: array[0..31] of Word;
@@ -305,7 +308,7 @@ begin
   while i < Integer(passSize) do
   begin
     WidenLine(@passBuf[i], Integer(passSize) - i, @lineWide[0], 256);
-    ParsePasswdLine_Pas(@lineWide[0], @lineUser[0], 32, @lineSalt[0], 64,
+    ParsePasswdLine_Pas(@lineWide[0], @lineUser[0], 32, @lineSalt[0], 72,
       @lineHash[0], 80, @lineUID[0], 16);
 
     while (i < Integer(passSize)) and (passBuf[i] <> 10) and (passBuf[i] <> 13) do Inc(i);
@@ -343,7 +346,7 @@ begin
     passOk := ConstantTimeEq(@computedHex[0], @lineHash[0], 64) <> 0;
 
     { Secrets do not stay on the stack. }
-    ZeroMemChar(@lineSalt[0], 64);
+    ZeroMemChar(@lineSalt[0], 72);
     ZeroMemChar(@lineHash[0], 80);
     ZeroMemByte(@saltBytes[0], 32);
     ZeroMemByte(@hashInput[0], 256);
