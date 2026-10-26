@@ -342,6 +342,12 @@ def step_boot_to_login(res):
     # we want to read, which turns an observable timeout into a blank failure
     # with nothing in the log to explain it.
     ok = wait_for(r"Username:", timeout=150, window=300)
+    if ok:
+        # The mouse daemon is still initialising the 8042 for a moment after the
+        # prompt appears, and keystrokes that arrive meanwhile are discarded by
+        # its drain. Boots used to be slow enough (the handshake bug, now fixed)
+        # that the harness never typed this early.
+        time.sleep(4)
     res.record("boot to login prompt", ok)
     return ok
 

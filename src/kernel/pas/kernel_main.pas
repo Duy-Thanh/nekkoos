@@ -117,9 +117,6 @@ end;
   idle task. Entered by IRETQ, so it is a plain cdecl procedure that never
   returns. }
 procedure KernelIdleLoop; cdecl;
-var
-  rType, rSender: Cardinal;
-  rPayload: QWord;
 begin
   while True do
   begin
@@ -127,23 +124,16 @@ begin
 
     Strand_RunCycle;
 
-    if (not Ata_GetUseDaemon) or (not Fat16K_GetUseDaemon) then
-    begin
-      rType := 0; rSender := 0; rPayload := 0;
-      while IpcK_ReceiveForRaw(0, rType, rSender, rPayload) do
-      begin
-        if rType = IPC_ATA_READY then
-        begin
-          Ata_SetDaemonId(rSender);
-          Ata_SetUseDaemon(True);
-        end
-        else if rType = IPC_FAT16_READY then
-        begin
-          Fat16K_SetDaemonId(rSender);
-          Fat16K_SetUseDaemon(True);
-        end;
-      end;
-    end;
+    { Only the boot thread may read the boot thread's mailbox. This loop also
+      runs as the idle task of every other core; when those drained it too,
+      they swallowed handshake messages they did not handle (the mouse's
+      type 44 in particular) and the boot thread then waited out its deadline
+      for a daemon that had in fact reported ready. }
+    { And only until the daemons are up: afterwards receiver 0 also carries
+      keyboard scancodes (IRQ1 broadcasts to it), which must not be eaten. }
+    if (Sched_GetCurrentThreadId = 0) and
+       ((not Ata_GetUseDaemon) or (not Fat16K_GetUseDaemon)) then
+      DrainHandshakes;
 
     Io_Hlt;
     Sched_Yield;

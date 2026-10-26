@@ -441,7 +441,7 @@ rm -f hdd.img.lock
 ```
 Trước khi chạy VM mới nếu không sẽ bị "disk locked" error.
 
-### 6.10 ⚠️ Smoke test flaky ~1/3 — KHÔNG phải regression
+### 6.10 📜 (lịch sử) Smoke test flaky ~1/3 — nguyên nhân thật là §15.0, đã sửa
 
 **Triệu chứng:** `smoke_test.py` báo `[FAIL] boot to login prompt` /
 `OS did not reach login prompt within timeout`, nhưng chạy lại thì 9/9.
@@ -589,9 +589,8 @@ python3 test/automation/hwcheck_test.py  # boot KHÔNG có fw_cfg key: phải d�
 `smoke_test` không phủ builtin của kernel, sudo, reboot/shutdown thật hay cổng xác thực — đó là lý do có `extra_test`/`hwcheck_test`.
 Một refactor có thể pass 10/10 mà hỏng cả ba.
 
-⚠️ **Flaky**: boot chậm do Mouse handshake (§6.10, §13.3) — `smoke_test` chạy lại nếu fail ở bước boot. Kernel hiện tại tự
-hồi phục sau ~53 s (deadline 45 s + respawn); nếu một boot treo **mãi** (không có dòng `[TIMER] mouse deadline hit`) thì đó là
-hồi quy thật (xem §15 — lỗi LVT timer one-shot trông y hệt "flake").
+⚠️ **Flaky**: boot chậm do Mouse handshake (§6.10, §13.3) — `smoke_test` chạy lại nếu fail ở bước boot. Boot bình thường ~8 s; nếu một boot mất ~53 s thì cơ chế respawn mouse đã chạy (không còn là chuyện bình thường); nếu một boot treo **mãi** (không có dòng `[TIMER] mouse deadline hit`) thì đó là
+hồi quy thật (xem §15 — lỗi LVT timer one-shot và lỗi idle-loop nuốt IPC đều trông y hệt "flake").
 
 ---
 
@@ -601,8 +600,7 @@ hồi quy thật (xem §15 — lỗi LVT timer one-shot trông y hệt "flake").
 2. ✅ ~~Bỏ bflat, link thuần lld~~
 3. **Tách phụ thuộc x86_64 khỏi kernel generic** để có thể thêm ARM64 (§7): `scheduler.pas`/`syscall_impl.pas`/
    `interrupt_handlers.pas`/`kernel_main.pas` đang `uses apic, gdt, vmm` trực tiếp. Đưa qua `hal/*`.
-4. **Mouse handshake mất ~30–50% boot** — nguyên nhân gốc vẫn chưa biết (§13.3). Đã loại trừ lỗi dịch C# → Pascal vì
-   lỗi vẫn còn sau khi toàn bộ kernel là Pascal.
+4. ✅ ~~Mouse handshake mất ~30–50% boot~~ — **đã tìm ra và sửa** (§15.0). Boot giờ ổn định ~8 s.
 5. **Dọn các điểm lệch đã ghi nhận** (§15.3): `MsToTicks_Pas` giả định 100 Hz (PIT chạy 250 Hz), builtin `uptime` in tick thô,
    `Con_Print` có khoá còn `Terminal_Print_Pas` không (in chồng lên nhau giữa các lõi).
 6. Mở rộng test: `logout`, `chmod/chown` qua sudo, ghi tệp lớn, nhiều tiến trình đồng thời.
@@ -854,7 +852,7 @@ của tôi, không phải của test.
 **Quy tắc:** trước khi tin một phép đo, kiểm tra phép đo đó có thực sự chạy
 không. `[FATAL] ... not found` là bằng chứng phản bác, không phải nhiễu.
 
-### 13.3 Mouse handshake timeout — ĐÃ ĐO, CHƯA SỬA
+### 13.3 Mouse handshake timeout — ĐÃ SỬA (xem §15.0; nội dung dưới là lịch sử điều tra)
 
 **Sự thật đã xác lập (đo, không suy đoán):**
 - `App_SendIPC(0, 44, 0)` là **hành động đầu tiên** trong `AppMain`, trước cả
@@ -961,6 +959,20 @@ Kèm **10/10 smoke pass**. Không verify được thì coi như chưa sửa.
 ---
 
 ## 15. Bài học từ lần port cuối (2026-10-26)
+
+### 15.0 ✅ Nguyên nhân gốc của "Mouse handshake flake" (tồn tại hàng tuần)
+
+`KernelIdleLoop` là thân của **mọi** idle task, kể cả idle thread của core 1. Nó rút hộp thư của thread 0 (receiver 0)
+để ghi nhận handshake ATA/FAT16 — nhưng chạy trên core 1 thì nó cũng rút và **vứt** thông điệp type 44 (Mouse) rồi
+thread 0 chờ hết deadline cho một daemon thật ra đã báo sẵn sàng. Race giữa hai core nên ~30–50% boot dính.
+Mọi phép thử chèn code vào vòng chờ "làm lỗi biến mất" vì chúng đổi timing của race giữa hai core đó.
+
+Sửa (`kernel_main.pas`): chỉ **thread 0** được rút hộp thư đó, chỉ **khi daemon chưa lên đủ** (sau đó receiver 0 còn
+nhận scancode bàn phím — rút nữa là nuốt phím), và xử lý đủ cả ba loại thông điệp. Kết quả: 14/14 boot ≈ 8 s.
+Hệ quả phụ: khi boot nhanh, test phải đợi ~4 s sau prompt vì daemon chuột còn đang khởi tạo 8042.
+
+Bài học: **dữ liệu dùng chung giữa các lõi mà ai cũng "tiện tay" rút ra là lỗi thiết kế**, không phải lỗi timing —
+một người nhận một hộp thư.
 
 ### 15.1 Mọi unit "đã port, chưa nối" đều có lỗi khi nối thật
 
