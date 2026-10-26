@@ -6,6 +6,11 @@ set -e
 # Đảm bảo thư mục build tồn tại
 mkdir -p build
 
+# -Ur marks units as release units, which FPC never recompiles on its own. A stale
+# .ppu would silently hide an interface change ("Identifier not found" on a
+# symbol that plainly exists), so always start from a clean slate.
+rm -f build/*.ppu
+
 # ==========================================================================
 # [DANH SÁCH MODULE] Thêm module Pascal mới vào đây khi port thêm.
 # ==========================================================================

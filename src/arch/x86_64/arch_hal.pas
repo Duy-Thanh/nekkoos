@@ -50,6 +50,19 @@ function Hal_CurrentCoreId: Cardinal;
 { Handle of the kernel's own address space; every user space is a copy of it. }
 function Hal_KernelAddressSpace: QWord;
 
+{ Create a new user address space that already contains the kernel's own
+  mappings (so syscalls and interrupts still work inside it). Returns 0 when
+  out of memory. }
+function Hal_CreateUserAddressSpace: QWord;
+
+{ Release only the root structure of an address space nothing was mapped into
+  yet (or whose pages the caller frees itself). For a load that failed half-way. }
+procedure Hal_DiscardAddressSpaceRoot(space: QWord);
+
+{ Physical address of the page of user-mode API stubs (the vDSO). Each process
+  gets a private copy of it mapped at a randomised address. }
+function Hal_UserApiPage: QWord;
+
 { Can this be a valid virtual address on this architecture? }
 function Hal_IsCanonical(addr: QWord): Boolean;
 
@@ -72,7 +85,7 @@ procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 
 implementation
 
-uses apic, gdt, vmm;
+uses apic, gdt, vmm, vdso, pmm, libc;
 
 function Hal_MultiCoreActive: Boolean;
 begin
@@ -103,6 +116,32 @@ end;
 procedure Hal_DestroyAddressSpace(space: QWord);
 begin
   Vmm_DestroyUserSpace(space);
+end;
+
+function Hal_CreateUserAddressSpace: QWord;
+var
+  root: Pointer;
+begin
+  root := Pmm_AllocatePage;
+  if root = nil then
+  begin
+    Hal_CreateUserAddressSpace := 0;
+    Exit;
+  end;
+  { The kernel PML4 is copied wholesale: every user space shares the kernel's
+    top-level entries. Page 0 stays unmapped as the NULL-dereference trap. }
+  MemCopy(root, Vmm_GetPml4, 4096);
+  Hal_CreateUserAddressSpace := QWord(root);
+end;
+
+procedure Hal_DiscardAddressSpaceRoot(space: QWord);
+begin
+  Pmm_FreePage(Pointer(space));
+end;
+
+function Hal_UserApiPage: QWord;
+begin
+  Hal_UserApiPage := Vdso_GetPhysPage;
 end;
 
 function Hal_BootKernelStackTop: QWord;

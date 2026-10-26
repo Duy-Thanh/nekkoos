@@ -51,7 +51,7 @@ function PELoader_LoadAndRun(rawFile: PByte; runInBackground, isJailed, forceRoo
 
 implementation
 
-uses fpc_runtime, libc, kstring, console, pmm, vmm, heap, vdso, prng, scheduler;
+uses fpc_runtime, libc, kstring, console, pmm, heap, arch_hal, prng, scheduler;
 
 { ========================================================================
   [VALIDATE] — validates PE header and extracts key fields
@@ -368,13 +368,13 @@ begin
 end;
 
 { Give back every page of a half-built image and its PML4, plus the raw file. }
-procedure Abort(physBase, pages: QWord; appPml4: Pointer; rawFile: PByte);
+procedure Abort(physBase, pages: QWord; appPml4: QWord; rawFile: PByte);
 var
   i: QWord;
 begin
   if pages > 0 then
     for i := 0 to pages - 1 do Pmm_FreePage(Pointer(physBase + i * 4096));
-  Pmm_FreePage(appPml4);
+  Hal_DiscardAddressSpaceRoot(appPml4);
   Heap_Free(rawFile);
 end;
 
@@ -385,7 +385,7 @@ var
   numSections, optHeaderSize: Word;
   e_lfanew: Integer;
   ntHeader: PByte;
-  appPml4: Pointer;
+  appPml4: QWord;
   pages, physBase, originalImageBase, vdsoVirt, localVdso, sizeToScan, virtualEntry: QWord;
   delta: Int64;
   appBasePhys: PByte;
@@ -409,23 +409,21 @@ begin
   e_lfanew := PInteger(rawFile + $3C)^;
   ntHeader := rawFile + e_lfanew;
 
-  { The app starts from a copy of the kernel's PML4, so the kernel stays
-    mapped for syscalls. Page 0 is deliberately left unmapped: it is the trap
-    for NULL dereferences. }
-  appPml4 := Pmm_AllocatePage;
-  if appPml4 = nil then
+  { The app starts in a copy of the kernel's address space so the kernel stays
+    mapped for syscalls; page 0 is left unmapped as the NULL trap. }
+  appPml4 := Hal_CreateUserAddressSpace;
+  if appPml4 = 0 then
   begin
     PeFail('[!] PELoader OOM: Cannot allocate PML4 Table!'#13#10);
     Heap_Free(rawFile);
     Exit;
   end;
-  MemCopy(appPml4, Vmm_GetPml4, 4096);
 
   pages := (QWord(sizeOfImage) + 4095) div 4096;
   if pages > MAX_PE_PAGES then
   begin
     PeFail('[!] PELoader BLOCKED: PE SizeOfImage exceeds 512MB security limit!'#13#10);
-    Pmm_FreePage(appPml4);
+    Hal_DiscardAddressSpaceRoot(appPml4);
     Heap_Free(rawFile);
     Exit;
   end;
@@ -434,7 +432,7 @@ begin
   if physBase = 0 then
   begin
     PeFail('[!] PELoader OOM: Cannot allocate Physical Memory for App!'#13#10);
-    Pmm_FreePage(appPml4);
+    Hal_DiscardAddressSpaceRoot(appPml4);
     Heap_Free(rawFile);
     Exit;
   end;
@@ -475,8 +473,8 @@ begin
   vdsoVirt := kaslrBase shl 32;
 
   localVdso := QWord(Pmm_AllocatePage);
-  MemCopy(Pointer(localVdso), Pointer(Vdso_GetPhysPage), 4096);
-  Vmm_MapPageIn(localVdso, vdsoVirt, $07, appPml4);
+  MemCopy(Pointer(localVdso), Pointer(Hal_UserApiPage), 4096);
+  Hal_MapPageIn(localVdso, vdsoVirt, HAL_MAP_USER_RW, appPml4);
 
   { Patch the app's KASLR magic with the real vDSO address. The scan is
     byte-by-byte because the compiler's padding and alignment are unknown. }
@@ -489,7 +487,7 @@ begin
   end;
 
   for i := 0 to pages - 1 do
-    Vmm_MapPageIn(physBase + i * 4096, APP_VIRTUAL_BASE + i * 4096, $07, appPml4);
+    Hal_MapPageIn(physBase + i * 4096, APP_VIRTUAL_BASE + i * 4096, HAL_MAP_USER_RW, appPml4);
 
   addressOfEntry := 0;
   exportRVA := PCardinal(ntHeader + 136)^;
@@ -536,7 +534,7 @@ begin
     Exit;
   end;
 
-  tid := Sched_CreateUserTask(virtualEntry, QWord(appPml4), not runInBackground,
+  tid := Sched_CreateUserTask(virtualEntry, appPml4, not runInBackground,
     isJailed, forceRoot, processName, Cardinal(pages), priority);
 
   Con_Print(W('[+] Process Started!'#13#10));
