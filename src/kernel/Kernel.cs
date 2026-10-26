@@ -205,7 +205,6 @@ public static unsafe class Program
 
         Mem.ResetLock();
         Heap.HeapLock = new Spinlock();
-        IOAPIC.IoApicLock = new Spinlock();
         SMP.SmpLock = new Spinlock();
         InterruptHandlers.PanicLock = new Spinlock();
         Scheduler.SchedLock = new Spinlock(); 

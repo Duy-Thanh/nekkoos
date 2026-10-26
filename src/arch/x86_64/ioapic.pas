@@ -269,4 +269,15 @@ begin
   end;
 end;
 
+{ ── cdecl exports for IOAPIC.cs ── }
+procedure Ioapic_Init_Pas; cdecl; public name 'Ioapic_Init_Pas';
+begin
+  Ioapic_Init;
+end;
+
+procedure Ioapic_MaskAll_Pas; cdecl; public name 'Ioapic_MaskAll_Pas';
+begin
+  Ioapic_MaskAll;
+end;
+
 end.
