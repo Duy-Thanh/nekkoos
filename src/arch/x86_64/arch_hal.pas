@@ -45,6 +45,11 @@ function Hal_MultiCoreActive: Boolean;
   Hal_MultiCoreActive). Not range-checked: callers bound it themselves. }
 function Hal_CurrentCoreId: Cardinal;
 
+{ Stop every CPU except the caller, for good. Used on the way to power-off or
+  reset and in panics, so nothing keeps running over the final output or a
+  half-finished disk transfer. Does nothing before Hal_MultiCoreActive. }
+procedure Hal_FreezeOtherCores;
+
 { ── Address spaces ────────────────────────────────────────────────────────── }
 
 { Handle of the kernel's own address space; every user space is a copy of it. }
@@ -90,6 +95,14 @@ uses apic, gdt, vmm, vdso, pmm, libc;
 function Hal_MultiCoreActive: Boolean;
 begin
   Hal_MultiCoreActive := Apic_IsAwake;
+end;
+
+procedure Hal_FreezeOtherCores;
+begin
+  if not Apic_IsAwake then Exit;
+  { INIT IPI to all-excluding-self (not NMI: there is no IDT vector 2). The
+    other cores drop into wait-for-SIPI and never come back. }
+  Apic_Write($300, $000C4500);
 end;
 
 function Hal_CurrentCoreId: Cardinal;

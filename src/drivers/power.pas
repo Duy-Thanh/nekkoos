@@ -43,7 +43,7 @@ procedure Power_LegacyReboot;
 
 implementation
 
-uses arch_interface, io, kstring, terminal, scheduler, ipc_kernel, ata_kernel, apic;
+uses arch_interface, io, kstring, terminal, scheduler, ipc_kernel, ata_kernel, arch_hal;
 
 procedure HAL_Reboot; cdecl; external name 'HAL_Reboot';
 procedure HAL_Shutdown; cdecl; external name 'HAL_Shutdown';
@@ -55,10 +55,7 @@ const
 
 procedure BroadcastApocalypse;
 begin
-  if not Apic_IsAwake then Exit;
-  { INIT IPI (not NMI: there is no IDT vector 2) puts every other core into
-    wait-for-SIPI. }
-  Apic_Write($300, $000C4500);
+  Hal_FreezeOtherCores;
 end;
 
 { Give a running ATA PIO transfer up to spinLimit halts to finish. }
