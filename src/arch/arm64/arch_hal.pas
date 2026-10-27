@@ -180,21 +180,22 @@ begin
   Arch_WriteMmio32(UART_BASE, c);
 end;
 
-procedure UartPuts(const s: ShortString);
-var
-  i: Integer;
+procedure UartPuts(s: PChar);
 begin
-  for i := 1 to Length(s) do
+  while s^ <> #0 do
   begin
-    if s[i] = #10 then UartPutc(13);
-    UartPutc(Ord(s[i]));
+    if s^ = #10 then UartPutc(13);
+    UartPutc(Ord(s^));
+    Inc(s);
   end;
 end;
 
 { A contract function this port has not written yet. Never returns. }
-procedure Unimplemented(const what: ShortString);
+procedure Unimplemented(what: PChar);
 begin
-  UartPuts('arm64 arch_hal: UNIMPLEMENTED ' + what + #10);
+  UartPuts('arm64 arch_hal: UNIMPLEMENTED ');
+  UartPuts(what);
+  UartPuts(#10);
   while True do Arch_Halt;
 end;
 
