@@ -34,7 +34,7 @@ interface
 implementation
 
 uses arch_interface, console, kstring, libc, pmm, scheduler, ipc, ipc_kernel,
-  ata_kernel, fat16_kernel, kstate, rtc, syscall_security, syscall_impl, syscall_core, arch_hal,
+  ata_kernel, fat16_kernel, kstate, syscall_security, syscall_impl, syscall_core, arch_hal,
   internal_shell, sudo_dispatch;
 
 const
@@ -400,7 +400,7 @@ begin
     94: Sudo_Handle(id, ctx);
 
     { 96: RTC seconds }
-    96: Ctx_SetRet(ctx, RTC_GetSeconds);
+    96: Ctx_SetRet(ctx, Hal_WallClockSeconds);
 
     { 97: sleep }
     97:

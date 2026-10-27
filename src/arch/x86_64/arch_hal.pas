@@ -89,6 +89,11 @@ function Hal_Ticks: QWord;
 function Hal_TickFrequency: Cardinal;
 function Hal_MsToTicks(ms: QWord): QWord;
 
+{ Seconds since midnight of the battery-backed clock, and a human-readable
+  print of the current date and time to the console. }
+function Hal_WallClockSeconds: QWord;
+procedure Hal_PrintWallClock;
+
 { ── Cores ─────────────────────────────────────────────────────────────────── }
 
 { True once more than the boot CPU's interrupt controller is live, i.e. once
@@ -155,7 +160,7 @@ procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 implementation
 
 uses arch_interface, apic, gdt, idt, vmm, vdso, pic, pit, pci, ioapic, smp,
-  platform_bootstrap, hardware_checks, pmm, libc;
+  platform_bootstrap, hardware_checks, pmm, libc, rtc;
 
 const
   { RegisterContext slots (u64 each) counted from the saved RSP. }
@@ -196,6 +201,16 @@ begin
 end;
 
 function HAL_GetTickCount: QWord; cdecl; external name 'HAL_GetTickCount';
+
+function Hal_WallClockSeconds: QWord;
+begin
+  Hal_WallClockSeconds := RTC_GetSeconds;
+end;
+
+procedure Hal_PrintWallClock;
+begin
+  RTC_PrintCurrentTime;
+end;
 
 function Hal_MultiCoreActive: Boolean;
 begin

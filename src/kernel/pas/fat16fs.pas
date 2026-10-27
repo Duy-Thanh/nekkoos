@@ -55,7 +55,6 @@ unit fat16fs;
 {$TYPEINFO OFF}
 {$M-}
 {$PACKRECORDS 1}
-{$ASMMODE Intel}
 
 interface
 
@@ -2367,6 +2366,8 @@ end;
 { Jumps straight into a freshly loaded image. Win64 cdecl, so no shadow
   space is reserved, matching the C# delegate* unmanaged<void>. }
 procedure Fat16fs_Run(filename: PWord); cdecl;
+type
+  TEntryProc = procedure; cdecl;
 var
   fileSize: Cardinal;
   codeSegment: PByte;
@@ -2380,10 +2381,7 @@ begin
   AtaHw_PrintHex(QWord(codeSegment));
   Fat16fs_Print(W(#13#10'[*] Executing...'#13#10));
 
-  asm
-    mov rax, codeSegment
-    call rax
-  end;
+  TEntryProc(codeSegment)();
 
   Fat16fs_SetColor($0000FF00);
   Fat16fs_Print(W('[+] App exited gracefully. Freeing memory...'#13#10));

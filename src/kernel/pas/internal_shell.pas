@@ -42,7 +42,7 @@ function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolea
 implementation
 
 uses arch_interface, console, kstring, heap, pmm, scheduler, syscall_security,
-  syscall_impl, syscall_core, arch_hal, fat16_kernel, pe_loader, power, pci, rtc, pit, terminal;
+  syscall_impl, syscall_core, arch_hal, fat16_kernel, pe_loader, power, pci, terminal;
 
 { TShellAction lives here, not in the interface: an enum reachable from the
   interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
@@ -419,7 +419,7 @@ begin
     SA_UPTIME:
       begin
         { currentTicks counts timer ticks, not milliseconds. }
-        ms := currentTicks * 1000 div Pit_GetFrequency;
+        ms := currentTicks * 1000 div Hal_TickFrequency;
         totalSeconds := ms div 1000;
         ms := ms mod 1000;
         Say('System Uptime: ');
@@ -431,7 +431,7 @@ begin
     SA_PCI:
       Pci_ScanBus;
     SA_DATE:
-      RTC_PrintCurrentTime;
+      Hal_PrintWallClock;
     SA_POWEROFF:
       if isKing then Power_Shutdown
       else SayRed('[!] Permission Denied: Only Root can shutdown the system!'#13#10);
