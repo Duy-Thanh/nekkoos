@@ -103,9 +103,6 @@ Arch_Unsupported:
         .global Arch_EnableNX
 Arch_EnableNX:
         b       Arch_Unsupported
-        .global Arch_ForceYield
-Arch_ForceYield:
-        b       Arch_Unsupported
         .global Arch_GetCS
 Arch_GetCS:
         b       Arch_Unsupported
@@ -154,9 +151,6 @@ Arch_LoadIDT:
         .global Arch_LoadTSS
 Arch_LoadTSS:
         b       Arch_Unsupported
-        .global Arch_LockScheduler
-Arch_LockScheduler:
-        b       Arch_Unsupported
         .global Arch_ReadPort16
 Arch_ReadPort16:
         b       Arch_Unsupported
@@ -165,15 +159,6 @@ Arch_ReadPort32:
         b       Arch_Unsupported
         .global Arch_ReadPort8
 Arch_ReadPort8:
-        b       Arch_Unsupported
-        .global Arch_RestoreFPU
-Arch_RestoreFPU:
-        b       Arch_Unsupported
-        .global Arch_SaveFPU
-Arch_SaveFPU:
-        b       Arch_Unsupported
-        .global Arch_UnlockScheduler
-Arch_UnlockScheduler:
         b       Arch_Unsupported
         .global Arch_WritePort16
 Arch_WritePort16:
@@ -206,8 +191,10 @@ FPC_DIVBYZERO:
 // IRQ (offset 0x280) is a normal event; everything else is a fatal fault that
 // reports ESR/ELR/FAR to Arm64Fault (Pascal) and never returns.
 // ---------------------------------------------------------------------------
-        .macro SAVE_CALLER
-        sub     sp, sp, #(31*8 + 8 + 24*16)
+        // Full trap frame, 288 bytes: x0..x30 at 0..240, SP_EL0 at 248, ELR at 256,
+        // SPSR at 264. A context switch is "resume on another thread's frame".
+        .macro SAVE_FRAME
+        sub     sp, sp, #288
         stp     x0,  x1,  [sp, #0]
         stp     x2,  x3,  [sp, #16]
         stp     x4,  x5,  [sp, #32]
@@ -217,36 +204,27 @@ FPC_DIVBYZERO:
         stp     x12, x13, [sp, #96]
         stp     x14, x15, [sp, #112]
         stp     x16, x17, [sp, #128]
-        stp     x18, x29, [sp, #144]
-        str     x30,      [sp, #160]
-        add     x9, sp, #(31*8 + 8)
-        stp     q0,  q1,  [x9, #0]
-        stp     q2,  q3,  [x9, #32]
-        stp     q4,  q5,  [x9, #64]
-        stp     q6,  q7,  [x9, #96]
-        stp     q16, q17, [x9, #128]
-        stp     q18, q19, [x9, #160]
-        stp     q20, q21, [x9, #192]
-        stp     q22, q23, [x9, #224]
-        stp     q24, q25, [x9, #256]
-        stp     q26, q27, [x9, #288]
-        stp     q28, q29, [x9, #320]
-        stp     q30, q31, [x9, #352]
+        stp     x18, x19, [sp, #144]
+        stp     x20, x21, [sp, #160]
+        stp     x22, x23, [sp, #176]
+        stp     x24, x25, [sp, #192]
+        stp     x26, x27, [sp, #208]
+        stp     x28, x29, [sp, #224]
+        str     x30,      [sp, #240]
+        mrs     x1, sp_el0
+        mrs     x2, elr_el1
+        mrs     x3, spsr_el1
+        str     x1, [sp, #248]
+        stp     x2, x3, [sp, #256]
         .endm
-        .macro RESTORE_CALLER
-        add     x9, sp, #(31*8 + 8)
-        ldp     q0,  q1,  [x9, #0]
-        ldp     q2,  q3,  [x9, #32]
-        ldp     q4,  q5,  [x9, #64]
-        ldp     q6,  q7,  [x9, #96]
-        ldp     q16, q17, [x9, #128]
-        ldp     q18, q19, [x9, #160]
-        ldp     q20, q21, [x9, #192]
-        ldp     q22, q23, [x9, #224]
-        ldp     q24, q25, [x9, #256]
-        ldp     q26, q27, [x9, #288]
-        ldp     q28, q29, [x9, #320]
-        ldp     q30, q31, [x9, #352]
+        // x0 = frame to resume.
+        .macro RESUME_FRAME
+        mov     sp, x0
+        ldr     x1, [sp, #248]
+        ldp     x2, x3, [sp, #256]
+        msr     sp_el0, x1
+        msr     elr_el1, x2
+        msr     spsr_el1, x3
         ldp     x0,  x1,  [sp, #0]
         ldp     x2,  x3,  [sp, #16]
         ldp     x4,  x5,  [sp, #32]
@@ -256,9 +234,15 @@ FPC_DIVBYZERO:
         ldp     x12, x13, [sp, #96]
         ldp     x14, x15, [sp, #112]
         ldp     x16, x17, [sp, #128]
-        ldp     x18, x29, [sp, #144]
-        ldr     x30,      [sp, #160]
-        add     sp, sp, #(31*8 + 8 + 24*16)
+        ldp     x18, x19, [sp, #144]
+        ldp     x20, x21, [sp, #160]
+        ldp     x22, x23, [sp, #176]
+        ldp     x24, x25, [sp, #192]
+        ldp     x26, x27, [sp, #208]
+        ldp     x28, x29, [sp, #224]
+        ldr     x30,      [sp, #240]
+        add     sp, sp, #288
+        eret
         .endm
 
         .macro FAULT_ENTRY
@@ -275,13 +259,10 @@ vector_table:
         .balign 128
         FAULT_ENTRY
         .endr
-        .balign 128                     // current EL, SPx: synchronous
-        FAULT_ENTRY
+        .balign 128                     // current EL, SPx: synchronous (svc = yield)
+        b       sync_handler
         .balign 128                     // IRQ
-        SAVE_CALLER
-        bl      Arm64Irq
-        RESTORE_CALLER
-        eret
+        b       irq_handler
         .balign 128                     // FIQ
         FAULT_ENTRY
         .balign 128                     // SError
@@ -290,6 +271,19 @@ vector_table:
         .balign 128
         FAULT_ENTRY
         .endr
+
+// Handlers live outside the 128-byte vector slots: a slot is too small for a
+// full frame save + restore, and overflowing it silently corrupts the next one.
+sync_handler:
+        SAVE_FRAME
+        mov     x0, sp
+        bl      Arm64Sync
+        RESUME_FRAME
+irq_handler:
+        SAVE_FRAME
+        mov     x0, sp
+        bl      Arm64Irq
+        RESUME_FRAME
 
         .global Arch_InstallVectors
 Arch_InstallVectors:
@@ -359,4 +353,89 @@ Arch_FlushTLB:
         tlbi    vmalle1is
         dsb     ish
         isb
+        ret
+
+// Voluntary yield: a supervisor call into the synchronous vector, which the
+// scheduler answers by resuming another thread.
+        .global Arch_ForceYield
+Arch_ForceYield:
+        svc     #0
+        ret
+
+// Scheduler lock: one global word shared by all cores.
+        .global Arch_LockScheduler
+Arch_LockScheduler:
+        adr     x0, sched_lock
+        mov     w2, #1
+1:      ldaxr   w1, [x0]
+        cbnz    w1, 1b
+        stxr    w3, w2, [x0]
+        cbnz    w3, 1b
+        ret
+        .global Arch_UnlockScheduler
+Arch_UnlockScheduler:
+        adr     x0, sched_lock
+        stlr    wzr, [x0]
+        ret
+
+// FPU/SIMD state: v0..v31 (512 bytes). FPCR/FPSR keep their boot values.
+        .global Arch_SaveFPU
+Arch_SaveFPU:
+        stp     q0,  q1,  [x0, #0]
+        stp     q2,  q3,  [x0, #32]
+        stp     q4,  q5,  [x0, #64]
+        stp     q6,  q7,  [x0, #96]
+        stp     q8,  q9,  [x0, #128]
+        stp     q10, q11, [x0, #160]
+        stp     q12, q13, [x0, #192]
+        stp     q14, q15, [x0, #224]
+        stp     q16, q17, [x0, #256]
+        stp     q18, q19, [x0, #288]
+        stp     q20, q21, [x0, #320]
+        stp     q22, q23, [x0, #352]
+        stp     q24, q25, [x0, #384]
+        stp     q26, q27, [x0, #416]
+        stp     q28, q29, [x0, #448]
+        stp     q30, q31, [x0, #480]
+        ret
+        .global Arch_RestoreFPU
+Arch_RestoreFPU:
+        ldp     q0,  q1,  [x0, #0]
+        ldp     q2,  q3,  [x0, #32]
+        ldp     q4,  q5,  [x0, #64]
+        ldp     q6,  q7,  [x0, #96]
+        ldp     q8,  q9,  [x0, #128]
+        ldp     q10, q11, [x0, #160]
+        ldp     q12, q13, [x0, #192]
+        ldp     q14, q15, [x0, #224]
+        ldp     q16, q17, [x0, #256]
+        ldp     q18, q19, [x0, #288]
+        ldp     q20, q21, [x0, #320]
+        ldp     q22, q23, [x0, #352]
+        ldp     q24, q25, [x0, #384]
+        ldp     q26, q27, [x0, #416]
+        ldp     q28, q29, [x0, #448]
+        ldp     q30, q31, [x0, #480]
+        ret
+
+        .data
+        .balign 4
+sched_lock:
+        .word 0
+        .text
+
+        .global Arch_ReadEsr
+Arch_ReadEsr:
+        mrs     x0, esr_el1
+        ret
+        .global Arch_ReadFar
+Arch_ReadFar:
+        mrs     x0, far_el1
+        ret
+
+// No hardware RNG on the QEMU cortex-a72 model: report 0 bytes produced so the
+// PRNG seeds from the counter instead.
+        .global HAL_GetHardwareRandom
+HAL_GetHardwareRandom:
+        mov     x0, #0
         ret

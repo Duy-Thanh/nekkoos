@@ -33,11 +33,11 @@ implementation
 function Spinlock_AcquireSafe_Pas(lockVar: PCardinal): Byte; cdecl;
   public name 'Spinlock_AcquireSafe_Pas';
 var
-  flags: QWord;
   intsEnabled: Byte;
 begin
-  flags := Arch_GetFlags();
-  if (flags and $200) <> 0 then intsEnabled := 1 else intsEnabled := 0;
+  { Arch_InterruptsEnabled, not a test of RFLAGS bit 9: that bit is not the
+    interrupt flag on other architectures (ARM64: bit 9 is the debug mask). }
+  if Arch_InterruptsEnabled() <> 0 then intsEnabled := 1 else intsEnabled := 0;
   Arch_DisableInterrupts();
   Arch_SpinlockAcquire(lockVar);
   Arch_CompilerFence();

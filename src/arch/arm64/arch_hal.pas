@@ -147,6 +147,23 @@ procedure Hal_ActivateAddressSpace(space: QWord);
   root itself. The kernel space must never be passed. }
 procedure Hal_DestroyAddressSpace(space: QWord);
 
+{ ── Thread start frames ───────────────────────────────────────────────────── }
+{ A new thread starts by being "returned into": the scheduler switches to the
+  stack pointer these functions return, and the architecture's exception-return
+  path pops the frame and jumps to `entry`. `kernelStackTop` is the (aligned)
+  top of the thread's kernel stack. The frame is written just below it. }
+
+{ A thread that runs in kernel mode with interrupts enabled. }
+function Hal_BuildKernelFrame(kernelStackTop, entry: QWord): QWord;
+
+{ A thread that starts in user mode at `entry` with `userStackTop`. `privileged`
+  grants direct hardware I/O (x86: IOPL 3), for root daemons. }
+function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
+  privileged: Boolean): QWord;
+
+{ Are device interrupts currently enabled on this CPU? }
+function Hal_InterruptsEnabled: Boolean;
+
 { ── Kernel stacks ─────────────────────────────────────────────────────────── }
 
 { Top of the stack the boot CPU enters the kernel on from user mode. }
@@ -158,6 +175,15 @@ procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 
 { ARM64-only, for bring-up tests: timer interrupts taken so far. }
 function Arm64_TimerInterrupts: QWord;
+
+{ Interrupt controller steps for the trap handlers (traps_arm64.pas):
+  acknowledge returns the raw IAR (interrupt id in the low 10 bits), end signals
+  completion, timer tick counts and re-arms the scheduler timer. }
+const
+  ARM64_TIMER_INTID = 30;
+function Arm64_IrqAcknowledge: Cardinal;
+procedure Arm64_IrqEnd(iar: Cardinal);
+procedure Arm64_TimerTick;
 
 implementation
 
@@ -207,6 +233,7 @@ const
   GIB = QWord($40000000);
 
 var
+  BootStackTop: Byte; external name '__stack_top';
   KernelRoot: QWord;
   BootCounter: QWord;
   TimerInterval: QWord;
@@ -325,19 +352,20 @@ begin
   Arm64_TimerInterrupts := IrqTicks;
 end;
 
-{ Called from the IRQ vector (hardware_arm64.S) with interrupts masked. }
-procedure Arm64Irq; cdecl; public name 'Arm64Irq';
-var
-  iar, id: Cardinal;
+function Arm64_IrqAcknowledge: Cardinal;
 begin
-  iar := Arch_ReadMmio32(GICC_BASE + GICC_IAR);
-  id := iar and $3FF;
-  if id = TIMER_INTID then
-  begin
-    Inc(IrqTicks);
-    Arch_TimerRearm(TimerInterval);
-  end;
-  if id < 1020 then Arch_WriteMmio32(GICC_BASE + GICC_EOIR, iar);
+  Arm64_IrqAcknowledge := Arch_ReadMmio32(GICC_BASE + GICC_IAR);
+end;
+
+procedure Arm64_IrqEnd(iar: Cardinal);
+begin
+  if (iar and $3FF) < 1020 then Arch_WriteMmio32(GICC_BASE + GICC_EOIR, iar);
+end;
+
+procedure Arm64_TimerTick;
+begin
+  Inc(IrqTicks);
+  Arch_TimerRearm(TimerInterval);
 end;
 
 procedure PutHex(v: QWord);
@@ -594,15 +622,56 @@ end;
 
 { ── Kernel stacks ────────────────────────────────────────────────────────── }
 
+function Hal_InterruptsEnabled: Boolean;
+begin
+  Hal_InterruptsEnabled := Arch_InterruptsEnabled <> 0;
+end;
+
+{ Trap frame layout, see SAVE_FRAME in hardware_arm64.S: x0..x30, SP_EL0, ELR,
+  SPSR (QWord indexes 0..33, 36 reserved so the frame is 288 bytes). }
+const
+  FRAME_QWORDS = 36;
+  FRAME_SP_EL0 = 31;
+  FRAME_ELR    = 32;
+  FRAME_SPSR   = 33;
+  SPSR_EL1H    = QWord($5);     { EL1 using SP_EL1, DAIF clear: IRQs on }
+  SPSR_EL0T    = QWord($0);     { EL0, IRQs on }
+
+function BuildFrame(kernelStackTop, entry, userSp, spsr: QWord): QWord;
+var
+  f: PQWord;
+  i: Integer;
+begin
+  f := PQWord(kernelStackTop - FRAME_QWORDS * 8);
+  for i := 0 to FRAME_QWORDS - 1 do f[i] := 0;
+  f[FRAME_SP_EL0] := userSp;
+  f[FRAME_ELR]    := entry;
+  f[FRAME_SPSR]   := spsr;
+  BuildFrame := QWord(f);
+end;
+
+function Hal_BuildKernelFrame(kernelStackTop, entry: QWord): QWord;
+begin
+  Hal_BuildKernelFrame := BuildFrame(kernelStackTop and not QWord(15), entry, 0, SPSR_EL1H);
+end;
+
+function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
+  privileged: Boolean): QWord;
+begin
+  { `privileged` has no ARM64 meaning: there is no port I/O to grant. }
+  Hal_BuildUserFrame := BuildFrame(kernelStackTop and not QWord(15), entry,
+    userStackTop and not QWord(15), SPSR_EL0T);
+end;
+
 function Hal_BootKernelStackTop: QWord;
 begin
-  Unimplemented('Hal_BootKernelStackTop');
-  Hal_BootKernelStackTop := 0;
+  Hal_BootKernelStackTop := QWord(@BootStackTop);
 end;
 
 procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 begin
-  Unimplemented('Hal_SetKernelStack');
+  { Nothing to do: on ARM64 an exception from EL0 simply continues on SP_EL1,
+    which is wherever the frame pop left it (the thread's kernel stack top). }
 end;
 
 end.

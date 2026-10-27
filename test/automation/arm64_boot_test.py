@@ -9,6 +9,7 @@ EXPECT = [
     "NekkoOS arm64: early init",
     "arm64: 100 ms elapsed on the generic counter, core id 0",
     "arm64: bring-up milestone 1 reached",
+    "arm64: scheduler started",
 ]
 BAD = ["UNIMPLEMENTED", "FATAL"]
 
@@ -30,6 +31,12 @@ n = int(m.group(1)) if m else -1
 hit = 200 <= n <= 260
 ok &= hit
 print(("[PASS] " if hit else "[FAIL] ") + f"timer ticks at ~250 Hz (got {n} in 1 s)")
+m = re.search(r"scheduler started\n([AB]+)", out)
+seq = m.group(1) if m else ""
+switches = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
+hit = switches >= 20
+ok &= hit
+print(("[PASS] " if hit else "[FAIL] ") + "timer interrupt context-switches between two kernel threads (A/B alternate, " + str(switches) + " switches)")
 for b in BAD:
     if b in out:
         ok = False

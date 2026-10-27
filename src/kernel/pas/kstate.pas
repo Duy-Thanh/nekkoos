@@ -85,7 +85,7 @@ uses arch_interface;
   scheduler at all. }
 function Kstate_AcquireSchedLock: Byte;
 begin
-  Kstate_AcquireSchedLock := Ord((Arch_GetFlags and $200) <> 0);
+  Kstate_AcquireSchedLock := Ord(Arch_InterruptsEnabled <> 0);
   Arch_DisableInterrupts;
   Arch_LockScheduler;
 end;

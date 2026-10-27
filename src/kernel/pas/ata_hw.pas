@@ -573,7 +573,7 @@ function AtaHw_AcquireSchedLockSafe: Byte; cdecl;
 begin
   { Scheduler.AcquireSchedLockSafe: save IF, cli, lock. }
   AtaHw_AcquireSchedLockSafe := 0;
-  if (Arch_GetFlags and $200) <> 0 then AtaHw_AcquireSchedLockSafe := 1;
+  if Arch_InterruptsEnabled <> 0 then AtaHw_AcquireSchedLockSafe := 1;
   Arch_DisableInterrupts;
   Arch_LockScheduler;
 end;

@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt;
+uses arch_interface, arch_hal, pmm, fdt, scheduler;
 
 var
   Arm64_DtbPhys: QWord; external name 'Arm64_DtbPhys';
@@ -88,6 +88,34 @@ begin
   Puts(' pages leaked'#10);
 end;
 
+{ Each thread prints its letter once per timer tick it observes; the output
+  alternating AB proves the timer interrupt really switches between them. }
+procedure Spin(letter: Byte);
+var
+  last, now: QWord;
+begin
+  last := Hal_Ticks;
+  while True do
+  begin
+    now := Hal_Ticks;
+    if now <> last then
+    begin
+      Arch_WriteMmio32(QWord($09000000), letter);
+      last := now;
+    end;
+  end;
+end;
+
+procedure ThreadA;
+begin
+  Spin(Ord('A'));
+end;
+
+procedure ThreadB;
+begin
+  Spin(Ord('B'));
+end;
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
@@ -131,6 +159,13 @@ begin
   Puts('arm64: 100 ms elapsed on the generic counter, core id ');
   Arch_WriteMmio32(QWord($09000000), Ord('0') + Hal_CurrentCoreId);
   Puts(#10'arm64: bring-up milestone 1 reached'#10);
+  { From here the boot thread is just thread 0, the idle task. }
+  Arch_DisableInterrupts;
+  Sched_Init;
+  Sched_CreateTask(QWord(@ThreadA));
+  Sched_CreateTask(QWord(@ThreadB));
+  Puts('arm64: scheduler started'#10);
+  Arch_EnableInterrupts;
   while True do Arch_Halt;
 end;
 

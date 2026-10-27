@@ -30,7 +30,11 @@ Also needs `qemu-system-aarch64` (`zypper in qemu-arm`).
 `src/arch/arm64/`: `arch_interface.pas` and `arch_hal.pas` (same interface as
 the x86_64 ones, they shadow them because this directory is searched last),
 `start.S` (entry, stack, bss), `hardware_arm64.S` (Arch_* primitives),
-`link.ld` (load at 0x40080000), `boot_arm64.pas` (first Pascal code).
+`link.ld` (load at 0x40080000), `boot_arm64.pas`, `traps_arm64.pas` (IRQ/svc entry), `fdt.pas`, and ARM64 twins of `serial` (PL011) and `terminal` (UART only, headless).
+
+Interrupt state: generic code must ask `Arch_InterruptsEnabled`, never test RFLAGS bit 9 (on ARM64 that bit of DAIF is the debug mask, so a `flags and $200` test silently reports "interrupts off").
+
+Vector slots are 128 bytes: they only `b` to handlers placed elsewhere (a full frame save+restore overflows a slot and silently corrupts the next vector).
 
 Differences worth knowing: AArch64 integer divide by zero does not trap, so FPC
 emits `FPC_DIVBYZERO` (provided in `hardware_arm64.S`, stops the machine);
@@ -42,6 +46,7 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Exception vectors, GICv2, 250 Hz timer tick interrupt (fatal faults print ESR/ELR/FAR)
 - [x] Device tree (`fdt.pas`) -> RAM size -> generic `pmm`; MMU on (identity map, 1 GiB blocks)
 - [x] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages; user VAs must stay outside the kernel's 1 GiB slots)
-- [ ] Generic kernel (`kernel_main`, scheduler) running on it
+- [x] Generic scheduler running on it: timer IRQ -> `Sched_SwitchTask` -> resume another thread's trap frame (two kernel threads alternate)
+- [ ] Generic `kernel_main` (needs heap, ipc, console init order, daemons) running on it
 - [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)
 - [ ] Secondary cores via PSCI
