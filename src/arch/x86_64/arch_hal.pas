@@ -165,6 +165,24 @@ function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
 { Are device interrupts currently enabled on this CPU? }
 function Hal_InterruptsEnabled: Boolean;
 
+{ Is `virt` mapped in `space` as a page user mode may access? Used to vet
+  pointers handed to the kernel by user programs. }
+function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
+
+{ ── User images ───────────────────────────────────────────────────────────── }
+
+{ ELF e_machine value of this architecture's user programs (x86_64: 62,
+  AArch64: 183). }
+function Hal_ElfMachine: Word;
+
+{ Lowest virtual address user mappings may use; below it the kernel owns the
+  address space. }
+function Hal_UserVaMin: QWord;
+
+{ Make freshly written code at [addr, addr+len) visible to instruction fetch
+  (ARM64 needs data-cache clean + instruction-cache invalidate; x86 is coherent). }
+procedure Hal_SyncCode(addr, len: QWord);
+
 { ── Kernel stacks ─────────────────────────────────────────────────────────── }
 
 { Top of the stack the boot CPU enters the kernel on from user mode. }
@@ -177,7 +195,7 @@ procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 implementation
 
 uses arch_interface, apic, gdt, idt, vmm, vdso, pic, pit, pci, ioapic, smp,
-  platform_bootstrap, hardware_checks, pmm, libc, rtc;
+  platform_bootstrap, hardware_checks, pmm, libc, rtc, syscall_security;
 
 const
   { RegisterContext slots (u64 each) counted from the saved RSP. }
@@ -456,6 +474,26 @@ begin
   Push(p, entry);
   for i := 1 to 15 do Push(p, 0);
   Hal_BuildUserFrame := QWord(p);
+end;
+
+function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
+begin
+  Hal_IsUserPageMapped := IsValidUserPtr_Pas(0, virt, space, Pmm_GetTotalPages) <> 0;
+end;
+
+function Hal_ElfMachine: Word;
+begin
+  Hal_ElfMachine := 62;
+end;
+
+function Hal_UserVaMin: QWord;
+begin
+  Hal_UserVaMin := QWord($0000100000000000);
+end;
+
+procedure Hal_SyncCode(addr, len: QWord);
+begin
+  { x86 keeps instruction and data caches coherent. }
 end;
 
 function Hal_BootKernelStackTop: QWord;

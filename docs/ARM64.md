@@ -32,6 +32,8 @@ the x86_64 ones, they shadow them because this directory is searched last),
 `start.S` (entry, stack, bss), `hardware_arm64.S` (Arch_* primitives),
 `link.ld` (load at 0x40080000), `boot_arm64.pas`, `traps_arm64.pas` (IRQ/svc entry), `fdt.pas`, and ARM64 twins of `serial` (PL011) and `terminal` (UART only, headless).
 
+User programs: `src/user/arm64/*.S`, linked at 4 GiB (`-N -Ttext=0x100000000`) and embedded in the kernel via `user_images.S` until a filesystem exists. Hal_SyncCode cleans the data cache and invalidates the instruction cache after code is copied in.
+
 Interrupt state: generic code must ask `Arch_InterruptsEnabled`, never test RFLAGS bit 9 (on ARM64 that bit of DAIF is the debug mask, so a `flags and $200` test silently reports "interrupts off").
 
 Vector slots are 128 bytes: they only `b` to handlers placed elsewhere (a full frame save+restore overflows a slot and silently corrupts the next vector).
@@ -49,5 +51,6 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Generic scheduler running on it: timer IRQ -> `Sched_SwitchTask` -> resume another thread's trap frame (two kernel threads alternate)
 - [x] Shared boot services via `kernel_core` (heap, IPC, PRNG, strand engine, scheduler, idle loop) used by both x86 `kernel_main` and `boot_arm64`
 - [ ] Daemons / `SpawnDaemon` on ARM64 (they are PE x86 apps loaded from an ATA disk: needs an ELF loader and a virtio-blk driver)
-- [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)
+- [x] EL0 user mode: `svc` syscalls (number in x8, "arg 1" in x1, result in x0; exit/print/uptime/yield), generic `elf_loader`, user-pointer vetting via `Hal_IsUserPageMapped`; a user program that touches kernel memory is reported and terminated, the system keeps running
+- [ ] Full syscall table on ARM64 (needs `syscall_dispatch` split: it still depends on the x86 `syscall_impl`)
 - [ ] Secondary cores via PSCI

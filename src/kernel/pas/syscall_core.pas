@@ -56,8 +56,7 @@ begin
   IsValidUserPtr := False;
   tid := Sched_GetCurrentThreadId;
   if (tid < 0) or (tid >= Sched_GetThreadCount) then Exit;
-  IsValidUserPtr := IsValidUserPtr_Pas(tid, ptr, Sched_GetThreadAddrSpaceRaw(tid),
-    Pmm_GetTotalPages) <> 0;
+  IsValidUserPtr := Hal_IsUserPageMapped(Sched_GetThreadAddrSpaceRaw(tid), ptr);
 end;
 
 { True when `threadId` may draw/clear: the foreground task, or nobody is. }

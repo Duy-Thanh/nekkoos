@@ -19,7 +19,7 @@ cat > "$CFG" <<EOF
 EOF
 
 # Generic kernel units the ARM64 image already uses, then the arch units.
-GENERIC_MODULES=(fpc_runtime spinlock libc kstring pmm kstate prng console ipc ipc_kernel scheduler_dispatch scheduler heap io strandscheduler kernel_core)
+GENERIC_MODULES=(fpc_runtime spinlock libc kstring pmm kstate prng console ipc ipc_kernel scheduler_dispatch scheduler heap io strandscheduler kernel_core elf_loader)
 for m in "${GENERIC_MODULES[@]}"; do
     echo "[arm64] Pascal (generic) $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/kernel/pas/$m.pas" >/dev/null
@@ -29,11 +29,16 @@ for m in "${PAS_MODULES[@]}"; do
     echo "[arm64] Pascal $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/arch/arm64/$m.pas"
 done
-for s in start hardware_arm64; do
+# User programs (ELF, linked at 4 GiB, one RWX segment) are embedded in the kernel.
+for u in hello crash; do
+    clang --target=aarch64-none-elf -c "src/user/arm64/$u.S" -o "$OUT/user_$u.o"
+    ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$u.elf" "$OUT/user_$u.o"
+done
+for s in start hardware_arm64 user_images; do
     echo "[arm64] asm $s"
     clang --target=aarch64-none-elf -c "src/arch/arm64/$s.S" -o "$OUT/$s.o"
 done
-OBJS=("$OUT/start.o" "$OUT/hardware_arm64.o")
+OBJS=("$OUT/start.o" "$OUT/hardware_arm64.o" "$OUT/user_images.o")
 for m in "${PAS_MODULES[@]}" "${GENERIC_MODULES[@]}"; do OBJS+=("$OUT/$m.o"); done
 ld.lld -T src/arch/arm64/link.ld -o "$OUT/kernel.elf" "${OBJS[@]}"
 # QEMU only passes the device-tree pointer (x0) to a raw Image, not to an ELF.

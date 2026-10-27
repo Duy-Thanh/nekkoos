@@ -164,6 +164,24 @@ function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
 { Are device interrupts currently enabled on this CPU? }
 function Hal_InterruptsEnabled: Boolean;
 
+{ Is `virt` mapped in `space` as a page user mode may access? Used to vet
+  pointers handed to the kernel by user programs. }
+function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
+
+{ ── User images ───────────────────────────────────────────────────────────── }
+
+{ ELF e_machine value of this architecture's user programs (x86_64: 62,
+  AArch64: 183). }
+function Hal_ElfMachine: Word;
+
+{ Lowest virtual address user mappings may use; below it the kernel owns the
+  address space. }
+function Hal_UserVaMin: QWord;
+
+{ Make freshly written code at [addr, addr+len) visible to instruction fetch
+  (ARM64 needs data-cache clean + instruction-cache invalidate; x86 is coherent). }
+procedure Hal_SyncCode(addr, len: QWord);
+
 { ── Kernel stacks ─────────────────────────────────────────────────────────── }
 
 { Top of the stack the boot CPU enters the kernel on from user mode. }
@@ -662,6 +680,43 @@ begin
   { `privileged` has no ARM64 meaning: there is no port I/O to grant. }
   Hal_BuildUserFrame := BuildFrame(kernelStackTop and not QWord(15), entry,
     userStackTop and not QWord(15), SPSR_EL0T);
+end;
+
+function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
+var
+  l1, l2, l3: PQWord;
+  e: QWord;
+begin
+  Hal_IsUserPageMapped := False;
+  if (not Hal_AddressSpaceValid(space)) or (virt < Hal_UserVaMin) or
+     (not Hal_IsCanonical(virt)) then Exit;
+  e := PQWord(space)[(virt shr 39) and 511];
+  if (e and 3) <> 3 then Exit;
+  l1 := PQWord(e and ADDR_MASK);
+  e := l1[(virt shr 30) and 511];
+  if (e and 3) <> 3 then Exit;
+  l2 := PQWord(e and ADDR_MASK);
+  e := l2[(virt shr 21) and 511];
+  if (e and 3) <> 3 then Exit;
+  l3 := PQWord(e and ADDR_MASK);
+  e := l3[(virt shr 12) and 511];
+  Hal_IsUserPageMapped := ((e and 3) = 3) and ((e and PTE_AP_EL0) <> 0);
+end;
+
+function Hal_ElfMachine: Word;
+begin
+  Hal_ElfMachine := 183;
+end;
+
+function Hal_UserVaMin: QWord;
+begin
+  { The kernel's identity map owns the low 1 GiB blocks; users start at 4 GiB. }
+  Hal_UserVaMin := QWord($100000000);
+end;
+
+procedure Hal_SyncCode(addr, len: QWord);
+begin
+  Arch_SyncCode(addr, len);
 end;
 
 function Hal_BootKernelStackTop: QWord;

@@ -115,6 +115,7 @@ procedure Arch_InstallVectors; cdecl;               { VBAR_EL1 }
 procedure Arch_TimerProgram(counterTicks: QWord); cdecl; { one-shot CNTP }
 procedure Arch_TimerRearm(counterTicks: QWord); cdecl; { deadline += interval }
 procedure Arch_TimerStop; cdecl;
+procedure Arch_SyncCode(addr, len: QWord); cdecl;   { dc cvau + ic ivau + isb }
 
 implementation
 
@@ -190,6 +191,7 @@ procedure Arch_EnableMmu(root, mair, tcr: QWord); cdecl; external name 'Arch_Ena
 procedure Arch_InstallVectors; cdecl; external name 'Arch_InstallVectors';
 procedure Arch_TimerProgram(counterTicks: QWord); cdecl; external name 'Arch_TimerProgram';
 procedure Arch_TimerRearm(counterTicks: QWord); cdecl; external name 'Arch_TimerRearm';
+procedure Arch_SyncCode(addr, len: QWord); cdecl; external name 'Arch_SyncCode';
 procedure Arch_TimerStop; cdecl; external name 'Arch_TimerStop';
 
 end.

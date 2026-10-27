@@ -23,7 +23,13 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader;
+
+var
+  UserHelloStart: Byte; external name 'user_hello_start';
+  UserHelloEnd: Byte; external name 'user_hello_end';
+  UserCrashStart: Byte; external name 'user_crash_start';
+  UserCrashEnd: Byte; external name 'user_crash_end';
 
 var
   Arm64_DtbPhys: QWord; external name 'Arm64_DtbPhys';
@@ -143,6 +149,10 @@ begin
   if ok then Puts('arm64: ipc send/receive OK'#10) else Puts('arm64: ipc FAILED'#10);
 end;
 
+const
+  HelloName: array[0..5] of Word = (72, 69, 76, 76, 79, 0);          { HELLO }
+  CrashName: array[0..5] of Word = (67, 82, 65, 83, 72, 0);          { CRASH }
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
@@ -194,6 +204,10 @@ begin
   Sched_CreateTask(QWord(@ThreadA));
   Sched_CreateTask(QWord(@ThreadB));
   Puts('arm64: scheduler started'#10);
+  if ElfLoader_Spawn(@UserHelloStart, QWord(@UserHelloEnd) - QWord(@UserHelloStart),
+       PWord(@HelloName[0]), 5) < 0 then Puts('arm64: could not start hello'#10);
+  if ElfLoader_Spawn(@UserCrashStart, QWord(@UserCrashEnd) - QWord(@UserCrashStart),
+       PWord(@CrashName[0]), 5) < 0 then Puts('arm64: could not start crash'#10);
   Arch_EnableInterrupts;
   Kernel_IdleLoop;
 end;

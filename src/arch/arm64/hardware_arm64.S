@@ -267,7 +267,16 @@ vector_table:
         FAULT_ENTRY
         .balign 128                     // SError
         FAULT_ENTRY
-        .rept 8                         // lower EL (user mode: not yet supported)
+        // Lower EL using AArch64: synchronous (svc = syscall, aborts), IRQ, FIQ, SError.
+        .balign 128
+        b       sync_handler
+        .balign 128
+        b       irq_handler
+        .balign 128
+        FAULT_ENTRY
+        .balign 128
+        FAULT_ENTRY
+        .rept 4                         // lower EL using AArch32: unsupported
         .balign 128
         FAULT_ENTRY
         .endr
@@ -438,4 +447,20 @@ Arch_ReadFar:
         .global HAL_GetHardwareRandom
 HAL_GetHardwareRandom:
         mov     x0, #0
+        ret
+
+// Arch_SyncCode(addr, len): make code written through the data cache visible to
+// instruction fetch, one cache line (64 bytes is the safe minimum) at a time.
+        .global Arch_SyncCode
+Arch_SyncCode:
+        add     x1, x0, x1
+        and     x0, x0, #~63
+1:      dc      cvau, x0
+        add     x0, x0, #64
+        cmp     x0, x1
+        b.lo    1b
+        dsb     ish
+        ic      iallu
+        dsb     ish
+        isb
         ret
