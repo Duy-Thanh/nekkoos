@@ -65,7 +65,7 @@ end;
 function ValidUser(id: Integer; ptr: QWord): Boolean;
 begin
   ValidUser := (ptr <> 0) and
-    (IsValidUserPtr_Pas(id, ptr, Sched_GetThreadAddrSpaceRaw(id), Pmm_GetTotalPages) <> 0);
+    Hal_IsUserPageMapped(Sched_GetThreadAddrSpaceRaw(id), ptr);
 end;
 
 { Wide-character copies of the verb prefixes, built once per call. }

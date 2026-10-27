@@ -50,11 +50,10 @@ var
   tid: Integer;
 begin
   UserPtrOk := False;
-  if (ptr < $1000) or (ptr > $00007FFFFFFFFFFF) then Exit;
+  if ptr < $1000 then Exit;
   tid := Sched_GetCurrentThreadId;
   if (tid < 0) or (tid >= Sched_GetThreadCount) then Exit;
-  UserPtrOk := IsValidUserPtr_Pas(tid, ptr, Sched_GetThreadAddrSpaceRaw(tid),
-    Pmm_GetTotalPages) <> 0;
+  UserPtrOk := Hal_IsUserPageMapped(Sched_GetThreadAddrSpaceRaw(tid), ptr);
 end;
 
 { Bytes of ProcessInfo as the user-space struct lays it out (packed, 55 bytes):

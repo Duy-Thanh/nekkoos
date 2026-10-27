@@ -43,67 +43,15 @@ begin
   if (iar and $3FF) = ARM64_TIMER_INTID then
   begin
     Arm64_TimerTick;
+    { Core 0 owns scheduler time (sleep deadlines are counted in these ticks). }
+    if Sched_IsReady and (Hal_CurrentCoreId = 0) then Sched_BumpSystemTicks(1);
     if Sched_IsReady then Arm64Irq := Sched_SwitchTask(frame);
   end;
   Arm64_IrqEnd(iar);
 end;
 
-{ Print a NUL-terminated UTF-16 user string, re-checking the mapping at every
-  page so a string running off its mapping stops instead of faulting the kernel. }
-function PrintUser(tid: Integer; str: QWord): QWord;
-const
-  MAX_CHARS = 8192;
-var
-  c: Word;
-  n: Integer;
-  space: QWord;
-begin
-  PrintUser := 0;
-  space := Sched_GetThreadAddrSpaceRaw(tid);
-  n := 0;
-  while n < MAX_CHARS do
-  begin
-    if ((n = 0) or ((str and 4095) < 2)) and
-       ((not Hal_IsUserPageMapped(space, str)) or
-        (not Hal_IsUserPageMapped(space, str + 1))) then Exit;
-    c := PWord(str)^;
-    if c = 0 then Break;
-    Terminal_DrawChar_Pas(c);
-    Inc(str, 2);
-    Inc(n);
-  end;
-  PrintUser := 1;
-end;
-
-{ Syscalls from EL0. Numbers follow the x86 table (AGENTS.md section 4.1); the
-  first argument is "arg 1" (x1), as in the x86 dispatcher. Everything returns
-  `frame` except calls that switch threads. }
-function UserSyscall(frame: QWord): QWord;
-const
-  SYS_EXIT   = 0;
-  SYS_PRINT  = 1;
-  SYS_UPTIME = 19;
-  SYS_YIELD  = 100;
-var
-  ctx: PQWord;
-  tid: Integer;
-begin
-  ctx := PQWord(frame);
-  tid := Sched_GetCurrentThreadId;
-  UserSyscall := frame;
-  case Ctx_GetNumber(ctx) of
-    SYS_EXIT:
-      begin
-        { Tears down this thread's address space, then yields away for good. }
-        Sched_TerminateCurrentTask;
-      end;
-    SYS_PRINT:  Ctx_SetRet(ctx, PrintUser(tid, Ctx_GetArg(ctx, 1)));
-    SYS_UPTIME: Ctx_SetRet(ctx, Hal_Ticks);
-    SYS_YIELD:  UserSyscall := Sched_YieldHandler(frame);
-  else
-    Ctx_SetRet(ctx, QWord(-1));
-  end;
-end;
+{ The generic syscall switch (syscall_dispatch.pas). Returns the frame to resume. }
+function SyscallHandler(frame: QWord): QWord; cdecl; external name 'SyscallHandler';
 
 function Arm64Sync(frame: QWord): QWord; cdecl; public name 'Arm64Sync';
 var
@@ -115,7 +63,7 @@ begin
   fromUser := (spsr and $F) = 0;            { M[3:0] = 0000: EL0t }
   if (esr shr 26) = EC_SVC64 then
   begin
-    if fromUser then Arm64Sync := UserSyscall(frame)
+    if fromUser then Arm64Sync := SyscallHandler(frame)
     else Arm64Sync := Sched_YieldHandler(frame);   { svc #0 in the kernel = Arch_ForceYield }
   end
   else if fromUser then

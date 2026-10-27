@@ -68,11 +68,28 @@ FN Arch_AtomicExchange
         mov     w0, w2
         ret
 // QWord Arch_AtomicAdd64(QWord *p, QWord d)  -> returns the previous value
+// Exclusive accesses fault on a misaligned address, and the scheduler's packed
+// thread records hold QWord fields at odd offsets (x86 tolerates that). Those
+// take a slow path: a global lock around a plain read-modify-write.
 FN Arch_AtomicAdd64
+        tst     x0, #7
+        b.ne    5f
 1:      ldaxr   x2, [x0]
         add     x3, x2, x1
         stlxr   w4, x3, [x0]
         cbnz    w4, 1b
+        mov     x0, x2
+        ret
+5:      adr     x5, unaligned_lock
+        mov     w6, #1
+6:      ldaxr   w7, [x5]
+        cbnz    w7, 6b
+        stxr    w7, w6, [x5]
+        cbnz    w7, 6b
+        ldr     x2, [x0]
+        add     x3, x2, x1
+        str     x3, [x0]
+        stlr    wzr, [x5]
         mov     x0, x2
         ret
 // Cardinal Arch_CmpXchg(Cardinal *p, Cardinal expected, Cardinal new) -> previous
@@ -464,3 +481,44 @@ Arch_SyncCode:
         dsb     ish
         isb
         ret
+
+// FPC's Move(): memmove(dest = x1, src = x0, count = x2), overlap-safe.
+        .global FPC_MOVE
+FPC_MOVE:
+        cbz     x2, 3f
+        cmp     x1, x0
+        b.ls    1f                      // dest <= src: copy forward
+        add     x3, x0, x2
+        cmp     x1, x3
+        b.hs    1f                      // dest after the source range: forward is safe
+2:      sub     x2, x2, #1              // overlapping, dest above src: copy backward
+        ldrb    w3, [x0, x2]
+        strb    w3, [x1, x2]
+        cbnz    x2, 2b
+        ret
+1:      ldrb    w3, [x0], #1
+        strb    w3, [x1], #1
+        subs    x2, x2, #1
+        b.ne    1b
+3:      ret
+
+// PSCI (power state coordination) through the hypervisor-call conduit that
+// QEMU's virt machine advertises: SYSTEM_RESET and SYSTEM_OFF.
+        .global HAL_Reboot
+HAL_Reboot:
+        ldr     w0, =0x84000009
+        hvc     #0
+1:      wfe
+        b       1b
+        .global HAL_Shutdown
+HAL_Shutdown:
+        ldr     w0, =0x84000008
+        hvc     #0
+1:      wfe
+        b       1b
+
+        .data
+        .balign 4
+unaligned_lock:
+        .word 0
+        .text

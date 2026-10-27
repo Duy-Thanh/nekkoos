@@ -4,7 +4,7 @@ import subprocess, sys, time
 
 EXPECT = [
     "arm64 EL0: hello from user mode",
-    "arm64 EL0: uptime syscall OK",
+    "arm64 EL0: getuid syscall OK",
     "arm64 EL0: user program exiting",
     "[!] 000000009200000d 0000000100000004 0000000040080000",   # crash.elf contained
     "arm64: heap alloc/free OK",

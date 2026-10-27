@@ -34,6 +34,8 @@ the x86_64 ones, they shadow them because this directory is searched last),
 
 User programs: `src/user/arm64/*.S`, linked at 4 GiB (`-N -Ttext=0x100000000`) and embedded in the kernel via `user_images.S` until a filesystem exists. Hal_SyncCode cleans the data cache and invalidates the instruction cache after code is copied in.
 
+Alignment: ARM64 exclusive accesses fault on misaligned addresses, but the scheduler's packed thread records have QWord fields at odd offsets. `Arch_AtomicAdd64` takes a slow lock-protected path for those.
+
 Interrupt state: generic code must ask `Arch_InterruptsEnabled`, never test RFLAGS bit 9 (on ARM64 that bit of DAIF is the debug mask, so a `flags and $200` test silently reports "interrupts off").
 
 Vector slots are 128 bytes: they only `b` to handlers placed elsewhere (a full frame save+restore overflows a slot and silently corrupts the next vector).
@@ -52,5 +54,6 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Shared boot services via `kernel_core` (heap, IPC, PRNG, strand engine, scheduler, idle loop) used by both x86 `kernel_main` and `boot_arm64`
 - [ ] Daemons / `SpawnDaemon` on ARM64 (they are PE x86 apps loaded from an ATA disk: needs an ELF loader and a virtio-blk driver)
 - [x] EL0 user mode: `svc` syscalls (number in x8, "arg 1" in x1, result in x0; exit/print/uptime/yield), generic `elf_loader`, user-pointer vetting via `Hal_IsUserPageMapped`; a user program that touches kernel memory is reported and terminated, the system keeps running
-- [ ] Full syscall table on ARM64 (needs `syscall_dispatch` split: it still depends on the x86 `syscall_impl`)
+- [x] The generic `syscall_dispatch` serves EL0 (arm64 `syscall_impl` reports hardware-only calls as unavailable); `Hal_IsUserPageMapped` replaced the x86 pointer walker in dispatch/shell/sudo; PSCI `HAL_Reboot`/`HAL_Shutdown` (shutdown verified)
+- [ ] Hardware syscalls for real: keyboard, framebuffer, MapPhys
 - [ ] Secondary cores via PSCI

@@ -478,7 +478,8 @@ end;
 
 function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
 begin
-  Hal_IsUserPageMapped := IsValidUserPtr_Pas(0, virt, space, Pmm_GetTotalPages) <> 0;
+  Hal_IsUserPageMapped := (virt <= QWord($00007FFFFFFFFFFF)) and
+    (IsValidUserPtr_Pas(0, virt, space, Pmm_GetTotalPages) <> 0);
 end;
 
 function Hal_ElfMachine: Word;

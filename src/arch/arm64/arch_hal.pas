@@ -439,6 +439,11 @@ end;
 
 { ── Time ─────────────────────────────────────────────────────────────────── }
 
+function HAL_GetTickCount: QWord; cdecl; public name 'HAL_GetTickCount';
+begin
+  HAL_GetTickCount := Hal_Ticks;
+end;
+
 function Hal_Ticks: QWord;
 var
   f, d: QWord;
