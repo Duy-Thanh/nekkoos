@@ -15,6 +15,7 @@ NvVars
 *.bin
 *.sig
 *.mui
+build/
 cl.bat
 error.log
 .claude/settings.local.json
