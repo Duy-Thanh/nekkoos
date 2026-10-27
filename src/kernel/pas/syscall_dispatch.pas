@@ -34,7 +34,7 @@ interface
 implementation
 
 uses arch_interface, console, kstring, libc, pmm, scheduler, ipc, ipc_kernel,
-  ata_kernel, fat16_kernel, kstate, rtc, syscall_security, syscall_impl, arch_hal,
+  ata_kernel, fat16_kernel, kstate, rtc, syscall_security, syscall_impl, syscall_core, arch_hal,
   internal_shell, sudo_dispatch;
 
 const

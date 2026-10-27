@@ -34,6 +34,9 @@ const
     architecture's own page-table bits; generic code only uses the names. }
   HAL_MAP_KERNEL_RW = QWord($03);   { present + writable, supervisor only }
   HAL_MAP_USER_RW   = QWord($07);   { present + writable + user }
+  HAL_MAP_USER_RO   = QWord($05);   { present + user, read-only }
+  HAL_MAP_USER_GUARD = QWord($04);  { user, NOT present: a guard page }
+  HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
 { ctx points at the saved register frame of the trapping thread. Argument and
@@ -125,6 +128,16 @@ function Hal_IsCanonical(addr: QWord): Boolean;
 { Map one 4 KiB page into the address space `space` (not necessarily the
   loaded one). `perms` is HAL_MAP_*. }
 procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
+
+{ The address space currently loaded on this core. }
+function Hal_CurrentAddressSpace: QWord;
+
+{ Is `space` a handle that could plausibly name an address space (non-zero,
+  canonical, inside RAM)? Guards against corrupt thread records. }
+function Hal_AddressSpaceValid(space: QWord): Boolean;
+
+{ Make `space` the loaded address space (also flushes stale translations). }
+procedure Hal_ActivateAddressSpace(space: QWord);
 
 { Free every page and table reachable from a user address space, then the
   root itself. The kernel space must never be passed. }
@@ -310,6 +323,22 @@ end;
 procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
 begin
   Vmm_MapPageIn(phys, virt, perms, Pointer(space));
+end;
+
+function Hal_CurrentAddressSpace: QWord;
+begin
+  Hal_CurrentAddressSpace := Vmm_ReadCr3 and QWord($000FFFFFFFFFF000);
+end;
+
+function Hal_AddressSpaceValid(space: QWord): Boolean;
+begin
+  Hal_AddressSpaceValid := (space <> 0) and (space < Pmm_GetTotalPages * HAL_PAGE_SIZE)
+    and Vmm_IsCanonical(space);
+end;
+
+procedure Hal_ActivateAddressSpace(space: QWord);
+begin
+  Arch_LoadPageTable(space);
 end;
 
 procedure Hal_DestroyAddressSpace(space: QWord);

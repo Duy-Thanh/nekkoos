@@ -168,7 +168,7 @@ thời gian (`Hal_Ticks`, `Hal_MsToTicks`), `Hal_FreezeOtherCores`.
 
 Đã chuyển sang `arch_hal`: `scheduler`, `pe_loader`, `power`, `kernel_main`. Còn là phần "kiến trúc cung cấp" theo thiết kế
 (không phải vi phạm): `syscall_impl` (thân syscall phụ thuộc phần cứng + `Ctx_*` truy cập thanh ghi), `interrupt_handlers`, `smp`,
-`hardware_checks`, và các driver legacy x86 (`input_drv`, `pci`). `Ctx_*` (truy cập thanh ghi syscall) đã nằm trong `arch_hal`; `syscall_dispatch`/`sudo_dispatch`/`internal_shell` chỉ còn gọi `Disp_*` của `syscall_impl`.
+`hardware_checks`, và các driver legacy x86 (`input_drv`, `pci`). `Ctx_*` (truy cập thanh ghi syscall) đã nằm trong `arch_hal`; thân syscall generic (print, uid/gid, heap, shared memory, khoá ATA) nằm ở `kernel/pas/syscall_core.pas` và chỉ dùng `Hal_*` (`Hal_MapPageIn`, `Hal_CurrentAddressSpace`, `Hal_AddressSpaceValid`, `Hal_ActivateAddressSpace`); `syscall_impl` chỉ giữ phần chạm phần cứng (bàn phím, MapPhys, framebuffer, cổng I/O).
 
 ### 3.3 arch_interface.pas — AAL primitives
 
