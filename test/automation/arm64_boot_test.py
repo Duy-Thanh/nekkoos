@@ -3,6 +3,7 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "arm64: address space map/switch OK, 0 pages leaked",
     "arm64: RAM 512 MiB,",
     "arm64: MMU on, kernel address space at",
     "NekkoOS arm64: early init",

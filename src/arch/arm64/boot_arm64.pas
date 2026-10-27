@@ -62,6 +62,32 @@ begin
   end;
 end;
 
+{ Create a user space, map a page in it, write through the mapping, switch
+  back and tear it down; the free page count must return to what it was. }
+procedure CheckAddressSpaces;
+const
+  VA = QWord($100000000);          { 4 GiB: a slot the kernel does not use }
+var
+  space, page, before: QWord;
+  p: PCardinal;
+begin
+  before := Pmm_GetFreePages;
+  space := Hal_CreateUserAddressSpace;
+  page := QWord(Pmm_AllocatePage);
+  Hal_MapPageIn(page, VA, HAL_MAP_KERNEL_RW, space);
+  Hal_ActivateAddressSpace(space);
+  p := PCardinal(VA);
+  p^ := $C0FFEE;
+  Hal_ActivateAddressSpace(Hal_KernelAddressSpace);
+  if (PCardinal(page)^ = $C0FFEE) and Hal_AddressSpaceValid(space) then
+    Puts('arm64: address space map/switch OK, ')
+  else
+    Puts('arm64: address space map/switch FAILED, ');
+  Hal_DestroyAddressSpace(space);
+  PutDec(before - Pmm_GetFreePages);
+  Puts(' pages leaked'#10);
+end;
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
@@ -93,6 +119,7 @@ begin
   Puts(#10);
   t0 := Hal_Ticks;
   while Hal_Ticks < t0 + Hal_MsToTicks(100) do ;
+  CheckAddressSpaces;
   Hal_InitInterrupts;
   Hal_StartTimer(Hal_TickFrequency);
   Hal_EnableInterrupts;

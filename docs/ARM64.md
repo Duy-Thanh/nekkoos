@@ -41,7 +41,7 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Toolchain, link, boot to Pascal on QEMU virt, PL011 output, generic counter
 - [x] Exception vectors, GICv2, 250 Hz timer tick interrupt (fatal faults print ESR/ELR/FAR)
 - [x] Device tree (`fdt.pas`) -> RAM size -> generic `pmm`; MMU on (identity map, 1 GiB blocks)
-- [ ] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages)
+- [x] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages; user VAs must stay outside the kernel's 1 GiB slots)
 - [ ] Generic kernel (`kernel_main`, scheduler) running on it
 - [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)
 - [ ] Secondary cores via PSCI

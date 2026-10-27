@@ -31,10 +31,10 @@ interface
 const
   { Mapping permission sets for Hal_MapPageIn. The numeric values are the
     architecture's own page-table bits; generic code only uses the names. }
-  HAL_MAP_KERNEL_RW = QWord($03);   { present + writable, supervisor only }
-  HAL_MAP_USER_RW   = QWord($07);   { present + writable + user }
-  HAL_MAP_USER_RO   = QWord($05);   { present + user, read-only }
-  HAL_MAP_USER_GUARD = QWord($04);  { user, NOT present: a guard page }
+  HAL_MAP_KERNEL_RW = QWord(1);     { kernel read/write, never executable }
+  HAL_MAP_USER_RW   = QWord(2);     { user read/write/execute }
+  HAL_MAP_USER_RO   = QWord(3);     { user read-only }
+  HAL_MAP_USER_GUARD = QWord(4);    { user, NOT present: a guard page }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
@@ -193,6 +193,12 @@ const
   PTE_ATTR_DEVICE = QWord(0) shl 2;  { MAIR index 0 }
   PTE_ATTR_NORMAL = QWord(1) shl 2;  { MAIR index 1 }
   PTE_XN    = (QWord(1) shl 53) or (QWord(1) shl 54);
+  PTE_PXN   = QWord(1) shl 53;
+  PTE_PAGE  = QWord(3);              { bits[1:0] = 11 at level 3 }
+  PTE_AP_EL0 = QWord(1) shl 6;       { AP[1]: EL0 may access }
+  PTE_AP_RO  = QWord(1) shl 7;       { AP[2]: read-only }
+  PTE_GUARD  = QWord(1) shl 55;      { software bit on an invalid entry }
+  ADDR_MASK  = QWord($0000FFFFFFFFF000);
   MAIR_VALUE = QWord($FF00);         { idx0 Device-nGnRnE, idx1 Normal write-back }
   { T0SZ=16, IRGN0/ORGN0 write-back, inner shareable, 4K granule, 40-bit PA,
     TTBR1 walks disabled. }
@@ -446,14 +452,32 @@ begin
 end;
 
 function Hal_CreateUserAddressSpace: QWord;
+var
+  l0, l1, kl1: PQWord;
+  i: Integer;
 begin
-  Unimplemented('Hal_CreateUserAddressSpace');
   Hal_CreateUserAddressSpace := 0;
+  l0 := PQWord(Pmm_AllocatePage);
+  if l0 = nil then Exit;
+  l1 := PQWord(Pmm_AllocatePage);
+  if l1 = nil then begin Pmm_FreePage(l0); Exit; end;
+  { Page 0 of the user space shares the kernel's 1 GiB blocks (copied, so a
+    user mapping in another slot never touches the kernel's own table). }
+  kl1 := PQWord(PQWord(KernelRoot)[0] and ADDR_MASK);
+  for i := 0 to 511 do l1[i] := kl1[i];
+  for i := 0 to 511 do l0[i] := 0;
+  l0[0] := QWord(l1) or PTE_TABLE;
+  Hal_CreateUserAddressSpace := QWord(l0);
 end;
 
 procedure Hal_DiscardAddressSpaceRoot(space: QWord);
+var
+  l0: PQWord;
 begin
-  Unimplemented('Hal_DiscardAddressSpaceRoot');
+  if (space = 0) or (space = KernelRoot) then Exit;
+  l0 := PQWord(space);
+  if (l0[0] and PTE_VALID) <> 0 then Pmm_FreePage(Pointer(l0[0] and ADDR_MASK));
+  Pmm_FreePage(l0);
 end;
 
 function Hal_UserApiPage: QWord;
@@ -471,9 +495,48 @@ begin
   Hal_IsCanonical := (top = 0) or (top = QWord($1FFFF));
 end;
 
-procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
+{ Table at `entry`, allocating it when absent. nil if the slot holds a block. }
+function TableAt(var entry: QWord): PQWord;
+var
+  t: PQWord;
 begin
-  Unimplemented('Hal_MapPageIn');
+  if (entry and PTE_VALID) = 0 then
+  begin
+    t := PQWord(Pmm_AllocatePage);
+    if t = nil then begin TableAt := nil; Exit; end;
+    entry := QWord(t) or PTE_TABLE;
+  end
+  else if (entry and 3) <> 3 then
+  begin
+    TableAt := nil;
+    Exit;
+  end;
+  TableAt := PQWord(entry and ADDR_MASK);
+end;
+
+procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
+var
+  l0, l1, l2, l3: PQWord;
+  pte: QWord;
+begin
+  if (space = 0) or not Hal_IsCanonical(virt) then Exit;
+  l0 := PQWord(space);
+  l1 := TableAt(l0[(virt shr 39) and 511]);
+  if l1 = nil then Exit;
+  l2 := TableAt(l1[(virt shr 30) and 511]);
+  if l2 = nil then Unimplemented('Hal_MapPageIn into a kernel-owned 1 GiB block');
+  l3 := TableAt(l2[(virt shr 21) and 511]);
+  if l3 = nil then Exit;
+  pte := (phys and ADDR_MASK) or PTE_PAGE or PTE_AF or PTE_SH_INNER or PTE_ATTR_NORMAL;
+  case perms of
+    HAL_MAP_KERNEL_RW: pte := pte or PTE_XN;
+    HAL_MAP_USER_RW:   pte := pte or PTE_AP_EL0 or PTE_PXN;
+    HAL_MAP_USER_RO:   pte := pte or PTE_AP_EL0 or PTE_AP_RO or PTE_PXN;
+  else
+    pte := PTE_GUARD;
+  end;
+  l3[(virt shr 12) and 511] := pte;
+  Arch_FlushTLB;
 end;
 
 function Hal_CurrentAddressSpace: QWord;
@@ -492,9 +555,41 @@ begin
   Arch_LoadPageTable(space);
 end;
 
-procedure Hal_DestroyAddressSpace(space: QWord);
+{ Free the tables below `table` (level 1 or 2), and at level 3 the pages too. }
+procedure FreeTree(table: PQWord; level: Integer);
+var
+  i: Integer;
+  e: QWord;
 begin
-  Unimplemented('Hal_DestroyAddressSpace');
+  for i := 0 to 511 do
+  begin
+    e := table[i];
+    if (e and PTE_VALID) = 0 then Continue;
+    if level = 3 then
+      Pmm_FreePage(Pointer(e and ADDR_MASK))
+    else if (e and 3) = 3 then
+      FreeTree(PQWord(e and ADDR_MASK), level + 1);
+  end;
+  Pmm_FreePage(table);
+end;
+
+procedure Hal_DestroyAddressSpace(space: QWord);
+var
+  l0, l1: PQWord;
+  i: Integer;
+  e: QWord;
+begin
+  if (space = 0) or (space = KernelRoot) or (space = Hal_CurrentAddressSpace) then Exit;
+  l0 := PQWord(space);
+  l1 := PQWord(l0[0] and ADDR_MASK);
+  { Slots that are still the kernel's 1 GiB blocks are shared: leave them. }
+  for i := 0 to 511 do
+  begin
+    e := l1[i];
+    if ((e and 3) = 3) then FreeTree(PQWord(e and ADDR_MASK), 2);
+  end;
+  Pmm_FreePage(l1);
+  Pmm_FreePage(l0);
 end;
 
 { ── Kernel stacks ────────────────────────────────────────────────────────── }
