@@ -26,13 +26,6 @@ unit syscall_impl;
 
 interface
 
-{ ── Register frame access (x86_64: args RBX, RCX, RDX, R8, R9; return RAX,
-     second return RBX) ── }
-function  Ctx_GetNumber(ctx: PQWord): QWord;
-function  Ctx_GetArg(ctx: PQWord; i: Integer): QWord;
-procedure Ctx_SetRet(ctx: PQWord; v: QWord);
-procedure Ctx_SetRet2(ctx: PQWord; v: QWord);
-
 { Returns the RSP to resume on: either currentRsp, or another thread's after a
   context switch when no key was waiting. }
 function Disp_KeyboardRead(threadId: Integer; isKing: Boolean; ctx: PQWord;
@@ -61,17 +54,9 @@ procedure Disp_ResetCursor;
 implementation
 
 uses arch_interface, console, ata_kernel, gdt, input_drv, ipc_kernel, kstate,
-  pmm, scheduler, syscall_security, terminal, vmm, apic;
+  pmm, scheduler, syscall_security, terminal, vmm, apic, arch_hal;
 
 const
-  { RegisterContext slots (u64 each) counted from the saved RSP. }
-  CTX_R9  = 6;
-  CTX_R8  = 7;
-  CTX_RBX = 11;
-  CTX_RDX = 12;
-  CTX_RCX = 13;
-  CTX_RAX = 14;
-
   PHYS_MASK = QWord($000FFFFFFFFFF000);
   PAGE      = 4096;
 
@@ -81,34 +66,6 @@ const
   MSG_OFF_SENDER  = 4;
   MSG_OFF_LOCKED  = 12;
   MSG_OFF_PAYLOAD = 16;
-
-function Ctx_GetNumber(ctx: PQWord): QWord;
-begin
-  Ctx_GetNumber := ctx[CTX_RAX];
-end;
-
-function Ctx_GetArg(ctx: PQWord; i: Integer): QWord;
-begin
-  case i of
-    0: Ctx_GetArg := ctx[CTX_RBX];
-    1: Ctx_GetArg := ctx[CTX_RCX];
-    2: Ctx_GetArg := ctx[CTX_RDX];
-    3: Ctx_GetArg := ctx[CTX_R8];
-    4: Ctx_GetArg := ctx[CTX_R9];
-  else
-    Ctx_GetArg := 0;
-  end;
-end;
-
-procedure Ctx_SetRet(ctx: PQWord; v: QWord);
-begin
-  ctx[CTX_RAX] := v;
-end;
-
-procedure Ctx_SetRet2(ctx: PQWord; v: QWord);
-begin
-  ctx[CTX_RBX] := v;
-end;
 
 { ── Shared helpers ───────────────────────────────────────────────────────── }
 

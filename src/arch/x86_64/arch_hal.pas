@@ -35,6 +35,15 @@ const
   HAL_MAP_KERNEL_RW = QWord($03);   { present + writable, supervisor only }
   HAL_MAP_USER_RW   = QWord($07);   { present + writable + user }
 
+{ ── Syscall register frame ────────────────────────────────────────────────── }
+{ ctx points at the saved register frame of the trapping thread. Argument and
+  return registers are the architecture's calling convention for syscalls
+  (x86_64: args RBX, RCX, RDX, R8, R9; return RAX, second return RBX). }
+function  Ctx_GetNumber(ctx: PQWord): QWord;
+function  Ctx_GetArg(ctx: PQWord; i: Integer): QWord;
+procedure Ctx_SetRet(ctx: PQWord; v: QWord);
+procedure Ctx_SetRet2(ctx: PQWord; v: QWord);
+
 { ── Boot sequence ─────────────────────────────────────────────────────────── }
 { kernel_main calls these in order; each does whatever its architecture needs
   for that phase and nothing else. }
@@ -134,6 +143,44 @@ implementation
 
 uses arch_interface, apic, gdt, idt, vmm, vdso, pic, pit, pci, ioapic, smp,
   platform_bootstrap, hardware_checks, pmm, libc;
+
+const
+  { RegisterContext slots (u64 each) counted from the saved RSP. }
+  CTX_R9  = 6;
+  CTX_R8  = 7;
+  CTX_RBX = 11;
+  CTX_RDX = 12;
+  CTX_RCX = 13;
+  CTX_RAX = 14;
+
+
+function Ctx_GetNumber(ctx: PQWord): QWord;
+begin
+  Ctx_GetNumber := ctx[CTX_RAX];
+end;
+
+function Ctx_GetArg(ctx: PQWord; i: Integer): QWord;
+begin
+  case i of
+    0: Ctx_GetArg := ctx[CTX_RBX];
+    1: Ctx_GetArg := ctx[CTX_RCX];
+    2: Ctx_GetArg := ctx[CTX_RDX];
+    3: Ctx_GetArg := ctx[CTX_R8];
+    4: Ctx_GetArg := ctx[CTX_R9];
+  else
+    Ctx_GetArg := 0;
+  end;
+end;
+
+procedure Ctx_SetRet(ctx: PQWord; v: QWord);
+begin
+  ctx[CTX_RAX] := v;
+end;
+
+procedure Ctx_SetRet2(ctx: PQWord; v: QWord);
+begin
+  ctx[CTX_RBX] := v;
+end;
 
 function HAL_GetTickCount: QWord; cdecl; external name 'HAL_GetTickCount';
 

@@ -42,7 +42,7 @@ function Sudo_Dispatch_Pas(id: Integer; ctx: Pointer): Integer; cdecl;
 implementation
 
 uses arch_interface, libc, kstring, console, heap, kerncrypto, passwd_parser,
-  syscall_security, syscall_impl, pmm, scheduler, fat16_kernel, pe_loader;
+  syscall_security, syscall_impl, arch_hal, pmm, scheduler, fat16_kernel, pe_loader;
 
 const
   RET_DENIED     = 0;

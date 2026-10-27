@@ -42,7 +42,7 @@ function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolea
 implementation
 
 uses arch_interface, console, kstring, heap, pmm, scheduler, syscall_security,
-  syscall_impl, fat16_kernel, pe_loader, power, pci, rtc, pit, terminal;
+  syscall_impl, arch_hal, fat16_kernel, pe_loader, power, pci, rtc, pit, terminal;
 
 { TShellAction lives here, not in the interface: an enum reachable from the
   interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
