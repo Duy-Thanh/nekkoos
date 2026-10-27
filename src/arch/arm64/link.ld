@@ -13,5 +13,6 @@ SECTIONS
   . = ALIGN(4096);
   . += 0x10000;
   __stack_top = .;
+  __image_size = __bss_end - 0x40080000;
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

@@ -103,9 +103,6 @@ Arch_Unsupported:
         .global Arch_EnableNX
 Arch_EnableNX:
         b       Arch_Unsupported
-        .global Arch_FlushTLB
-Arch_FlushTLB:
-        b       Arch_Unsupported
         .global Arch_ForceYield
 Arch_ForceYield:
         b       Arch_Unsupported
@@ -154,17 +151,11 @@ Arch_LoadGDT:
         .global Arch_LoadIDT
 Arch_LoadIDT:
         b       Arch_Unsupported
-        .global Arch_LoadPageTable
-Arch_LoadPageTable:
-        b       Arch_Unsupported
         .global Arch_LoadTSS
 Arch_LoadTSS:
         b       Arch_Unsupported
         .global Arch_LockScheduler
 Arch_LockScheduler:
-        b       Arch_Unsupported
-        .global Arch_ReadPageTable
-Arch_ReadPageTable:
         b       Arch_Unsupported
         .global Arch_ReadPort16
 Arch_ReadPort16:
@@ -328,5 +319,44 @@ Arch_TimerRearm:
         .global Arch_TimerStop
 Arch_TimerStop:
         msr     cntp_ctl_el0, xzr
+        isb
+        ret
+
+// ---------------------------------------------------------------------------
+// MMU (4 KiB granule, TTBR0 only). Arch_EnableMmu turns it on with the given
+// root and attribute/control register values; the caller built the tables.
+// ---------------------------------------------------------------------------
+        .global Arch_EnableMmu
+Arch_EnableMmu:
+        msr     mair_el1, x1
+        msr     tcr_el1, x2
+        msr     ttbr0_el1, x0
+        isb
+        tlbi    vmalle1
+        dsb     nsh
+        isb
+        mrs     x3, sctlr_el1
+        mov     x4, #((1 << 0) | (1 << 2) | (1 << 12))   // M, C, I
+        orr     x3, x3, x4
+        msr     sctlr_el1, x3
+        isb
+        ret
+        .global Arch_LoadPageTable
+Arch_LoadPageTable:
+        msr     ttbr0_el1, x0
+        isb
+        tlbi    vmalle1is
+        dsb     ish
+        isb
+        ret
+        .global Arch_ReadPageTable
+Arch_ReadPageTable:
+        mrs     x0, ttbr0_el1
+        and     x0, x0, #0x0000FFFFFFFFF000
+        ret
+        .global Arch_FlushTLB
+Arch_FlushTLB:
+        tlbi    vmalle1is
+        dsb     ish
         isb
         ret

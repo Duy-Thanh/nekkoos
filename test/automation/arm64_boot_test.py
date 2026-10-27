@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""ARM64 bring-up test: boot build/arm64/kernel.elf on QEMU virt and check the UART."""
+"""ARM64 bring-up test: boot build/arm64/kernel.bin on QEMU virt and check the UART."""
 import subprocess, sys, time
 
 EXPECT = [
+    "arm64: RAM 512 MiB,",
+    "arm64: MMU on, kernel address space at",
     "NekkoOS arm64: early init",
     "arm64: 100 ms elapsed on the generic counter, core id 0",
     "arm64: bring-up milestone 1 reached",
@@ -11,7 +13,7 @@ BAD = ["UNIMPLEMENTED", "FATAL"]
 
 p = subprocess.Popen(
     ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72", "-m", "512M",
-     "-nographic", "-kernel", "build/arm64/kernel.elf"],
+     "-nographic", "-kernel", "build/arm64/kernel.bin"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 time.sleep(6)
 p.kill()

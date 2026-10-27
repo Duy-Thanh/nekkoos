@@ -161,7 +161,7 @@ function Arm64_TimerInterrupts: QWord;
 
 implementation
 
-uses arch_interface;
+uses arch_interface, pmm;
 
 const
   UART_BASE = QWord($09000000);
@@ -184,7 +184,24 @@ const
   GICC_EOIR = $010;
   TIMER_INTID = 30;      { EL1 physical timer, a private peripheral interrupt }
 
+  { Translation tables: 4 KiB granule, 48-bit VA, TTBR0 only. }
+  PTE_VALID = QWord(1);
+  PTE_TABLE = QWord(3);              { bits[1:0] = 11 at levels 0..2 }
+  PTE_BLOCK = QWord(1);              { bits[1:0] = 01 at levels 1..2 }
+  PTE_AF    = QWord(1) shl 10;
+  PTE_SH_INNER = QWord(3) shl 8;
+  PTE_ATTR_DEVICE = QWord(0) shl 2;  { MAIR index 0 }
+  PTE_ATTR_NORMAL = QWord(1) shl 2;  { MAIR index 1 }
+  PTE_XN    = (QWord(1) shl 53) or (QWord(1) shl 54);
+  MAIR_VALUE = QWord($FF00);         { idx0 Device-nGnRnE, idx1 Normal write-back }
+  { T0SZ=16, IRGN0/ORGN0 write-back, inner shareable, 4K granule, 40-bit PA,
+    TTBR1 walks disabled. }
+  TCR_VALUE = QWord(16) or (QWord(1) shl 8) or (QWord(1) shl 10) or
+              (QWord(3) shl 12) or (QWord(2) shl 32) or (QWord(1) shl 23);
+  GIB = QWord($40000000);
+
 var
+  KernelRoot: QWord;
   BootCounter: QWord;
   TimerInterval: QWord;
   IrqTicks: QWord;
@@ -246,9 +263,37 @@ begin
   UartPuts('NekkoOS arm64: early init'#10);
 end;
 
-procedure Hal_InitMemory(maxPhysicalAddr: QWord);
+function NewTable: PQWord;
+var
+  t: PQWord;
+  i: Integer;
 begin
-  Unimplemented('Hal_InitMemory (MMU)');
+  t := PQWord(Pmm_AllocatePage);
+  if t = nil then Unimplemented('page table allocation (out of memory)');
+  for i := 0 to 511 do t[i] := 0;
+  NewTable := t;
+end;
+
+{ Identity-map [0, maxPhysicalAddr) with 1 GiB blocks: the first GiB (UART,
+  GIC, ...) as device memory, the rest as normal cacheable RAM. User spaces
+  later live above this, so the kernel never shares a GiB slot with them. }
+procedure Hal_InitMemory(maxPhysicalAddr: QWord);
+var
+  l0, l1: PQWord;
+  slot, slots: QWord;
+begin
+  l0 := NewTable;
+  l1 := NewTable;
+  l0[0] := QWord(l1) or PTE_TABLE;
+  slots := (maxPhysicalAddr + GIB - 1) div GIB;
+  if slots < 2 then slots := 2;
+  for slot := 0 to slots - 1 do
+    if slot = 0 then
+      l1[slot] := (slot * GIB) or PTE_BLOCK or PTE_AF or PTE_ATTR_DEVICE or PTE_XN
+    else
+      l1[slot] := (slot * GIB) or PTE_BLOCK or PTE_AF or PTE_SH_INNER or PTE_ATTR_NORMAL;
+  KernelRoot := QWord(l0);
+  Arch_EnableMmu(KernelRoot, MAIR_VALUE, TCR_VALUE);
 end;
 
 procedure Hal_InitInterrupts;
@@ -397,8 +442,7 @@ end;
 
 function Hal_KernelAddressSpace: QWord;
 begin
-  Unimplemented('Hal_KernelAddressSpace');
-  Hal_KernelAddressSpace := 0;
+  Hal_KernelAddressSpace := KernelRoot;
 end;
 
 function Hal_CreateUserAddressSpace: QWord;
@@ -434,18 +478,18 @@ end;
 
 function Hal_CurrentAddressSpace: QWord;
 begin
-  Unimplemented('Hal_CurrentAddressSpace');
-  Hal_CurrentAddressSpace := 0;
+  Hal_CurrentAddressSpace := Arch_ReadPageTable;
 end;
 
 function Hal_AddressSpaceValid(space: QWord): Boolean;
 begin
-  Hal_AddressSpaceValid := (space <> 0) and Hal_IsCanonical(space);
+  Hal_AddressSpaceValid := (space <> 0) and (space < Pmm_GetTotalPages * HAL_PAGE_SIZE)
+    and Hal_IsCanonical(space);
 end;
 
 procedure Hal_ActivateAddressSpace(space: QWord);
 begin
-  Unimplemented('Hal_ActivateAddressSpace');
+  Arch_LoadPageTable(space);
 end;
 
 procedure Hal_DestroyAddressSpace(space: QWord);

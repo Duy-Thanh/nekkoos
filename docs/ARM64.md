@@ -21,7 +21,7 @@ Also needs `qemu-system-aarch64` (`zypper in qemu-arm`).
 
 ## Build / run / test
 
-    ./build_arm64.sh    # build/arm64/kernel.elf
+    ./build_arm64.sh    # build/arm64/kernel.bin (arm64 Image; QEMU passes the DTB only to an Image, not to an ELF)
     ./run_arm64.sh      # QEMU virt, serial on stdio, Ctrl-A X quits
     python3 test/automation/arm64_boot_test.py
 
@@ -40,7 +40,8 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 
 - [x] Toolchain, link, boot to Pascal on QEMU virt, PL011 output, generic counter
 - [x] Exception vectors, GICv2, 250 Hz timer tick interrupt (fatal faults print ESR/ELR/FAR)
-- [ ] MMU + `Hal_*AddressSpace`, PMM from the DTB memory map
+- [x] Device tree (`fdt.pas`) -> RAM size -> generic `pmm`; MMU on (identity map, 1 GiB blocks)
+- [ ] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages)
 - [ ] Generic kernel (`kernel_main`, scheduler) running on it
 - [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)
 - [ ] Secondary cores via PSCI

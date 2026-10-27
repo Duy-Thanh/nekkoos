@@ -110,6 +110,7 @@ procedure Arch_ForceYield; cdecl;
   src/arch/arm64 may use these. }
 function Arch_ReadCounterFrequency: QWord; cdecl;   { CNTFRQ_EL0 }
 function Arch_ReadCpuId: QWord; cdecl;              { MPIDR_EL1 }
+procedure Arch_EnableMmu(root, mair, tcr: QWord); cdecl; { MAIR/TCR/TTBR0 then SCTLR.M }
 procedure Arch_InstallVectors; cdecl;               { VBAR_EL1 }
 procedure Arch_TimerProgram(counterTicks: QWord); cdecl; { one-shot CNTP }
 procedure Arch_TimerRearm(counterTicks: QWord); cdecl; { deadline += interval }
@@ -185,6 +186,7 @@ procedure Arch_UnlockScheduler; cdecl; external name 'Arch_UnlockScheduler';
 procedure Arch_ForceYield; cdecl; external name 'Arch_ForceYield';
 function Arch_ReadCounterFrequency: QWord; cdecl; external name 'Arch_ReadCounterFrequency';
 function Arch_ReadCpuId: QWord; cdecl; external name 'Arch_ReadCpuId';
+procedure Arch_EnableMmu(root, mair, tcr: QWord); cdecl; external name 'Arch_EnableMmu';
 procedure Arch_InstallVectors; cdecl; external name 'Arch_InstallVectors';
 procedure Arch_TimerProgram(counterTicks: QWord); cdecl; external name 'Arch_TimerProgram';
 procedure Arch_TimerRearm(counterTicks: QWord); cdecl; external name 'Arch_TimerRearm';
