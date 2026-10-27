@@ -358,7 +358,7 @@ end;
 
 function Sched_AcquireSchedLockSafe: Boolean;
 begin
-  Result := (Arch_GetFlags and $200) <> 0;
+  Result := Hal_InterruptsEnabled;
   Arch_DisableInterrupts;
   Arch_LockScheduler;
 end;
@@ -546,8 +546,6 @@ var
   kStackTop:  PQWord;
   rspValue:   QWord;
   idleAddr:   QWord;
-  cs, ss:     Word;
-  j:          Integer;
 begin
   if coreId >= SCHED_MAX_CORES then
   begin
@@ -591,36 +589,15 @@ begin
     Exit;
   end;
 
-  { [ALIGNMENT] The idle loop is entered by IRETQ, not by CALL, so RSP must
-    be pushed 8 bytes off a 16-byte boundary to land on the 8 (mod 16) the
-    compiled prologue assumes. A movaps as its first SSE op faults otherwise. }
-  Dec(kStackTop); kStackTop^ := 0;
-  rspValue := QWord(kStackTop);
-
-  cs := Arch_GetCS;
-  ss := Arch_GetSS;
   idleAddr := QWord(Sched_GetIdleLoop);
-
-  Dec(kStackTop); kStackTop^ := ss;
-  Dec(kStackTop); kStackTop^ := rspValue;
-  Dec(kStackTop); kStackTop^ := $202;
-  Dec(kStackTop); kStackTop^ := cs;
   if (idleAddr < 4096) or (not Hal_IsCanonical(idleAddr)) then
   begin
     TermWarn('[WARN] KernelIdleLoop pointer invalid, using fallback'#13#10);
-    Dec(kStackTop); kStackTop^ := QWord(Pointer(@Sched_IdleLoopProc));
-  end
-  else
-  begin
-    Dec(kStackTop); kStackTop^ := idleAddr;
+    idleAddr := QWord(Pointer(@Sched_IdleLoopProc));
   end;
+  rspValue := Hal_BuildKernelFrame(QWord(kStackTop), idleAddr);
 
-  for j := 1 to 15 do
-  begin
-    Dec(kStackTop); kStackTop^ := 0;
-  end;
-
-  s.Threads[id].Rsp       := QWord(kStackTop);
+  s.Threads[id].Rsp       := rspValue;
   s.Threads[id].AddrSpace := KernelRoot;
 
   s.IdleIds[coreId] := id;
@@ -799,9 +776,7 @@ var
   stackBase:   PQWord;
   stackTop:    PQWord;
   originalTop: QWord;
-  cs, ss:      Word;
   epAddr:      QWord;
-  i:           Integer;
 begin
   irq := Sched_AcquireSchedLockSafe;
   id := FindFreeSlot(s.Threads, s.ThreadCount);
@@ -838,34 +813,15 @@ begin
     stackTop := PQWord(s.Threads[id].KernelStackTop);
   end;
 
-  Dec(stackTop); stackTop^ := 0;
-  originalTop := QWord(stackTop);
-
-  cs := Arch_GetCS;
-  ss := Arch_GetSS;
-
-  Dec(stackTop); stackTop^ := ss;
-  Dec(stackTop); stackTop^ := originalTop;
-  Dec(stackTop); stackTop^ := $202;
-  Dec(stackTop); stackTop^ := cs;
-
   epAddr := entryPoint;
   if (epAddr < 4096) or (not Hal_IsCanonical(epAddr)) then
   begin
     TermWarn('[WARN] Invalid entryPoint in CreateTask, using KernelIdleLoop fallback'#13#10);
-    Dec(stackTop); stackTop^ := QWord(Pointer(@Sched_IdleLoopProc));
-  end
-  else
-  begin
-    Dec(stackTop); stackTop^ := epAddr;
+    epAddr := QWord(Pointer(@Sched_IdleLoopProc));
   end;
+  originalTop := Hal_BuildKernelFrame(QWord(stackTop), epAddr);
 
-  for i := 1 to 15 do
-  begin
-    Dec(stackTop); stackTop^ := 0;
-  end;
-
-  s.Threads[id].Rsp             := QWord(stackTop);
+  s.Threads[id].Rsp             := originalTop;
   s.Threads[id].AddrSpace       := KernelRoot;
   s.Threads[id].ExecutingOnCore := -1;
   s.Threads[id].Active          := 1;
@@ -892,7 +848,6 @@ var
   stackVirtBase: QWord;
   physPage:      QWord;
   appStackTop:   QWord;
-  rflags:        QWord;
   i:             Integer;
 begin
   Result := -1;
@@ -962,24 +917,9 @@ begin
 
   appStackTop := stackVirtBase + $3FF8;
 
-  rflags := $202;
-  { IOPL=3 lets a root daemon reach IN/OUT through the vDSO without an IOPB. }
-  if forceRoot or ((currentParent >= 0) and (s.Threads[currentParent].UID = 0)) then
-    rflags := $3202;
-
-  Dec(kStackTop); kStackTop^ := 0;
-  Dec(kStackTop); kStackTop^ := $1B;
-  Dec(kStackTop); kStackTop^ := appStackTop;
-  Dec(kStackTop); kStackTop^ := rflags;
-  Dec(kStackTop); kStackTop^ := $23;
-  Dec(kStackTop); kStackTop^ := entryPoint;
-
-  for i := 1 to 15 do
-  begin
-    Dec(kStackTop); kStackTop^ := 0;
-  end;
-
-  s.Threads[id].Rsp           := QWord(kStackTop);
+  { A root daemon gets direct port access (x86: IOPL=3 in the frame). }
+  s.Threads[id].Rsp := Hal_BuildUserFrame(QWord(kStackTop), entryPoint, appStackTop,
+    forceRoot or ((currentParent >= 0) and (s.Threads[currentParent].UID = 0)));
   s.Threads[id].AddrSpace     := appPml4;
   s.Threads[id].IsJailed      := Byte(Ord(isJailed));
   s.Threads[id].IsPhantomDead := 0;

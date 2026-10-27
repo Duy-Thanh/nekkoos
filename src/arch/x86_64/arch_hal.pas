@@ -148,6 +148,23 @@ procedure Hal_ActivateAddressSpace(space: QWord);
   root itself. The kernel space must never be passed. }
 procedure Hal_DestroyAddressSpace(space: QWord);
 
+{ ── Thread start frames ───────────────────────────────────────────────────── }
+{ A new thread starts by being "returned into": the scheduler switches to the
+  stack pointer these functions return, and the architecture's exception-return
+  path pops the frame and jumps to `entry`. `kernelStackTop` is the (aligned)
+  top of the thread's kernel stack. The frame is written just below it. }
+
+{ A thread that runs in kernel mode with interrupts enabled. }
+function Hal_BuildKernelFrame(kernelStackTop, entry: QWord): QWord;
+
+{ A thread that starts in user mode at `entry` with `userStackTop`. `privileged`
+  grants direct hardware I/O (x86: IOPL 3), for root daemons. }
+function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
+  privileged: Boolean): QWord;
+
+{ Are device interrupts currently enabled on this CPU? }
+function Hal_InterruptsEnabled: Boolean;
+
 { ── Kernel stacks ─────────────────────────────────────────────────────────── }
 
 { Top of the stack the boot CPU enters the kernel on from user mode. }
@@ -385,6 +402,60 @@ end;
 function Hal_UserApiPage: QWord;
 begin
   Hal_UserApiPage := Vdso_GetPhysPage;
+end;
+
+function Hal_InterruptsEnabled: Boolean;
+begin
+  Hal_InterruptsEnabled := (Arch_GetFlags and $200) <> 0;
+end;
+
+procedure Push(var p: PQWord; v: QWord); inline;
+begin
+  Dec(p);
+  p^ := v;
+end;
+
+{ IRETQ frame (SS, RSP, RFLAGS, CS, RIP) plus the 15 saved GP registers the
+  ISR stubs pop. The 8-byte pad above SS makes RSP land on 8 (mod 16), what a
+  compiled prologue expects after a CALL; a movaps as first SSE op faults
+  otherwise. }
+function Hal_BuildKernelFrame(kernelStackTop, entry: QWord): QWord;
+var
+  p: PQWord;
+  rsp0: QWord;
+  i: Integer;
+begin
+  p := PQWord(kernelStackTop);
+  Push(p, 0);
+  rsp0 := QWord(p);
+  Push(p, Arch_GetSS);
+  Push(p, rsp0);
+  Push(p, $202);
+  Push(p, Arch_GetCS);
+  Push(p, entry);
+  for i := 1 to 15 do Push(p, 0);
+  Hal_BuildKernelFrame := QWord(p);
+end;
+
+function Hal_BuildUserFrame(kernelStackTop, entry, userStackTop: QWord;
+  privileged: Boolean): QWord;
+var
+  p: PQWord;
+  rflags: QWord;
+  i: Integer;
+begin
+  rflags := $202;
+  { IOPL=3 lets a root daemon reach IN/OUT through the vDSO without an IOPB. }
+  if privileged then rflags := $3202;
+  p := PQWord(kernelStackTop);
+  Push(p, 0);
+  Push(p, $1B);
+  Push(p, userStackTop);
+  Push(p, rflags);
+  Push(p, $23);
+  Push(p, entry);
+  for i := 1 to 15 do Push(p, 0);
+  Hal_BuildUserFrame := QWord(p);
 end;
 
 function Hal_BootKernelStackTop: QWord;
