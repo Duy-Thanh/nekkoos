@@ -38,8 +38,10 @@ n = int(m.group(1)) if m else -1
 hit = 200 <= n <= 260
 ok &= hit
 print(("[PASS] " if hit else "[FAIL] ") + f"timer ticks at ~250 Hz (got {n} in 1 s)")
-m = re.search(r"scheduler started\n([AB]+)", out)
-seq = m.group(1) if m else ""
+# User-program output is interleaved with the A/B stream, so take the longest A/B run.
+tail = out.split("scheduler started", 1)[-1]
+runs = re.findall(r"[AB]+", tail)
+seq = max(runs, key=len) if runs else ""
 switches = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
 hit = switches >= 20
 ok &= hit
