@@ -35,6 +35,24 @@ begin
   end;
 end;
 
+procedure PutDec(v: QWord);
+var
+  buf: array[0..19] of Byte;
+  n: Integer;
+begin
+  n := 0;
+  repeat
+    buf[n] := Ord('0') + (v mod 10);
+    v := v div 10;
+    Inc(n);
+  until v = 0;
+  while n > 0 do
+  begin
+    Dec(n);
+    Arch_WriteMmio32(QWord($09000000), buf[n]);
+  end;
+end;
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0: QWord;
@@ -42,6 +60,14 @@ begin
   Hal_EarlyInit;
   t0 := Hal_Ticks;
   while Hal_Ticks < t0 + Hal_MsToTicks(100) do ;
+  Hal_InitInterrupts;
+  Hal_StartTimer(Hal_TickFrequency);
+  Hal_EnableInterrupts;
+  t0 := Hal_Ticks;
+  while Hal_Ticks < t0 + Hal_MsToTicks(1000) do Arch_Halt;
+  Puts('arm64: timer interrupts in 1 s: ');
+  PutDec(Arm64_TimerInterrupts);
+  Puts(#10);
   Puts('arm64: 100 ms elapsed on the generic counter, core id ');
   Arch_WriteMmio32(QWord($09000000), Ord('0') + Hal_CurrentCoreId);
   Puts(#10'arm64: bring-up milestone 1 reached'#10);

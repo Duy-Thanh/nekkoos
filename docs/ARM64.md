@@ -39,7 +39,7 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 ## Status
 
 - [x] Toolchain, link, boot to Pascal on QEMU virt, PL011 output, generic counter
-- [ ] Exception vectors, GIC, timer tick interrupt
+- [x] Exception vectors, GICv2, 250 Hz timer tick interrupt (fatal faults print ESR/ELR/FAR)
 - [ ] MMU + `Hal_*AddressSpace`, PMM from the DTB memory map
 - [ ] Generic kernel (`kernel_main`, scheduler) running on it
 - [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)

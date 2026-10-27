@@ -156,6 +156,9 @@ function Hal_BootKernelStackTop: QWord;
   (x86: the TSS ring-0 stack pointer). No-op for an unknown core. }
 procedure Hal_SetKernelStack(core: Cardinal; stackTop: QWord);
 
+{ ARM64-only, for bring-up tests: timer interrupts taken so far. }
+function Arm64_TimerInterrupts: QWord;
+
 implementation
 
 uses arch_interface;
@@ -171,8 +174,20 @@ const
 
   TICK_HZ = 250;
 
+  GICD_BASE = QWord($08000000);
+  GICD_CTLR = $000;
+  GICD_ISENABLER0 = $100;
+  GICC_BASE = QWord($08010000);
+  GICC_CTLR = $000;
+  GICC_PMR  = $004;
+  GICC_IAR  = $00C;
+  GICC_EOIR = $010;
+  TIMER_INTID = 30;      { EL1 physical timer, a private peripheral interrupt }
+
 var
   BootCounter: QWord;
+  TimerInterval: QWord;
+  IrqTicks: QWord;
 
 procedure UartPutc(c: Byte);
 begin
@@ -238,12 +253,65 @@ end;
 
 procedure Hal_InitInterrupts;
 begin
-  Unimplemented('Hal_InitInterrupts (GIC, exception vectors)');
+  Arch_InstallVectors;
+  { GICv2 on QEMU virt: distributor 0x08000000, CPU interface 0x08010000. }
+  Arch_WriteMmio32(GICD_BASE + GICD_CTLR, 0);
+  { Enable the EL1 physical timer PPI (INTID 30) in the banked ISENABLER0. }
+  Arch_WriteMmio32(GICD_BASE + GICD_ISENABLER0, Cardinal(1) shl TIMER_INTID);
+  Arch_WriteMmio32(GICD_BASE + GICD_CTLR, 1);
+  Arch_WriteMmio32(GICC_BASE + GICC_PMR, $FF);
+  Arch_WriteMmio32(GICC_BASE + GICC_CTLR, 1);
 end;
 
 procedure Hal_StartTimer(hz: Cardinal);
 begin
-  Unimplemented('Hal_StartTimer (generic timer interrupt)');
+  TimerInterval := Arch_ReadCounterFrequency div hz;
+  Arch_TimerProgram(TimerInterval);
+end;
+
+function Arm64_TimerInterrupts: QWord;
+begin
+  Arm64_TimerInterrupts := IrqTicks;
+end;
+
+{ Called from the IRQ vector (hardware_arm64.S) with interrupts masked. }
+procedure Arm64Irq; cdecl; public name 'Arm64Irq';
+var
+  iar, id: Cardinal;
+begin
+  iar := Arch_ReadMmio32(GICC_BASE + GICC_IAR);
+  id := iar and $3FF;
+  if id = TIMER_INTID then
+  begin
+    Inc(IrqTicks);
+    Arch_TimerRearm(TimerInterval);
+  end;
+  if id < 1020 then Arch_WriteMmio32(GICC_BASE + GICC_EOIR, iar);
+end;
+
+procedure PutHex(v: QWord);
+var
+  i: Integer;
+  d: Byte;
+begin
+  for i := 15 downto 0 do
+  begin
+    d := (v shr (i * 4)) and $F;
+    if d < 10 then UartPutc(Ord('0') + d) else UartPutc(Ord('a') + d - 10);
+  end;
+end;
+
+{ Any exception we do not handle: report and stop. }
+procedure Arm64Fault(esr, elr, far: QWord); cdecl; public name 'Arm64Fault';
+begin
+  UartPuts(#10'arm64: FATAL exception  ESR=');
+  PutHex(esr);
+  UartPuts(' ELR=');
+  PutHex(elr);
+  UartPuts(' FAR=');
+  PutHex(far);
+  UartPuts(#10);
+  while True do Arch_Halt;
 end;
 
 procedure Hal_InitUserApi;

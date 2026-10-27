@@ -208,3 +208,125 @@ FPC_DIVBYZERO:
         b       2b
 3:      .asciz  "\r\narm64: FATAL integer division by zero\r\n"
         .balign 4
+
+
+// ---------------------------------------------------------------------------
+// Exceptions. VBAR_EL1 table: 16 entries of 0x80 bytes. Only "current EL, SPx"
+// IRQ (offset 0x280) is a normal event; everything else is a fatal fault that
+// reports ESR/ELR/FAR to Arm64Fault (Pascal) and never returns.
+// ---------------------------------------------------------------------------
+        .macro SAVE_CALLER
+        sub     sp, sp, #(31*8 + 8 + 24*16)
+        stp     x0,  x1,  [sp, #0]
+        stp     x2,  x3,  [sp, #16]
+        stp     x4,  x5,  [sp, #32]
+        stp     x6,  x7,  [sp, #48]
+        stp     x8,  x9,  [sp, #64]
+        stp     x10, x11, [sp, #80]
+        stp     x12, x13, [sp, #96]
+        stp     x14, x15, [sp, #112]
+        stp     x16, x17, [sp, #128]
+        stp     x18, x29, [sp, #144]
+        str     x30,      [sp, #160]
+        add     x9, sp, #(31*8 + 8)
+        stp     q0,  q1,  [x9, #0]
+        stp     q2,  q3,  [x9, #32]
+        stp     q4,  q5,  [x9, #64]
+        stp     q6,  q7,  [x9, #96]
+        stp     q16, q17, [x9, #128]
+        stp     q18, q19, [x9, #160]
+        stp     q20, q21, [x9, #192]
+        stp     q22, q23, [x9, #224]
+        stp     q24, q25, [x9, #256]
+        stp     q26, q27, [x9, #288]
+        stp     q28, q29, [x9, #320]
+        stp     q30, q31, [x9, #352]
+        .endm
+        .macro RESTORE_CALLER
+        add     x9, sp, #(31*8 + 8)
+        ldp     q0,  q1,  [x9, #0]
+        ldp     q2,  q3,  [x9, #32]
+        ldp     q4,  q5,  [x9, #64]
+        ldp     q6,  q7,  [x9, #96]
+        ldp     q16, q17, [x9, #128]
+        ldp     q18, q19, [x9, #160]
+        ldp     q20, q21, [x9, #192]
+        ldp     q22, q23, [x9, #224]
+        ldp     q24, q25, [x9, #256]
+        ldp     q26, q27, [x9, #288]
+        ldp     q28, q29, [x9, #320]
+        ldp     q30, q31, [x9, #352]
+        ldp     x0,  x1,  [sp, #0]
+        ldp     x2,  x3,  [sp, #16]
+        ldp     x4,  x5,  [sp, #32]
+        ldp     x6,  x7,  [sp, #48]
+        ldp     x8,  x9,  [sp, #64]
+        ldp     x10, x11, [sp, #80]
+        ldp     x12, x13, [sp, #96]
+        ldp     x14, x15, [sp, #112]
+        ldp     x16, x17, [sp, #128]
+        ldp     x18, x29, [sp, #144]
+        ldr     x30,      [sp, #160]
+        add     sp, sp, #(31*8 + 8 + 24*16)
+        .endm
+
+        .macro FAULT_ENTRY
+        mrs     x0, esr_el1
+        mrs     x1, elr_el1
+        mrs     x2, far_el1
+        bl      Arm64Fault
+        b       .
+        .endm
+
+        .balign 2048
+vector_table:
+        .rept 4                         // current EL, SP0
+        .balign 128
+        FAULT_ENTRY
+        .endr
+        .balign 128                     // current EL, SPx: synchronous
+        FAULT_ENTRY
+        .balign 128                     // IRQ
+        SAVE_CALLER
+        bl      Arm64Irq
+        RESTORE_CALLER
+        eret
+        .balign 128                     // FIQ
+        FAULT_ENTRY
+        .balign 128                     // SError
+        FAULT_ENTRY
+        .rept 8                         // lower EL (user mode: not yet supported)
+        .balign 128
+        FAULT_ENTRY
+        .endr
+
+        .global Arch_InstallVectors
+Arch_InstallVectors:
+        adr     x0, vector_table
+        msr     vbar_el1, x0
+        isb
+        ret
+
+// Generic timer (EL1 physical): program a one-shot of `ticks` counter ticks and
+// enable it; Arch_TimerStop disables it.
+        .global Arch_TimerProgram
+Arch_TimerProgram:
+        msr     cntp_tval_el0, x0
+        mov     x1, #1
+        msr     cntp_ctl_el0, x1
+        isb
+        ret
+// Re-arm from the previous deadline instead of from "now", so interrupt latency
+// does not accumulate as drift: the tick rate stays exact on average.
+        .global Arch_TimerRearm
+Arch_TimerRearm:
+        mrs     x1, cntp_cval_el0
+        add     x1, x1, x0
+        msr     cntp_cval_el0, x1
+        isb
+        ret
+        .global Arch_TimerStop
+Arch_TimerStop:
+        msr     cntp_ctl_el0, xzr
+        isb
+        ret

@@ -13,7 +13,7 @@ p = subprocess.Popen(
     ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72", "-m", "512M",
      "-nographic", "-kernel", "build/arm64/kernel.elf"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-time.sleep(4)
+time.sleep(6)
 p.kill()
 out = p.communicate()[0].replace("\r", "")
 ok = True
@@ -21,6 +21,12 @@ for e in EXPECT:
     hit = e in out
     ok &= hit
     print(("[PASS] " if hit else "[FAIL] ") + e)
+import re
+m = re.search(r"timer interrupts in 1 s: (\d+)", out)
+n = int(m.group(1)) if m else -1
+hit = 200 <= n <= 260
+ok &= hit
+print(("[PASS] " if hit else "[FAIL] ") + f"timer ticks at ~250 Hz (got {n} in 1 s)")
 for b in BAD:
     if b in out:
         ok = False
