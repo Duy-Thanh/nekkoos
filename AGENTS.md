@@ -139,7 +139,7 @@ Con trỏ hàm do firmware/asm cấp đọc ra rồi ép sang kiểu thủ tục
 | Boot.cs | `boot/boot.pas` |
 | acpi.cs / API.cs | `apps/acpi_app.pas` / `apps/app_api.pas` |
 
-### 3.1 Trình tự khởi động (`kernel_main.pas`)
+### 3.1 Trình tự khởi động (`kernel_main.pas`; phần chung nằm ở `kernel_core.pas`: `Kernel_InitServices` + `Kernel_IdleLoop`, dùng cả cho ARM64)
 
 1. console + serial → 2. PMM (từ UEFI memory map) → VMM → heap → shadow buffer → FAT16 raw →
 3. GDT/TSS, IDT, remap PIC, tắt bus-master DMA PCI → 4. PIT, IPC, PRNG, vDSO, strands, **scheduler**, bật ngắt →

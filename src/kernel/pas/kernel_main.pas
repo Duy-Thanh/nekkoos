@@ -36,7 +36,7 @@ implementation
 
 uses arch_interface, arch_hal, io, kstring, libc, pmm, memmap_scan, heap,
   ipc_kernel, prng, strandscheduler, scheduler, ata_kernel, fat16_kernel,
-  input_drv, pe_loader, console, terminal, kstate;
+  input_drv, pe_loader, console, terminal, kstate, kernel_core;
 
 const
   { How long a daemon may take to report ready before it is treated as stuck. }
@@ -77,13 +77,6 @@ begin
   Sched_TerminateTask(id);
 end;
 
-{ A strand is a tiny run-to-completion routine the idle loop cycles through.
-  The slot is kept so the engine always has something registered; this one's
-  body was commented out in the C# original. }
-procedure StrandTask2;
-begin
-end;
-
 { Drain the boot thread's mailbox, recording who answered the handshake. }
 procedure DrainHandshakes;
 var
@@ -111,31 +104,18 @@ begin
   end;
 end;
 
-{ Body of the boot thread once it has nothing left to start, and of every
-  idle task. Entered by IRETQ, so it is a plain cdecl procedure that never
-  returns. }
-procedure KernelIdleLoop; cdecl;
+{ Idle-loop work specific to this platform. Only the boot thread may read the
+  boot thread's mailbox: this runs on the idle task of every other core too,
+  and when those drained it they swallowed handshake messages they did not
+  handle (the mouse's type 44 in particular), so the boot thread waited out its
+  deadline for a daemon that had in fact reported ready. And only until the
+  daemons are up: afterwards receiver 0 also carries keyboard scancodes (IRQ1
+  broadcasts to it), which must not be eaten. }
+procedure IdleHook;
 begin
-  while True do
-  begin
-    Arch_CompilerFence;
-
-    Strand_RunCycle;
-
-    { Only the boot thread may read the boot thread's mailbox. This loop also
-      runs as the idle task of every other core; when those drained it too,
-      they swallowed handshake messages they did not handle (the mouse's
-      type 44 in particular) and the boot thread then waited out its deadline
-      for a daemon that had in fact reported ready. }
-    { And only until the daemons are up: afterwards receiver 0 also carries
-      keyboard scancodes (IRQ1 broadcasts to it), which must not be eaten. }
-    if (Sched_GetCurrentThreadId = 0) and
-       ((not Ata_GetUseDaemon) or (not Fat16K_GetUseDaemon)) then
-      DrainHandshakes;
-
-    Io_Hlt;
-    Sched_Yield;
-  end;
+  if (Sched_GetCurrentThreadId = 0) and
+     ((not Ata_GetUseDaemon) or (not Fat16K_GetUseDaemon)) then
+    DrainHandshakes;
 end;
 
 { Load a daemon image from the volume and start it as a root background
@@ -244,15 +224,8 @@ begin
   { ── Phase 4: scheduler core ── }
   Hal_StartTimer(TICK_FREQUENCY_HZ);
 
-  IpcK_Init(8192);
-  PRNG_Init(Hal_Ticks);
-  Hal_InitUserApi;
-
-  Strand_Init;
-  Strand_Create(Pointer(@StrandTask2));
-
-  Sched_SetIdleLoop(Pointer(@KernelIdleLoop));
-  Sched_Init;
+  Kernel_SetIdleHook(Pointer(@IdleHook));
+  Kernel_InitServices;
 
   Hal_EnableInterrupts;
 
@@ -395,7 +368,7 @@ begin
 
   { This thread becomes core 0's idle task. }
   Sched_SetThreadPriority(0, SCHED_IDLE_PRIORITY);
-  KernelIdleLoop;
+  Kernel_IdleLoop;
 end;
 
 end.

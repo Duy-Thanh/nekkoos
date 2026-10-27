@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel;
 
 var
   Arm64_DtbPhys: QWord; external name 'Arm64_DtbPhys';
@@ -116,6 +116,33 @@ begin
   Spin(Ord('B'));
 end;
 
+{ Services check: allocate and free from the kernel heap, and pass one IPC
+  message through the generic mailbox code. }
+procedure CheckServices;
+var
+  a, b: PByte;
+  t, snd: Cardinal;
+  pay: QWord;
+  ok: Boolean;
+begin
+  a := Heap_Alloc(100);
+  b := Heap_Alloc(5000);
+  ok := (a <> nil) and (b <> nil) and (a <> b);
+  if ok then
+  begin
+    a[0] := $5A; a[99] := $A5; b[0] := $11; b[4999] := $22;
+    ok := (a[0] = $5A) and (a[99] = $A5) and (b[0] = $11) and (b[4999] = $22);
+  end;
+  Heap_Free(a);
+  Heap_Free(b);
+  if ok then Puts('arm64: heap alloc/free OK'#10) else Puts('arm64: heap FAILED'#10);
+
+  t := 0; snd := 0; pay := 0;
+  ok := IpcK_Send(77, 0, 0, 1234) and IpcK_ReceiveForRaw(0, t, snd, pay) and
+        (t = 77) and (pay = 1234);
+  if ok then Puts('arm64: ipc send/receive OK'#10) else Puts('arm64: ipc FAILED'#10);
+end;
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
@@ -142,6 +169,7 @@ begin
   PutDec(Pmm_GetFreePages);
   Puts(' free pages'#10);
   Hal_InitMemory(ramEnd);
+  Heap_Init;
   Puts('arm64: MMU on, kernel address space at ');
   PutDec(Hal_KernelAddressSpace);
   Puts(#10);
@@ -161,12 +189,13 @@ begin
   Puts(#10'arm64: bring-up milestone 1 reached'#10);
   { From here the boot thread is just thread 0, the idle task. }
   Arch_DisableInterrupts;
-  Sched_Init;
+  Kernel_InitServices;
+  CheckServices;
   Sched_CreateTask(QWord(@ThreadA));
   Sched_CreateTask(QWord(@ThreadB));
   Puts('arm64: scheduler started'#10);
   Arch_EnableInterrupts;
-  while True do Arch_Halt;
+  Kernel_IdleLoop;
 end;
 
 end.

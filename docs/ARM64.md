@@ -47,6 +47,7 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Device tree (`fdt.pas`) -> RAM size -> generic `pmm`; MMU on (identity map, 1 GiB blocks)
 - [x] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages; user VAs must stay outside the kernel's 1 GiB slots)
 - [x] Generic scheduler running on it: timer IRQ -> `Sched_SwitchTask` -> resume another thread's trap frame (two kernel threads alternate)
-- [ ] Generic `kernel_main` (needs heap, ipc, console init order, daemons) running on it
+- [x] Shared boot services via `kernel_core` (heap, IPC, PRNG, strand engine, scheduler, idle loop) used by both x86 `kernel_main` and `boot_arm64`
+- [ ] Daemons / `SpawnDaemon` on ARM64 (they are PE x86 apps loaded from an ATA disk: needs an ELF loader and a virtio-blk driver)
 - [ ] EL0 user mode, syscalls (`svc`), PE-less app loader (ELF)
 - [ ] Secondary cores via PSCI

@@ -19,7 +19,7 @@ cat > "$CFG" <<EOF
 EOF
 
 # Generic kernel units the ARM64 image already uses, then the arch units.
-GENERIC_MODULES=(fpc_runtime spinlock libc kstring pmm kstate prng console ipc ipc_kernel scheduler_dispatch scheduler heap)
+GENERIC_MODULES=(fpc_runtime spinlock libc kstring pmm kstate prng console ipc ipc_kernel scheduler_dispatch scheduler heap io strandscheduler kernel_core)
 for m in "${GENERIC_MODULES[@]}"; do
     echo "[arm64] Pascal (generic) $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/kernel/pas/$m.pas" >/dev/null

@@ -395,7 +395,8 @@ end;
 
 procedure Hal_InitUserApi;
 begin
-  Unimplemented('Hal_InitUserApi');
+  { No user mode yet, so no user API page to build. Hal_UserApiPage stops the
+    machine if anything asks for one before EL0 support exists. }
 end;
 
 procedure Hal_EnableInterrupts;
