@@ -61,6 +61,15 @@ KEYMAP = {
     "]": "bracket_right", "\\": "backslash", "=": "equal", "`": "grave_accent",
     "\n": "ret", "\t": "tab",
 }
+# Characters typed with Shift held, mapped to the unshifted key. Without this
+# a "~" (as in a FAT 8.3 alias like STRESS~1.EXE) was sent as "sendkey ~",
+# which QEMU ignores, so the guest received "stress1.exe".
+SHIFTED = {
+    "~": "grave_accent", "!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+    "^": "6", "&": "7", "*": "8", "(": "9", ")": "0", "_": "minus",
+    "+": "equal", "{": "bracket_left", "}": "bracket_right", "|": "backslash",
+    ":": "semicolon", '"': "apostrophe", "<": "comma", ">": "dot", "?": "slash",
+}
 
 
 # ============================================================================
@@ -198,6 +207,9 @@ def text_to_keys(text, per_cmd_delay=0.06):
             continue
         if ch.isupper():
             cmds.append(f"sendkey shift-{ch.lower()}")
+            continue
+        if ch in SHIFTED:
+            cmds.append(f"sendkey shift-{SHIFTED[ch]}")
             continue
         cmds.append(f"sendkey {KEYMAP.get(ch, ch)}")
     return cmds, per_cmd_delay
