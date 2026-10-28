@@ -417,10 +417,13 @@ begin
   for p := 0 to numPages - 1 do
   begin
     Hal_MapPageIn(physAddr + p * PAGE, myVAddr + p * PAGE, HAL_MAP_USER_RW, currentPml4);
-    { The target is only mapped now if it happens to be the loaded space;
-      otherwise the daemon maps it lazily. }
-    if targetPml4 = currentPml4 then
-      Hal_MapPageIn(physAddr + p * PAGE, targetVAddr + p * PAGE, HAL_MAP_USER_RW, targetPml4);
+    { The target gets the same frames, marked shared so destroying the target's
+      address space does not free them (the caller owns them). Mapping into a
+      space that is not the loaded one is fine; it had no mapping here before,
+      so there is no stale translation to flush. Until now this happened only
+      when the target's space was the loaded one, i.e. practically never, and
+      the target (dsrv.exe reading explorer's desktop) page-faulted. }
+    Hal_MapPageIn(physAddr + p * PAGE, targetVAddr + p * PAGE, HAL_MAP_USER_SHARED, targetPml4);
   end;
 
   Sched_SetThreadPhysPages(callerId, Sched_GetThreadPhysPages(callerId) + Cardinal(numPages));

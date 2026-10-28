@@ -36,6 +36,7 @@ const
   HAL_MAP_USER_RO   = QWord(3);     { user read-only }
   HAL_MAP_USER_GUARD = QWord(4);    { user, NOT present: a guard page }
   HAL_MAP_USER_DEVICE = QWord(5);  { user read/write device memory (MMIO), never executable }
+  HAL_MAP_USER_SHARED = QWord(6);  { user RW, frames owned by another process: never freed with this space }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
@@ -265,6 +266,7 @@ const
   PTE_AP_EL0 = QWord(1) shl 6;       { AP[1]: EL0 may access }
   PTE_AP_RO  = QWord(1) shl 7;       { AP[2]: read-only }
   PTE_GUARD  = QWord(1) shl 55;      { software bit on an invalid entry }
+  PTE_SHARED = QWord(1) shl 56;      { software bit: frames owned elsewhere, never freed here }
   ADDR_MASK  = QWord($0000FFFFFFFFF000);
   MAIR_VALUE = QWord($FF00);         { idx0 Device-nGnRnE, idx1 Normal write-back }
   { T0SZ=16, IRGN0/ORGN0 write-back, inner shareable, 4K granule, 40-bit PA,
@@ -665,6 +667,7 @@ begin
   case perms of
     HAL_MAP_KERNEL_RW: pte := pte or PTE_XN;
     HAL_MAP_USER_RW:   pte := pte or PTE_AP_EL0 or PTE_PXN;
+    HAL_MAP_USER_SHARED: pte := pte or PTE_AP_EL0 or PTE_PXN or PTE_SHARED;
     HAL_MAP_USER_RO:   pte := pte or PTE_AP_EL0 or PTE_AP_RO or PTE_PXN;
     HAL_MAP_USER_DEVICE:
       { Device-nGnRnE, not shareable-cacheable: MMIO must never be cached. }
@@ -704,7 +707,9 @@ begin
     e := table[i];
     if (e and PTE_VALID) = 0 then Continue;
     if level = 3 then
-      Pmm_FreePage(Pointer(e and ADDR_MASK))
+    begin
+      if (e and PTE_SHARED) = 0 then Pmm_FreePage(Pointer(e and ADDR_MASK));
+    end
     else if (e and 3) = 3 then
       FreeTree(PQWord(e and ADDR_MASK), level + 1);
   end;

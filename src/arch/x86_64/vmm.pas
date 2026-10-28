@@ -69,6 +69,9 @@ const
   ENTRY_WRITABLE     = QWord(2);
   ENTRY_TABLE        = QWord(7);   { P|W|U on every intermediate level }
   ENTRY_HUGE         = QWord($80);   { PS bit, only valid in PD/PDPT entries }
+  { Software bit 9 of a leaf entry: this mapping shares frames owned by another
+    process (syscall 101). Destroying this address space must not free them. }
+  ENTRY_SHARED       = QWord($200);
 
   { x86-64 2 MiB huge page. }
   HUGE_PAGE_SIZE     = QWord(2097152);
@@ -487,7 +490,7 @@ begin
                 begin
                   physPage := entry1 and (not QWord($FFF));
                   if (physPage = 0) or (physPage >= PhysLimit) then Continue;
-                  if not IsProtectedPage(physPage) then
+                  if ((entry1 and ENTRY_SHARED) = 0) and not IsProtectedPage(physPage) then
                     Pmm_FreePage(Pointer(physPage));
                 end;
               end;
