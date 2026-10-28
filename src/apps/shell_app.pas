@@ -260,7 +260,7 @@ begin
 
     if (c = 10) or (c = 13) then
     begin
-      ShellPrint(W('#10'));
+      ShellPrint(W(#10));
       buffer[len] := 0;
       Break;
     end
@@ -304,7 +304,7 @@ begin
         the captured content or be silently swallowed. }
       if (c = 10) or (c = 13) then
       begin
-        ShellPrint(W('#10'));
+        ShellPrint(W(#10));
         Break;
       end
       else if (c = 8) and (lineLen > 0) then
@@ -520,7 +520,7 @@ begin
 
   SharedMem := Pointer(App_GetSharedMem);
 
-  ShellPrint(W('#10======================================================='#10 +
+  ShellPrint(W(#10'======================================================='#10 +
                '           NEKKO OS USERLAND SHELL (RING 3)'#10 +
                '======================================================='#10));
 
@@ -544,7 +544,7 @@ begin
         ClearBuffer(PByte(SharedNameBuffer), 512);
         ClearBuffer(PByte(SharedCmdBuffer), 512);
 
-        ShellPrint(W('#10[*] Shell: SIGTERM received. Sweeping workspace and signing off. Goodbye!'#10));
+        ShellPrint(W(#10'[*] Shell: SIGTERM received. Sweeping workspace and signing off. Goodbye!'#10));
         App_Exit;
         while True do App_WaitIPC;
       end;
@@ -567,7 +567,7 @@ begin
 
       if c = 10 then
       begin
-        ShellPrint(W('#10'));
+        ShellPrint(W(#10));
         { Trailing spaces are trimmed before the line is dispatched. }
         while (cmdLen > 0) and (SharedCmdBuffer[cmdLen - 1] = Ord(' ')) do Dec(cmdLen);
         SharedCmdBuffer[cmdLen] := 0;
@@ -660,7 +660,7 @@ begin
             end
             else if App_MsgType(@Msg[0]) = IPC_READ_EOF then
             begin
-              ShellPrint(W('#10'));
+              ShellPrint(W(#10));
               Break;
             end;
           end
@@ -705,7 +705,7 @@ begin
 
       else if StrEq(SharedCmdBuffer, W('shutdown')) then
       begin
-        ShellPrint(W('#10[*] Shell: Initiating System Shutdown. Sweeping workspace and signing off. Goodbye!'#10));
+        ShellPrint(W(#10'[*] Shell: Initiating System Shutdown. Sweeping workspace and signing off. Goodbye!'#10));
         ClearBuffer(SharedRespData, 8192);
         ClearBuffer(PByte(SharedNameBuffer), 512);
         App_RunCmd(SharedCmdBuffer, GuiPixels);
@@ -713,7 +713,7 @@ begin
 
       else if StrEq(SharedCmdBuffer, W('reboot')) then
       begin
-        ShellPrint(W('#10[*] Shell: Initiating System Reboot. Sweeping workspace... See you on the other side!'#10));
+        ShellPrint(W(#10'[*] Shell: Initiating System Reboot. Sweeping workspace... See you on the other side!'#10));
         ClearBuffer(SharedRespData, 8192);
         ClearBuffer(PByte(SharedNameBuffer), 512);
         App_RunCmd(SharedCmdBuffer, GuiPixels);

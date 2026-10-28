@@ -171,7 +171,7 @@ begin
 
     if (c = 10) or (c = 13) then
     begin
-      App_Print(W('#10'));
+      App_Print(W(#10));
       buffer[len] := 0;
       Break;
     end
@@ -249,7 +249,7 @@ begin
               database from overwriting this process's memory. }
             if fileSize > bufferCapacity then
             begin
-              App_Print(W('#10[!!!] FATAL: File too large for buffer (potential overflow blocked)!'#10));
+              App_Print(W(#10'[!!!] FATAL: File too large for buffer (potential overflow blocked)!'#10));
               App_SendIPC(FAT16_PID, IPC_READ_ACK, 0);
               tooBig := True;
               Break;
@@ -423,7 +423,7 @@ begin
 
   PrintLineWithNum(W('FAT16 Daemon connected at PID: '), FAT16_PID);
 
-  App_Print(W('#10======================================================='#10 +
+  App_Print(W(#10'======================================================='#10 +
                '           NEKKO OS SECURITY GATEWAY (LOGIN)'#10 +
                '======================================================='#10));
 
@@ -439,7 +439,7 @@ begin
 
     if not ChangeDirectoryIPC(W('ETC')) then
     begin
-      App_Print(W('#10[!!!] CRITICAL ERROR: /ETC DIRECTORY NOT FOUND!'#10));
+      App_Print(W(#10'[!!!] CRITICAL ERROR: /ETC DIRECTORY NOT FOUND!'#10));
       Break;
     end;
     passSize := ReadFileIPC(W('PASSWD'), @PassFileBuf[0], 4096);
@@ -447,7 +447,7 @@ begin
 
     if passSize = 0 then
     begin
-      App_Print(W('#10[!!!] CRITICAL ERROR: /ETC/PASSWD NOT FOUND OR EMPTY!'#10));
+      App_Print(W(#10'[!!!] CRITICAL ERROR: /ETC/PASSWD NOT FOUND OR EMPTY!'#10));
       Break;
     end;
 
@@ -579,7 +579,7 @@ begin
 
     if authSuccess then
     begin
-      App_Print(W('#10[+] AUTHENTICATED! Welcome to the Multiverse!'#10));
+      App_Print(W(#10'[+] AUTHENTICATED! Welcome to the Multiverse!'#10));
 
       { Still root at this point, so make sure /HOME and the account's own
         home directory exist and are owned by that account - not by root. }
@@ -628,7 +628,7 @@ begin
     else
     begin
       Dec(attempts);
-      App_Print(W('#10[!] ACCESS DENIED! Incorrect Username or Password.'#10));
+      App_Print(W(#10'[!] ACCESS DENIED! Incorrect Username or Password.'#10));
       if attempts > 0 then
       begin
         App_Print(W('[!] Invalid credentials. Try again.'#10#10));
@@ -643,7 +643,7 @@ begin
   { Out of attempts. This session is finished for good - restarting the login
     process is the only way to try again, which combined with the backoff
     above spreads a brute force across many sessions. }
-  App_Print(W('#10[!!!] SYSTEM LOCKDOWN INITIATED [!!!]'#10));
+  App_Print(W(#10'[!!!] SYSTEM LOCKDOWN INITIATED [!!!]'#10));
   App_Exit;
   while True do App_WaitIPC;
 end;
