@@ -52,7 +52,9 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] `Hal_MapPageIn` / `Hal_CreateUserAddressSpace` / `Hal_DestroyAddressSpace` (4 KiB pages; user VAs must stay outside the kernel's 1 GiB slots)
 - [x] Generic scheduler running on it: timer IRQ -> `Sched_SwitchTask` -> resume another thread's trap frame (two kernel threads alternate)
 - [x] Shared boot services via `kernel_core` (heap, IPC, PRNG, strand engine, scheduler, idle loop) used by both x86 `kernel_main` and `boot_arm64`
-- [ ] Daemons / `SpawnDaemon` on ARM64 (they are PE x86 apps loaded from an ATA disk: needs an ELF loader and a virtio-blk driver)
+- [x] virtio-blk (modern MMIO transport, polled): read/write sectors, bounds-checked; `run_arm64.sh` attaches `build/arm64/disk.img`
+- [ ] A filesystem on that disk (FAT16 code is generic but sits behind the x86 ATA daemon), then loading user programs from it
+- [ ] Daemons / `SpawnDaemon` on ARM64 (PE x86 apps; need ELF builds of ATA/FAT16/ACPI/MOUSE or ARM64 replacements)
 - [x] EL0 user mode: `svc` syscalls (number in x8, "arg 1" in x1, result in x0; exit/print/uptime/yield), generic `elf_loader`, user-pointer vetting via `Hal_IsUserPageMapped`; a user program that touches kernel memory is reported and terminated, the system keeps running
 - [x] The generic `syscall_dispatch` serves EL0 (arm64 `syscall_impl` reports hardware-only calls as unavailable); `Hal_IsUserPageMapped` replaced the x86 pointer walker in dispatch/shell/sudo; PSCI `HAL_Reboot`/`HAL_Shutdown` (shutdown verified)
 - [ ] Hardware syscalls for real: keyboard, framebuffer, MapPhys

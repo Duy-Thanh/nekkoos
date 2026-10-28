@@ -3,6 +3,9 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "arm64: virtio-blk: 2048 sectors",
+    "arm64: disk sector 0: NEKKO-VIRTIO-OK",
+    "arm64: disk write/read-back OK",
     "arm64 EL0: hello from user mode",
     "arm64 EL0: getuid syscall OK",
     "arm64 EL0: user program exiting",
@@ -21,8 +24,7 @@ EXPECT = [
 BAD = ["UNIMPLEMENTED", "FATAL"]
 
 p = subprocess.Popen(
-    ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72", "-m", "512M",
-     "-nographic", "-kernel", "build/arm64/kernel.bin"],
+    ["./run_arm64.sh"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 time.sleep(6)
 p.kill()

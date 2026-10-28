@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, virtio_blk;
 
 var
   UserHelloStart: Byte; external name 'user_hello_start';
@@ -153,6 +153,44 @@ const
   HelloName: array[0..5] of Word = (72, 69, 76, 76, 79, 0);          { HELLO }
   CrashName: array[0..5] of Word = (67, 82, 65, 83, 72, 0);          { CRASH }
 
+{ Disk check: read sector 0 (the build plants a signature), then write a
+  pattern to sector 1, read it back and compare. }
+procedure CheckDisk;
+var
+  buf: PByte;
+  i: Integer;
+  ok: Boolean;
+begin
+  if not VirtioBlk_Init then
+  begin
+    Puts('arm64: no virtio-blk disk'#10);
+    Exit;
+  end;
+  Puts('arm64: virtio-blk: ');
+  PutDec(VirtioBlk_Capacity);
+  Puts(' sectors'#10);
+  buf := PByte(Pmm_AllocatePage);
+  if buf = nil then Exit;
+  if VirtioBlk_Read(0, 1, buf) then
+  begin
+    Puts('arm64: disk sector 0: ');
+    for i := 0 to 15 do
+      if buf[i] <> 0 then Arch_WriteMmio32(QWord($09000000), buf[i]);
+    Puts(#10);
+  end
+  else
+    Puts('arm64: disk read FAILED'#10);
+  for i := 0 to 511 do buf[i] := Byte(i * 7 + 3);
+  ok := VirtioBlk_Write(1, 1, buf);
+  for i := 0 to 511 do buf[i] := 0;
+  ok := ok and VirtioBlk_Read(1, 1, buf);
+  for i := 0 to 511 do ok := ok and (buf[i] = Byte(i * 7 + 3));
+  { A read past the end must be refused, not sent to the device. }
+  ok := ok and (not VirtioBlk_Read(VirtioBlk_Capacity, 1, buf));
+  if ok then Puts('arm64: disk write/read-back OK'#10) else Puts('arm64: disk write/read-back FAILED'#10);
+  Pmm_FreePage(buf);
+end;
+
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
@@ -201,6 +239,7 @@ begin
   Arch_DisableInterrupts;
   Kernel_InitServices;
   CheckServices;
+  CheckDisk;
   Sched_CreateTask(QWord(@ThreadA));
   Sched_CreateTask(QWord(@ThreadB));
   Puts('arm64: scheduler started'#10);

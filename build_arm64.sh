@@ -24,7 +24,7 @@ for m in "${GENERIC_MODULES[@]}"; do
     echo "[arm64] Pascal (generic) $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "$(ls src/kernel/pas/$m.pas src/drivers/$m.pas 2>/dev/null | head -1)" >/dev/null
 done
-PAS_MODULES=(arch_interface serial terminal syscall_impl fdt arch_hal traps_arm64 boot_arm64)
+PAS_MODULES=(arch_interface serial terminal syscall_impl virtio_blk fdt arch_hal traps_arm64 boot_arm64)
 for m in "${PAS_MODULES[@]}"; do
     echo "[arm64] Pascal $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/arch/arm64/$m.pas"
@@ -43,4 +43,7 @@ for m in "${PAS_MODULES[@]}" "${GENERIC_MODULES[@]}"; do OBJS+=("$OUT/$m.o"); do
 ld.lld -T src/arch/arm64/link.ld -o "$OUT/kernel.elf" "${OBJS[@]}"
 # QEMU only passes the device-tree pointer (x0) to a raw Image, not to an ELF.
 llvm-objcopy -O binary "$OUT/kernel.elf" "$OUT/kernel.bin"
+# Test disk: sector 0 carries a signature the kernel prints back.
+dd if=/dev/zero of="$OUT/disk.img" bs=1M count=1 status=none
+printf 'NEKKO-VIRTIO-OK\n' | dd of="$OUT/disk.img" conv=notrunc status=none
 echo "[arm64] built $OUT/kernel.bin"
