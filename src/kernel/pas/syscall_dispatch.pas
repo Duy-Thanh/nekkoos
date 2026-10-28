@@ -301,6 +301,9 @@ begin
     { 102: DMA buffer for a driver daemon; physical address in the second result }
     102: Disp_AllocDma(id, isKing, ctx);
 
+    { 103: free pages of the caller's own memory }
+    103: Disp_FreeMem(id, ctx);
+
     { 13: hardware report }
     13:
       begin

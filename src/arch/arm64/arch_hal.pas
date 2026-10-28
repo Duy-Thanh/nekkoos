@@ -36,7 +36,6 @@ const
   HAL_MAP_USER_RO   = QWord(3);     { user read-only }
   HAL_MAP_USER_GUARD = QWord(4);    { user, NOT present: a guard page }
   HAL_MAP_USER_DEVICE = QWord(5);  { user read/write device memory (MMIO), never executable }
-  HAL_MAP_USER_SHARED = QWord(6);  { user RW, frames owned by another process: never freed with this space }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
@@ -135,6 +134,11 @@ function Hal_IsCanonical(addr: QWord): Boolean;
   loaded one). `perms` is HAL_MAP_*. }
 procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
 
+{ Remove the 4 KiB mapping of `virt` in `space` and return the frame it mapped
+  (0 if there was none). The caller owns that frame's reference and must
+  release it with Pmm_FreePage. }
+function Hal_UnmapPage(space, virt: QWord): QWord;
+
 { The address space currently loaded on this core. }
 function Hal_CurrentAddressSpace: QWord;
 
@@ -190,6 +194,9 @@ function Hal_PeMachine: Word;
 { Lowest virtual address user mappings may use; below it the kernel owns the
   address space. }
 function Hal_UserVaMin: QWord;
+
+{ One past the highest address user mappings may use. }
+function Hal_UserVaMax: QWord;
 
 { Make freshly written code at [addr, addr+len) visible to instruction fetch
   (ARM64 needs data-cache clean + instruction-cache invalidate; x86 is coherent). }
@@ -266,7 +273,6 @@ const
   PTE_AP_EL0 = QWord(1) shl 6;       { AP[1]: EL0 may access }
   PTE_AP_RO  = QWord(1) shl 7;       { AP[2]: read-only }
   PTE_GUARD  = QWord(1) shl 55;      { software bit on an invalid entry }
-  PTE_SHARED = QWord(1) shl 56;      { software bit: frames owned elsewhere, never freed here }
   ADDR_MASK  = QWord($0000FFFFFFFFF000);
   MAIR_VALUE = QWord($FF00);         { idx0 Device-nGnRnE, idx1 Normal write-back }
   { T0SZ=16, IRGN0/ORGN0 write-back, inner shareable, 4K granule, 40-bit PA,
@@ -667,7 +673,6 @@ begin
   case perms of
     HAL_MAP_KERNEL_RW: pte := pte or PTE_XN;
     HAL_MAP_USER_RW:   pte := pte or PTE_AP_EL0 or PTE_PXN;
-    HAL_MAP_USER_SHARED: pte := pte or PTE_AP_EL0 or PTE_PXN or PTE_SHARED;
     HAL_MAP_USER_RO:   pte := pte or PTE_AP_EL0 or PTE_AP_RO or PTE_PXN;
     HAL_MAP_USER_DEVICE:
       { Device-nGnRnE, not shareable-cacheable: MMIO must never be cached. }
@@ -677,6 +682,31 @@ begin
     pte := PTE_GUARD;
   end;
   l3[(virt shr 12) and 511] := pte;
+  Arch_FlushTLB;
+end;
+
+function Hal_UnmapPage(space, virt: QWord): QWord;
+var
+  l1, l2, l3: PQWord;
+  e: QWord;
+begin
+  Hal_UnmapPage := 0;
+  if (not Hal_AddressSpaceValid(space)) or (virt < Hal_UserVaMin) or
+     (not Hal_IsCanonical(virt)) then Exit;
+  e := PQWord(space)[(virt shr 39) and 511];
+  if (e and 3) <> 3 then Exit;
+  l1 := PQWord(e and ADDR_MASK);
+  e := l1[(virt shr 30) and 511];
+  if (e and 3) <> 3 then Exit;
+  l2 := PQWord(e and ADDR_MASK);
+  e := l2[(virt shr 21) and 511];
+  if (e and 3) <> 3 then Exit;
+  l3 := PQWord(e and ADDR_MASK);
+  e := l3[(virt shr 12) and 511];
+  if (e and 3) <> 3 then Exit;
+  Hal_UnmapPage := e and ADDR_MASK;
+  l3[(virt shr 12) and 511] := 0;
+  { Single-threaded process: only this core can hold the translation. }
   Arch_FlushTLB;
 end;
 
@@ -707,9 +737,7 @@ begin
     e := table[i];
     if (e and PTE_VALID) = 0 then Continue;
     if level = 3 then
-    begin
-      if (e and PTE_SHARED) = 0 then Pmm_FreePage(Pointer(e and ADDR_MASK));
-    end
+      Pmm_FreePage(Pointer(e and ADDR_MASK))     { reference counted, see pmm }
     else if (e and 3) = 3 then
       FreeTree(PQWord(e and ADDR_MASK), level + 1);
   end;
@@ -719,19 +747,26 @@ end;
 procedure Hal_DestroyAddressSpace(space: QWord);
 var
   l0, l1: PQWord;
-  i: Integer;
+  i, slot: Integer;
   e: QWord;
 begin
   if (space = 0) or (space = KernelRoot) or (space = Hal_CurrentAddressSpace) then Exit;
   l0 := PQWord(space);
-  l1 := PQWord(l0[0] and ADDR_MASK);
-  { Slots that are still the kernel's 1 GiB blocks are shared: leave them. }
-  for i := 0 to 511 do
+  { Every L0 slot can hold user mappings (stacks and images live far apart, in
+    different slots). Slot 0 also carries the copy of the kernel's L1, whose
+    1 GiB blocks are shared and must stay; tables below a block-free L1 entry
+    are freed. }
+  for slot := 0 to 511 do
   begin
-    e := l1[i];
-    if ((e and 3) = 3) then FreeTree(PQWord(e and ADDR_MASK), 2);
+    if (l0[slot] and 3) <> 3 then Continue;
+    l1 := PQWord(l0[slot] and ADDR_MASK);
+    for i := 0 to 511 do
+    begin
+      e := l1[i];
+      if (e and 3) = 3 then FreeTree(PQWord(e and ADDR_MASK), 2);
+    end;
+    Pmm_FreePage(l1);
   end;
-  Pmm_FreePage(l1);
   Pmm_FreePage(l0);
 end;
 
@@ -810,6 +845,11 @@ end;
 function Hal_HasPortIo: Boolean;
 begin
   Hal_HasPortIo := False;
+end;
+
+function Hal_UserVaMax: QWord;
+begin
+  Hal_UserVaMax := QWord($0000800000000000);
 end;
 
 function Hal_PeMachine: Word;

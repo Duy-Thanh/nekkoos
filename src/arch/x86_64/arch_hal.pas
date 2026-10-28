@@ -37,7 +37,6 @@ const
   HAL_MAP_USER_RO   = QWord($05);   { present + user, read-only }
   HAL_MAP_USER_GUARD = QWord($04);  { user, NOT present: a guard page }
   HAL_MAP_USER_DEVICE = QWord($07);  { device registers: same bits as user RW here }
-  HAL_MAP_USER_SHARED = QWord($207);  { user RW, frames owned by another process: never freed with this space }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
@@ -136,6 +135,11 @@ function Hal_IsCanonical(addr: QWord): Boolean;
   loaded one). `perms` is HAL_MAP_*. }
 procedure Hal_MapPageIn(phys, virt, perms: QWord; space: QWord);
 
+{ Remove the 4 KiB mapping of `virt` in `space` and return the frame it mapped
+  (0 if there was none). The caller owns that frame's reference and must
+  release it with Pmm_FreePage. }
+function Hal_UnmapPage(space, virt: QWord): QWord;
+
 { The address space currently loaded on this core. }
 function Hal_CurrentAddressSpace: QWord;
 
@@ -191,6 +195,9 @@ function Hal_PeMachine: Word;
 { Lowest virtual address user mappings may use; below it the kernel owns the
   address space. }
 function Hal_UserVaMin: QWord;
+
+{ One past the highest address user mappings may use. }
+function Hal_UserVaMax: QWord;
 
 { Make freshly written code at [addr, addr+len) visible to instruction fetch
   (ARM64 needs data-cache clean + instruction-cache invalidate; x86 is coherent). }
@@ -388,6 +395,11 @@ begin
   Vmm_MapPageIn(phys, virt, perms, Pointer(space));
 end;
 
+function Hal_UnmapPage(space, virt: QWord): QWord;
+begin
+  Hal_UnmapPage := Vmm_UnmapPageIn(virt, Pointer(space));
+end;
+
 function Hal_CurrentAddressSpace: QWord;
 begin
   Hal_CurrentAddressSpace := Vmm_ReadCr3 and QWord($000FFFFFFFFFF000);
@@ -506,6 +518,11 @@ end;
 function Hal_HasPortIo: Boolean;
 begin
   Hal_HasPortIo := True;
+end;
+
+function Hal_UserVaMax: QWord;
+begin
+  Hal_UserVaMax := QWord($0000800000000000);
 end;
 
 function Hal_PeMachine: Word;

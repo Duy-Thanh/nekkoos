@@ -63,7 +63,21 @@ procedure Pmm_Init(mapPtr: PByte; mapSize, descSize, largestFreeStart: QWord);
 function Pmm_AllocatePage: Pointer;
 function Pmm_AllocatePageBelow4GB: Pointer;
 function Pmm_AllocateContiguousPages(count: QWord): Pointer;
+{ Drop one owner of the page. Pages are reference counted: Pmm_Allocate* hand
+  out a page with one owner, Pmm_RefPage adds another (a second address space
+  mapping the same frame), and the page returns to the allocator only when the
+  last owner lets go. Freeing a page nobody owns is ignored if it is reserved
+  memory (device registers, firmware, the kernel image: pages the allocator
+  never handed out, which processes can still map and later "free" when they
+  die) and reported if it is already free (double free). }
 procedure Pmm_FreePage(ptr: Pointer);
+
+{ Add one owner. False when the count is saturated (255). Reserved pages need
+  no counting and always succeed. }
+function Pmm_RefPage(ptr: Pointer): Boolean;
+
+{ Current owner count (0 for a free or reserved page); for tests and checks. }
+function Pmm_RefCount(ptr: Pointer): Byte;
 
 implementation
 
@@ -75,6 +89,9 @@ var
   FreePages: QWord = 0;
   BitmapSize: QWord = 0;
   LastUsedIndex: QWord = 0;
+  { One byte per page: number of owners (0 = free or reserved). Lives right
+    after the bitmap. }
+  Refs: PByte = nil;
 
 procedure PMM_SetState(aBitmap: PByte; aTotalPages: QWord; aBitmapSize: QWord; aFreePages: QWord); cdecl;
 begin
@@ -330,6 +347,7 @@ var
 begin
   irq := Spinlock_AcquireSafe_Pas(@PmmLock);
   index := PMM_AllocatePageIndex;
+  if (index <> PMM_INVALID_INDEX) and (Refs <> nil) then Refs[index] := 1;
   Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
 
   if index = PMM_INVALID_INDEX then
@@ -353,6 +371,7 @@ var
 begin
   irq := Spinlock_AcquireSafe_Pas(@PmmLock);
   index := PMM_AllocatePageBelow4GBIndex;
+  if (index <> PMM_INVALID_INDEX) and (Refs <> nil) then Refs[index] := 1;
   Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
 
   if index = PMM_INVALID_INDEX then
@@ -387,6 +406,8 @@ begin
 
   irq := Spinlock_AcquireSafe_Pas(@PmmLock);
   index := PMM_AllocateContiguousIndex(count);
+  if (index <> PMM_INVALID_INDEX) and (Refs <> nil) then
+    for remaining := 0 to count - 1 do Refs[index + remaining] := 1;
   Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
 
   if index = PMM_INVALID_INDEX then
@@ -420,6 +441,7 @@ var
   addr: QWord;
   index: QWord;
   status: Byte;
+  doubleFree: Boolean;
 begin
   if ptr = nil then Exit;
 
@@ -429,16 +451,61 @@ begin
   if (addr mod 4096) <> 0 then Exit;
 
   index := addr div 4096;
+  doubleFree := False;
 
   irq := Spinlock_AcquireSafe_Pas(@PmmLock);
-  status := PMM_FreePageByIndex(index);
+  if (Refs <> nil) and (index < TotalPages) then
+  begin
+    if Refs[index] > 1 then
+      Dec(Refs[index])                      { another owner remains }
+    else if Refs[index] = 1 then
+    begin
+      Refs[index] := 0;
+      PMM_FreePageByIndex(index);
+    end
+    else if PMM_TestBit(index) = 0 then
+      doubleFree := True                    { already free }
+    { else: reserved memory the allocator never handed out: not ours to free }
+  end
+  else
+  begin
+    status := PMM_FreePageByIndex(index);
+    doubleFree := status = 2;
+  end;
   Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
 
-  if status = 2 then
+  if doubleFree then
   begin
     Terminal_SetColor_Pas($00FF0000);
     Terminal_Print_Pas(W('[!] PMM WARNING: Attempt to free unallocated page!'#13#10));
   end;
+end;
+
+function Pmm_RefPage(ptr: Pointer): Boolean;
+var
+  irq: Byte;
+  index: QWord;
+begin
+  Pmm_RefPage := False;
+  if (ptr = nil) or ((QWord(ptr) mod 4096) <> 0) then Exit;
+  index := QWord(ptr) div 4096;
+  if (Refs = nil) or (index >= TotalPages) then Exit;
+  irq := Spinlock_AcquireSafe_Pas(@PmmLock);
+  if Refs[index] = 0 then
+    Pmm_RefPage := PMM_TestBit(index) = 1      { reserved: nothing to count }
+  else if Refs[index] < 255 then
+  begin
+    Inc(Refs[index]);
+    Pmm_RefPage := True;
+  end;
+  Spinlock_ReleaseSafe_Pas(@PmmLock, irq);
+end;
+
+function Pmm_RefCount(ptr: Pointer): Byte;
+begin
+  Pmm_RefCount := 0;
+  if (Refs <> nil) and (QWord(ptr) div 4096 < TotalPages) then
+    Pmm_RefCount := Refs[QWord(ptr) div 4096];
 end;
 
 procedure Pmm_Init(mapPtr: PByte; mapSize, descSize, largestFreeStart: QWord);
@@ -447,7 +514,7 @@ const
   MAX_PHYS = QWord($100000000000);         { 256 TiB }
   U64_MAX = QWord($FFFFFFFFFFFFFFFF);
 var
-  numEntries, i, j, maxPhysicalAddress, topAddress, totalPg, bitmapBytes: QWord;
+  refsOffset, numEntries, i, j, maxPhysicalAddress, topAddress, totalPg, bitmapBytes: QWord;
   bitmapPtr: PByte;
   descPtr: PByte;
   startPage, nPages, freePg, bitmapPages, bitmapStartPage: QWord;
@@ -476,12 +543,16 @@ begin
   if bitmapBytes = 0 then bitmapBytes := 1;
 
   bitmapPtr := PByte(largestFreeStart);
-  if largestFreeStart + bitmapBytes > maxPhysicalAddress then Exit;
+  { The reference counts follow the bitmap: one byte per page, 8-aligned. }
+  refsOffset := (bitmapBytes + 7) and not QWord(7);
+  if largestFreeStart + refsOffset + totalPg > maxPhysicalAddress then Exit;
+  for i := 0 to totalPg - 1 do PByte(largestFreeStart + refsOffset)[i] := 0;
 
   { Everything starts as used; free regions are cleared below. }
   for i := 0 to bitmapBytes - 1 do bitmapPtr[i] := $FF;
 
   PMM_SetState(bitmapPtr, totalPg, bitmapBytes, 0);
+  Refs := PByte(largestFreeStart + refsOffset);
 
   freePg := 0;
   for i := 0 to numEntries - 1 do
@@ -504,7 +575,7 @@ begin
   end;
 
   { The bitmap itself occupies pages inside the region it describes. }
-  bitmapPages := (bitmapBytes + 4095) div 4096;
+  bitmapPages := (refsOffset + totalPg + 4095) div 4096;     { bitmap + counts }
   bitmapStartPage := largestFreeStart div 4096;
   for i := 0 to bitmapPages - 1 do
     if bitmapStartPage + i < totalPg then

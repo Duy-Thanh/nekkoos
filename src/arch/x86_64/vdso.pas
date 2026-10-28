@@ -228,6 +228,7 @@ begin
   AddSyscall(60);                   { 34 AcquireAtaHw }
   AddSyscall(61);                   { 35 ReleaseAtaHw }
   AddSyscall(94);                   { 36 SudoRun }
+  AddSyscall(103);                  { 37 FreeMem }
 
   Terminal_SetColor_Pas($00FF00FF);
   Terminal_Print_Pas(W('[+] vDSO Gateway forged in RAM! Absolute KASLR Ready.'#13#10));

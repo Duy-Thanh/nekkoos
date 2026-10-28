@@ -188,7 +188,7 @@ var
   pay, start: QWord;
   data: PByte;
   size, i: Cardinal;
-  t0: QWord;
+  t0, before: QWord;
   ok: Boolean;
 begin
   start := Hal_Ticks;
@@ -239,6 +239,29 @@ begin
   end
   else
     Puts('arm64: reading DISKAPP.ELF FAILED'#10);
+  { Run MEMTEST twice. The first run claims the thread slot's kernel stack,
+    which is kept for reuse by design; the second run must then leave every
+    frame it took (image, stack, tables, the pages it allocated and freed)
+    exactly as it found it. }
+  size := 0;
+  data := Fat16K_ReadFile(W('MEMTEST.ELF'), @size, -1);
+  if (data <> nil) and (size > 0) then
+  begin
+    for ok := False to True do
+    begin
+      before := Pmm_GetFreePages;
+      if ElfLoader_Spawn(data, size, True, False, True, W('MEMTEST'), 5) < 0 then
+        Puts('arm64: MEMTEST.ELF rejected by the loader'#10);
+      start := Hal_Ticks;
+      while Hal_Ticks - start < Hal_MsToTicks(1500) do IpcK_WaitForMessage(Cardinal(Sched_GetCurrentThreadId));
+    end;
+    Heap_Free(data);
+    if Pmm_GetFreePages = before then Puts('arm64: memtest left no frames behind'#10)
+    else begin Puts('arm64: memtest LEAKED frames: '); PutDec(before - Pmm_GetFreePages); Puts(#10); end;
+  end
+  else
+    Puts('arm64: reading MEMTEST.ELF FAILED'#10);
+
   { Throughput: a 64 KiB file through FAT16.EXE -> ATA.EXE. }
   size := 0;
   t0 := Hal_Ticks;
@@ -274,6 +297,30 @@ begin
   else
     Puts('arm64: starting SYSLOGON.EXE FAILED'#10);
   Sched_TerminateCurrentTask;
+end;
+
+{ Reference counting: a shared frame survives the first owner and returns to
+  the allocator with the last; reserved memory is never handed to the
+  allocator by a "free"; a double free changes nothing. }
+procedure CheckPageRefs;
+var
+  pg: Pointer;
+  before: QWord;
+  ok: Boolean;
+begin
+  before := Pmm_GetFreePages;
+  pg := Pmm_AllocatePage;
+  ok := (pg <> nil) and (Pmm_RefCount(pg) = 1) and (Pmm_GetFreePages = before - 1);
+  ok := ok and Pmm_RefPage(pg) and (Pmm_RefCount(pg) = 2);
+  Pmm_FreePage(pg);
+  ok := ok and (Pmm_RefCount(pg) = 1) and (Pmm_GetFreePages = before - 1);
+  Pmm_FreePage(pg);
+  ok := ok and (Pmm_RefCount(pg) = 0) and (Pmm_GetFreePages = before);
+  { The kernel image is reserved memory: freeing it must not release it. }
+  Pmm_FreePage(Pointer(QWord($40080000)));
+  ok := ok and (Pmm_GetFreePages = before);
+  if ok then Puts('arm64: page reference counting OK'#10)
+  else Puts('arm64: page reference counting FAILED'#10);
 end;
 
 procedure Arm64Main; cdecl; public name 'Arm64Main';
@@ -325,6 +372,7 @@ begin
   Arch_DisableInterrupts;
   Kernel_InitServices;
   CheckServices;
+  CheckPageRefs;
   Puts('arm64: scheduler started'#10);
   if ElfLoader_Spawn(@UserHelloStart, QWord(@UserHelloEnd) - QWord(@UserHelloStart), True, False, True,
        PWord(@HelloName[0]), 5) < 0 then Puts('arm64: could not start hello'#10);

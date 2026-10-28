@@ -35,6 +35,13 @@ function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord)
   result and the physical address in the secondary one (Ctx_SetRet2).
   Status code, NOT an RSP. }
 function Disp_AllocDma(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
+{ Syscall 103: give back `pages` (arg 2, 1..256) of the caller's own memory
+  starting at the page-aligned user address in arg 1, e.g. blocks from AllocMem
+  or AllocDma. Returns (primary result) how many pages were actually mapped and
+  are now released; pages that were not mapped are skipped. The virtual
+  addresses are not reused (allocation is a bump pointer); the frames are.
+  Status code, NOT an RSP. }
+function Disp_FreeMem(threadId: Integer; ctx: PQWord): QWord;
 function Disp_Print(threadId: Integer; str: PWord): QWord;
 function Disp_DrawPixel(threadId: Integer; x, y, color: QWord): QWord;
 function Disp_ClearScreen(threadId: Integer; color: QWord): QWord;
@@ -172,6 +179,50 @@ begin
   Disp_AllocDma := 1;
 end;
 
+{ ── Syscall 103: free memory ──────────────────────────────────────────────── }
+
+function Disp_FreeMem(threadId: Integer; ctx: PQWord): QWord;
+var
+  va, pages, i, phys, space, freed: QWord;
+  irq: Boolean;
+begin
+  Disp_FreeMem := 0;
+  va := Ctx_GetArg(ctx, 1);
+  pages := Ctx_GetArg(ctx, 2);
+  Ctx_SetRet(ctx, 0);
+  if (pages = 0) or (pages > 256) or ((va and (PAGE - 1)) <> 0) or (va < PAGE) then Exit;
+  if va + pages * PAGE < va then Exit;                     { wrap }
+
+  irq := Sched_AcquireSchedLockSafe;
+  space := Sched_GetThreadAddrSpaceRaw(threadId);
+  if (not Hal_AddressSpaceValid(space)) or (space <> Hal_CurrentAddressSpace) or
+     (va + pages * PAGE > Hal_UserVaMax) then
+  begin
+    Sched_ReleaseSchedLockSafe(irq);
+    Exit;
+  end;
+  freed := 0;
+  for i := 0 to pages - 1 do
+  begin
+    phys := Hal_UnmapPage(space, va + i * PAGE);
+    if phys <> 0 then
+    begin
+      Pmm_FreePage(Pointer(phys));
+      Inc(freed);
+    end;
+  end;
+  if freed > 0 then
+  begin
+    if Sched_GetThreadPhysPages(threadId) >= freed then
+      Sched_SetThreadPhysPages(threadId, Sched_GetThreadPhysPages(threadId) - Cardinal(freed))
+    else
+      Sched_SetThreadPhysPages(threadId, 0);
+  end;
+  Sched_ReleaseSchedLockSafe(irq);
+  Ctx_SetRet(ctx, freed);
+  Disp_FreeMem := 1;
+end;
+
 { ── Console I/O ──────────────────────────────────────────────────────────── }
 
 function Disp_Print(threadId: Integer; str: PWord): QWord;
@@ -249,9 +300,16 @@ begin
   if Sched_GetThreadSharedMemVirt(threadId) <> 0 then
   begin
     pml4 := Sched_GetThreadAddrSpaceRaw(threadId);
-    if Hal_AddressSpaceValid(pml4) then
+    if Hal_AddressSpaceValid(pml4) and Pmm_RefPage(Pointer(kstate_MpuTrapPage_Phys)) then
+    begin
+      { The trap page replaces the thread's private shared-memory page; hand
+        the old frame back instead of leaking it (and forget it: the thread
+        record must not name a frame that is no longer the thread's). }
+      Pmm_FreePage(Pointer(Hal_UnmapPage(pml4, Sched_GetThreadSharedMemVirt(threadId))));
+      Sched_SetThreadSharedMemPhys(threadId, 0);
       Hal_MapPageIn(kstate_MpuTrapPage_Phys, Sched_GetThreadSharedMemVirt(threadId),
         HAL_MAP_USER_RO, pml4);
+    end;
   end;
 end;
 
@@ -329,6 +387,9 @@ begin
     begin
       cand := globalPhys + p * PAGE;
       if cand >= PhysLimit then Break;
+      { The kernel keeps the allocation's own reference, so these pages
+        outlive every process that maps them. }
+      if not Pmm_RefPage(Pointer(cand)) then Break;
       Hal_MapPageIn(cand, virt + p * PAGE, HAL_MAP_USER_RW, currentPml4);
     end;
 
@@ -417,13 +478,15 @@ begin
   for p := 0 to numPages - 1 do
   begin
     Hal_MapPageIn(physAddr + p * PAGE, myVAddr + p * PAGE, HAL_MAP_USER_RW, currentPml4);
-    { The target gets the same frames, marked shared so destroying the target's
-      address space does not free them (the caller owns them). Mapping into a
-      space that is not the loaded one is fine; it had no mapping here before,
-      so there is no stale translation to flush. Until now this happened only
-      when the target's space was the loaded one, i.e. practically never, and
-      the target (dsrv.exe reading explorer's desktop) page-faulted. }
-    Hal_MapPageIn(physAddr + p * PAGE, targetVAddr + p * PAGE, HAL_MAP_USER_SHARED, targetPml4);
+    { The target gets the same frames, each with its own reference: whoever
+      dies first drops only its share, the other keeps a valid mapping.
+      Mapping into a space that is not the loaded one is fine; it had no
+      mapping here before, so there is no stale translation to flush. (Until
+      the fix this happened only when the target's space was the loaded one,
+      i.e. practically never, and dsrv.exe page-faulted reading explorer's
+      desktop.) }
+    if Pmm_RefPage(Pointer(physAddr + p * PAGE)) then
+      Hal_MapPageIn(physAddr + p * PAGE, targetVAddr + p * PAGE, HAL_MAP_USER_RW, targetPml4);
   end;
 
   Sched_SetThreadPhysPages(callerId, Sched_GetThreadPhysPages(callerId) + Cardinal(numPages));

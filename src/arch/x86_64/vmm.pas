@@ -45,6 +45,9 @@ procedure Vmm_MapHugePage(physAddr, virtAddr: QWord);
 procedure Vmm_MapPage(physAddr, virtAddr, flags: QWord);
 procedure Vmm_MapPageIn(physAddr, virtAddr, flags: QWord; pml4Dir: Pointer);
 procedure Vmm_DestroyUserSpace(pml4Phys: QWord);
+{ Clear the 4 KiB leaf for `virtAddr` in `pml4Dir` and return the frame it mapped
+  (0 when nothing was mapped). The caller owns the frame's reference. }
+function Vmm_UnmapPageIn(virtAddr: QWord; pml4Dir: Pointer): QWord;
 
 function  Vmm_GetPml4: Pointer;
 function  Vmm_ReadCr3: QWord;
@@ -69,9 +72,6 @@ const
   ENTRY_WRITABLE     = QWord(2);
   ENTRY_TABLE        = QWord(7);   { P|W|U on every intermediate level }
   ENTRY_HUGE         = QWord($80);   { PS bit, only valid in PD/PDPT entries }
-  { Software bit 9 of a leaf entry: this mapping shares frames owned by another
-    process (syscall 101). Destroying this address space must not free them. }
-  ENTRY_SHARED       = QWord($200);
 
   { x86-64 2 MiB huge page. }
   HUGE_PAGE_SIZE     = QWord(2097152);
@@ -350,6 +350,43 @@ begin
   Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
 end;
 
+function Vmm_UnmapPageIn(virtAddr: QWord; pml4Dir: Pointer): QWord;
+var
+  irq: Byte;
+  e: QWord;
+  tbl: PQWord;
+begin
+  Vmm_UnmapPageIn := 0;
+  if (pml4Dir = nil) or (not Vmm_IsCanonical(virtAddr)) or (QWord(pml4Dir) >= PhysLimit) then Exit;
+  irq := Spinlock_AcquireSafe_Pas(@Vmm_Lock);
+  e := PQWord(pml4Dir)[(virtAddr shr 39) and $1FF];
+  tbl := PQWord(EntryToPtr(e));
+  if (tbl <> nil) and ((e and ENTRY_PRESENT) <> 0) then
+  begin
+    e := tbl[(virtAddr shr 30) and $1FF];
+    tbl := PQWord(EntryToPtr(e));
+    if (tbl <> nil) and ((e and ENTRY_PRESENT) <> 0) and ((e and ENTRY_HUGE) = 0) then
+    begin
+      e := tbl[(virtAddr shr 21) and $1FF];
+      tbl := PQWord(EntryToPtr(e));
+      if (tbl <> nil) and ((e and ENTRY_PRESENT) <> 0) and ((e and ENTRY_HUGE) = 0) then
+      begin
+        e := tbl[(virtAddr shr 12) and $1FF];
+        if (e and ENTRY_PRESENT) <> 0 then
+        begin
+          Vmm_UnmapPageIn := e and PHYS_ADDR_MASK;
+          tbl[(virtAddr shr 12) and $1FF] := 0;
+          { A process is a single thread, so only the loaded space can hold
+            stale translations, and only on this core. }
+          if QWord(pml4Dir) = (Vmm_ReadCr3 and PHYS_ADDR_MASK) then
+            Vmm_FlushTlb(Pointer(virtAddr));
+        end;
+      end;
+    end;
+  end;
+  Spinlock_ReleaseSafe_Pas(@Vmm_Lock, irq);
+end;
+
 procedure Vmm_MapPage(physAddr, virtAddr, flags: QWord);
 begin
   Vmm_MapPageIn(physAddr, virtAddr, flags,
@@ -401,36 +438,6 @@ begin
 
   Vmm_LoadPml4(Pointer(Vmm_Pml4));
   Terminal_Print_Pas(W('[+] VMM done! Exact memory space mapped & sealed bulletproof!'#13#10));
-end;
-
-{ TRUE when the page is one the kernel deliberately keeps alive across
-  process teardown: the shared-memory window or the MPU trap page. }
-function IsProtectedPage(physPage: QWord): Boolean;
-var
-  p: QWord;
-  candidate: QWord;
-begin
-  IsProtectedPage := False;
-
-  if (kstate_SharedRAM_Phys <> 0) and
-     (kstate_SharedRAM_Phys < PhysLimit) then
-  begin
-    p := 0;
-    while (p < 5) and (p < Pmm_GetTotalPages) do
-    begin
-      candidate := kstate_SharedRAM_Phys + (p * PAGE_SIZE);
-      if candidate >= PhysLimit then Break;
-      if physPage = candidate then
-      begin
-        IsProtectedPage := True;
-        Exit;
-      end;
-      Inc(p);
-    end;
-  end;
-
-  if (kstate_MpuTrapPage_Phys <> 0) and (physPage = kstate_MpuTrapPage_Phys) then
-    IsProtectedPage := True;
 end;
 
 { Free every frame and table reachable from a user PML4. Only 4 KiB leaves
@@ -490,8 +497,9 @@ begin
                 begin
                   physPage := entry1 and (not QWord($FFF));
                   if (physPage = 0) or (physPage >= PhysLimit) then Continue;
-                  if ((entry1 and ENTRY_SHARED) = 0) and not IsProtectedPage(physPage) then
-                    Pmm_FreePage(Pointer(physPage));
+                  { Frames are reference counted (pmm): this drops our share, and
+                    reserved memory (device pages, kernel image) is left alone. }
+                  Pmm_FreePage(Pointer(physPage));
                 end;
               end;
 
