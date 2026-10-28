@@ -119,6 +119,11 @@ begin
     dest[i] := src[i];
     Inc(i);
   end;
+  { Terminate: callers pass an uninitialised buffer, and the argument is used
+    as a file name AND as the new process's name. Without this the name picked
+    up whatever was on the stack ("dsrv.exe" + 0x80), so GetPIDByName never
+    found it and explorer.exe waited for its compositor forever. }
+  dest[i] := 0;
   destLen := i;
 end;
 

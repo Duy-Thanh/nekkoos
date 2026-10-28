@@ -450,7 +450,10 @@ begin
   matched := True;
   for i := 0 to wideLen - 1 do
   begin
-    if PByte(byteStr)[i] <> PWord(wideStr)[i] then
+    { Case-insensitive, like the FAT names processes are started from: the
+      process is named after what the user typed ("dsrv.exe"), the programs
+      that look it up ask for "DSRV.EXE". }
+    if ToLowerCase(PByte(byteStr)[i]) <> ToLowerCase(PWord(wideStr)[i]) then
     begin
       matched := False;
       Break;
