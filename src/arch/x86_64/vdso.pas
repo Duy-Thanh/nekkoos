@@ -116,15 +116,16 @@ begin
   Emit($C3);                              { ret }
 end;
 
-{ Same, but preserves RBX (callee-saved) and returns it: the syscall ABI
-  uses RBX as the secondary return value. }
+{ For syscalls 90-93, which read their argument from RBX (argument 0) rather
+  than RCX: copy the caller's first argument (RCX, Win64 ABI) into RBX, and
+  preserve RBX itself because it is callee-saved. }
 procedure AddSyscallRbx(raxId: Cardinal);
 begin
   BeginStub;
   Emit($53);                              { push rbx }
   Emit($48); Emit($C7); Emit($C0);        { mov rax, imm32 }
   EmitDword(raxId);
-  Emit($48); Emit($89); Emit($CB);        { mov rbx, rax }
+  Emit($48); Emit($89); Emit($CB);        { mov rbx, rcx  (89 /r, ModRM CB) }
   Emit($CD); Emit($80);                   { int 0x80 }
   Emit($5B);                              { pop rbx }
   Emit($C3);                              { ret }
