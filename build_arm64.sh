@@ -52,9 +52,13 @@ upas src/user/arm64/app_api.pas
 upas src/user/arm64/vblk_daemon.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/vblk.elf" \
     "$UOUT/crt0.o" "$UOUT/vblk_daemon.o" "$UOUT/uapi.o" "$UOUT/kstring.o"
-upas src/user/arm64/echo_app.pas
-ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/echo.elf" \
-    "$UOUT/crt0.o" "$UOUT/echo_app.o" "$UOUT/app_api.o" "$UOUT/kstring.o"
+# Login and shell: the x86 app sources, unchanged, on the ARM64 app_api.
+upas src/apps/login_app.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/syslogon.elf" \
+    "$UOUT/crt0.o" "$UOUT/login_app.o" "$UOUT/app_api.o" "$UOUT/libc.o" "$UOUT/kstring.o" "$UOUT/kerncrypto.o"
+upas src/apps/shell_app.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/shell.elf" \
+    "$UOUT/crt0.o" "$UOUT/shell_app.o" "$UOUT/app_api.o" "$UOUT/libc.o" "$UOUT/kstring.o"
 # FAT16.EXE: the x86 app source, unchanged, on the ARM64 app_api.
 upas src/apps/fat16_app.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/fat16.elf" \
@@ -76,7 +80,15 @@ mkfs.fat -F 16 -C "$OUT/disk.img" 16384 >/dev/null
 printf 'Hello from the FAT16 volume on virtio-blk' > "$OUT/hello.txt"
 mcopy -i "$OUT/disk.img" "$OUT/hello.txt" ::/HELLO.TXT
 mcopy -i "$OUT/disk.img" "$OUT/diskapp.elf" ::/DISKAPP.ELF
-mcopy -i "$OUT/disk.img" "$OUT/echo.elf" ::/ECHO.ELF
+# Same names and accounts as the x86 hdd.img: the login program starts
+# "run SHELL.EXE", and the internal shell picks the loader by file format.
+python3 scripts/gen_auth.py >/dev/null
+mmd -i "$OUT/disk.img" ::/ETC
+mmd -i "$OUT/disk.img" ::/HOME
+mcopy -i "$OUT/disk.img" passwd ::/ETC/PASSWD
+mcopy -i "$OUT/disk.img" sudoers ::/ETC/SUDOERS
+mcopy -i "$OUT/disk.img" "$OUT/syslogon.elf" ::/SYSLOGON.EXE
+mcopy -i "$OUT/disk.img" "$OUT/shell.elf" ::/SHELL.EXE
 # 64 KiB of (offset mod 251), for the read-throughput check.
 python3 -c "import sys; sys.stdout.buffer.write(bytes(i % 251 for i in range(65536)))" > "$OUT/big.bin"
 mcopy -i "$OUT/disk.img" "$OUT/big.bin" ::/BIG.BIN

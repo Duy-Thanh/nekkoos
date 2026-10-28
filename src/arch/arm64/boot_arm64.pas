@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, ata_kernel, fat16_kernel, kstring;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, program_loader, ata_kernel, fat16_kernel, kstring;
 
 var
   UserHelloStart: Byte; external name 'user_hello_start';
@@ -235,18 +235,6 @@ begin
   end
   else
     Puts('arm64: reading DISKAPP.ELF FAILED'#10);
-  size := 0;
-  data := Fat16K_ReadFile(W('ECHO.ELF'), @size, -1);
-  if (data <> nil) and (size > 0) then
-  begin
-    if ElfLoader_Spawn(data, size, False, False, True,
-       W('ECHO'), 5) < 0 then
-      Puts('arm64: ECHO.ELF rejected by the loader'#10);
-    Heap_Free(data);
-  end
-  else
-    Puts('arm64: reading ECHO.ELF FAILED'#10);
-
   { Throughput: a 64 KiB file through FAT16.EXE -> ATA.EXE. }
   size := 0;
   t0 := Hal_Ticks;
@@ -264,11 +252,23 @@ begin
   else
     Puts('arm64: reading BIG.BIN FAILED'#10);
 
-  { The context-switch demo runs last so its output does not interleave with
-    the lines above. }
+  { The context-switch demo runs before the login prompt so its output does
+    not interleave with it. }
   Puts('arm64: scheduler demo'#10);
   Sched_CreateTask(QWord(@ThreadA));
   Sched_CreateTask(QWord(@ThreadB));
+  start := Hal_Ticks;
+  while Hal_Ticks - start < Hal_MsToTicks(2500) do IpcK_WaitForMessage(Cardinal(Sched_GetCurrentThreadId));
+  Puts(#10);
+
+  { As on x86: the login program, from disk, in the foreground. }
+  size := 0;
+  data := Fat16K_ReadFile(W('SYSLOGON.EXE'), @size, -1);
+  if (data <> nil) and (Program_LoadAndRun(data, size, False, False, True,
+       W('SYSLOGON.EXE'), 2) >= 0) then
+    Puts('arm64: SYSLOGON.EXE started'#10)
+  else
+    Puts('arm64: starting SYSLOGON.EXE FAILED'#10);
   Sched_TerminateCurrentTask;
 end;
 

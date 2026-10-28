@@ -61,6 +61,7 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [ ] Daemons / `SpawnDaemon` on ARM64 (PE x86 apps; need ELF builds of ATA/FAT16/ACPI/MOUSE or ARM64 replacements)
 - [x] EL0 user mode: `svc` syscalls (number in x8, "arg 1" in x1, result in x0; exit/print/uptime/yield), generic `elf_loader`, user-pointer vetting via `Hal_IsUserPageMapped`; a user program that touches kernel memory is reported and terminated, the system keeps running
 - [x] The generic `syscall_dispatch` serves EL0 (arm64 `syscall_impl` reports hardware-only calls as unavailable); `Hal_IsUserPageMapped` replaced the x86 pointer walker in dispatch/shell/sudo; PSCI `HAL_Reboot`/`HAL_Shutdown` (shutdown verified)
-- [x] Keyboard = serial console: PL011 receive interrupt (SPI 33) -> IPC type 1 from sender 34 -> `Disp_KeyboardRead` (same foreground rule and atomic claim as x86); ECHO.ELF (loaded from disk) reads a line with App_GetChar
+- [x] Login and shell: SYSLOGON.EXE (`login_app.pas`) and SHELL.EXE (`shell_app.pas`), the x86 sources unchanged, built as ELF and stored on the FAT16 disk with the same /ETC/PASSWD; `run SHELL.EXE` goes through `program_loader`. Logging in as root and `ls` work over the serial console.
+- [x] Keyboard = serial console: PL011 receive interrupt (SPI 33) -> IPC type 1 from sender 34 -> `Disp_KeyboardRead` (same foreground rule and atomic claim as x86)
 - [ ] Framebuffer (no display on this port yet)
 - [ ] Secondary cores via PSCI

@@ -3,7 +3,9 @@
 import subprocess, sys, time
 
 EXPECT = [
-    "echo: hi nekko\n",
+    "arm64: SYSLOGON.EXE started",
+    "[+] AUTHENTICATED! Welcome to the Multiverse!",
+    "NEKKO OS USERLAND SHELL (RING 3)",
     "snoop: raw disk request refused by the kernel OK",
     "arm64 EL0: mapphys MMIO read OK",
     "[+] VBLK daemon (EL0) ready, sectors: ",
@@ -28,19 +30,50 @@ EXPECT = [
 ]
 BAD = ["UNIMPLEMENTED", "FATAL"]
 
+import threading
 p = subprocess.Popen(
     ["./run_arm64.sh"], stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-# Keyboard = serial console: type a line for ECHO.ELF once it is running,
-# one byte at a time, with a DEL (backspace) in the middle.
-time.sleep(6)
-for ch in "hi nekko\x7fo\r":
-    p.stdin.write(ch)
-    p.stdin.flush()
-    time.sleep(0.05)
-time.sleep(8)
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+buf = bytearray()
+
+def reader():
+    while True:
+        chunk = p.stdout.read1(4096)
+        if not chunk:
+            break
+        buf.extend(chunk)
+
+threading.Thread(target=reader, daemon=True).start()
+
+def wait_for(pattern, timeout=40):
+    end = time.time() + timeout
+    while time.time() < end:
+        if re.search(pattern, buf.decode(errors="replace")):
+            return True
+        time.sleep(0.2)
+    return False
+
+def type_keys(text):
+    # Keyboard = serial console; one byte at a time like a person typing.
+    for ch in text.encode():
+        p.stdin.write(bytes([ch]))
+        p.stdin.flush()
+        time.sleep(0.05)
+
+import re
+# Log in exactly as on x86 (same PASSWD), with a DEL (backspace) in the
+# user name, then list the root directory from the ARM64 shell.
+if wait_for(r"Username:"):
+    type_keys("rooo\x7ft\r")
+    if wait_for(r"Password:"):
+        type_keys("nekko123\r")
+        if wait_for(r"root@nekkoOS#"):
+            type_keys("ls\r")
+            wait_for(r"\.\. +\| d", 20)
+time.sleep(2)
 p.kill()
-out = p.communicate()[0].replace("\r", "")
+p.communicate()
+out = buf.decode(errors="replace").replace("\r", "")
 ok = True
 for e in EXPECT:
     hit = e in out
@@ -65,6 +98,10 @@ ms = int(m.group(1)) if m else -1
 hit = 0 <= ms <= 2000
 ok &= hit
 print(("[PASS] " if hit else "[FAIL] ") + f"64 KiB file read through FAT16.EXE -> ATA.EXE within 2 s (took {ms} ms)")
+# The shell's `ls` lists the home directory through FAT16.EXE -> ATA.EXE.
+hit = re.search(r"root@nekkoOS# ls\n\. +\| d[-rwx]{9} \|.*\n\.\. +\| d", out) is not None
+ok &= hit
+print(("[PASS] " if hit else "[FAIL] ") + "shell `ls` lists a directory from the FAT16 disk")
 for b in BAD:
     if b in out:
         ok = False
