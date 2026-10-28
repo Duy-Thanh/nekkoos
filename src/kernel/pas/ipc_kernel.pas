@@ -41,6 +41,13 @@ function IpcK_GetQueue: Pointer;
 function IpcK_GetMax: Integer;
 function IpcK_HasMessageFor(receiverId: Cardinal): Boolean;
 
+{ For a kernel thread waiting on a reply: return at once if a message for
+  `receiverId` (the calling thread) is queued, otherwise sleep until one is
+  sent (syscall 5 wakes a sleeping receiver) or two ticks pass. Unlike
+  spinning on Sched_Yield, the waiter stops competing for the CPU with the
+  daemons it is waiting for. }
+procedure IpcK_WaitForMessage(receiverId: Cardinal);
+
 implementation
 
 uses arch_interface, pmm, libc, terminal, kstring, ipc, scheduler;
@@ -210,6 +217,22 @@ function IpcK_HasMessageFor(receiverId: Cardinal): Boolean;
 begin
   IpcK_HasMessageFor := (Queue <> nil) and
     (HasMessageForReceiver(Queue, MaxMessages, receiverId) <> 0);
+end;
+
+procedure IpcK_WaitForMessage(receiverId: Cardinal);
+var
+  irq: Boolean;
+begin
+  irq := Sched_AcquireSchedLockSafe;
+  if IpcK_HasMessageFor(receiverId) then
+  begin
+    Sched_ReleaseSchedLockSafe(irq);
+    Exit;
+  end;
+  Sched_SetThreadWakeUpTick(Integer(receiverId), Sched_GetSystemTicks + 2);
+  Sched_SetThreadActive(Integer(receiverId), 2);
+  Sched_ReleaseSchedLockSafe(irq);
+  Sched_Yield;
 end;
 
 { ── cdecl exports for IPC.cs ── }

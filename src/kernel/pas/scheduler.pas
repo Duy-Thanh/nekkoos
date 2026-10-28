@@ -48,6 +48,8 @@ const
   { Priority 99 marks an idle task: pinned to its core and skipped by the
     VRuntime scan in scheduler_dispatch. }
   SCHED_IDLE_PRIORITY = 99;
+  { Weight of a kernel task in the fair scheduler; same as an ordinary app. }
+  SCHED_KERNEL_TASK_PRIORITY = 5;
 
   { 64 pages for the thread table (256 x 656 B needs 41), 4 for a stack.
     Stacks are counted in QWord slots: 2048 = 16 KiB. }
@@ -771,6 +773,7 @@ end;
 
 procedure CreateTask(var s: TSchedState; entryPoint: QWord);
 var
+  coreId:      Cardinal;
   irq:         Boolean;
   id:          Integer;
   stackBase:   PQWord;
@@ -824,6 +827,16 @@ begin
   s.Threads[id].Rsp             := originalTop;
   s.Threads[id].AddrSpace       := KernelRoot;
   s.Threads[id].ExecutingOnCore := -1;
+  { A priority of 0 (or one left over from the slot's previous owner) is a
+    weight of 0: the task's VRuntime would never grow, it would always look
+    "least run" and starve every task created after it. Start it level with
+    its creator rather than at 0, for the same reason. }
+  s.Threads[id].Priority        := SCHED_KERNEL_TASK_PRIORITY;
+  coreId := ReadCoreId;
+  if (coreId < SCHED_MAX_CORES) and (s.CurrentIds[coreId] >= 0) then
+    s.Threads[id].VRuntime := s.Threads[s.CurrentIds[coreId]].VRuntime
+  else
+    s.Threads[id].VRuntime := 0;
   s.Threads[id].Active          := 1;
 
   Sched_ReleaseSchedLockSafe(irq);

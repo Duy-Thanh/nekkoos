@@ -52,6 +52,11 @@ switches = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
 hit = switches >= 20
 ok &= hit
 print(("[PASS] " if hit else "[FAIL] ") + "timer interrupt context-switches between two kernel threads (A/B alternate, " + str(switches) + " switches)")
+m = re.search(r"BIG.BIN 64 KiB read OK in (\d+) ms", out)
+ms = int(m.group(1)) if m else -1
+hit = 0 <= ms <= 2000
+ok &= hit
+print(("[PASS] " if hit else "[FAIL] ") + f"64 KiB file read through FAT16.EXE -> ATA.EXE within 2 s (took {ms} ms)")
 for b in BAD:
     if b in out:
         ok = False

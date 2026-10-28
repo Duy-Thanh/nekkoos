@@ -188,6 +188,8 @@ var
   pay, start: QWord;
   data: PByte;
   size, i: Cardinal;
+  t0: QWord;
+  ok: Boolean;
 begin
   start := Hal_Ticks;
   while not (Ata_GetUseDaemon and Fat16K_GetUseDaemon) do
@@ -232,6 +234,23 @@ begin
   end
   else
     Puts('arm64: reading DISKAPP.ELF FAILED'#10);
+  { Throughput: a 64 KiB file through FAT16.EXE -> ATA.EXE. }
+  size := 0;
+  t0 := Hal_Ticks;
+  data := Fat16K_ReadFile(W('BIG.BIN'), @size, -1);
+  t0 := Hal_Ticks - t0;
+  if (data <> nil) and (size = 65536) then
+  begin
+    ok := True;
+    for i := 0 to size - 1 do ok := ok and (data[i] = Byte(i mod 251));
+    if ok then Puts('arm64: BIG.BIN 64 KiB read OK in ') else Puts('arm64: BIG.BIN content WRONG, ');
+    PutDec(t0 * 1000 div Hal_TickFrequency);
+    Puts(' ms'#10);
+    Heap_Free(data);
+  end
+  else
+    Puts('arm64: reading BIG.BIN FAILED'#10);
+
   { The context-switch demo runs last so its output does not interleave with
     the lines above. }
   Puts('arm64: scheduler demo'#10);

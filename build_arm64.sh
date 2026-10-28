@@ -73,4 +73,7 @@ mkfs.fat -F 16 -C "$OUT/disk.img" 16384 >/dev/null
 printf 'Hello from the FAT16 volume on virtio-blk' > "$OUT/hello.txt"
 mcopy -i "$OUT/disk.img" "$OUT/hello.txt" ::/HELLO.TXT
 mcopy -i "$OUT/disk.img" "$OUT/diskapp.elf" ::/DISKAPP.ELF
+# 64 KiB of (offset mod 251), for the read-throughput check.
+python3 -c "import sys; sys.stdout.buffer.write(bytes(i % 251 for i in range(65536)))" > "$OUT/big.bin"
+mcopy -i "$OUT/disk.img" "$OUT/big.bin" ::/BIG.BIN
 echo "[arm64] built $OUT/kernel.bin"

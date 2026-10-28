@@ -257,7 +257,7 @@ begin
       Exit;
     end;
     if DaemonWaitTimedOut(spin) then Exit;
-    Sched_Yield;
+    IpcK_WaitForMessage(Cardinal(callerThread));
   end;
 end;
 
@@ -591,7 +591,7 @@ begin
       Con_SetColor($00FFFFFF);
       Exit;
     end;
-    Sched_Yield;
+    IpcK_WaitForMessage(Cardinal(callerThread));
   end;
 end;
 
@@ -775,7 +775,7 @@ begin
       ReleaseVfs;
       Exit;
     end;
-    Sched_Yield;
+    IpcK_WaitForMessage(Cardinal(callerThread));
   end;
 end;
 
