@@ -46,6 +46,11 @@ var
   b: Byte;
   c: Word;
 begin
+  { Clear the interrupt BEFORE draining the FIFO. Clearing afterwards loses a
+    byte that lands between the last read and the clear: its interrupt is
+    cleared with the rest, nothing re-asserts it, and input stalls (seen once
+    in five soak runs of the ARM64 extra test: typing stopped mid-command). }
+  Arm64_UartClearInterrupt;
   while Arm64_UartReadByte(b) do
   begin
     c := b;
@@ -53,7 +58,6 @@ begin
     if c = 127 then c := 8;          { DEL from a terminal = backspace }
     IpcK_SendFromInterrupt(1, KBD_SENDER, 0, c);
   end;
-  Arm64_UartClearInterrupt;
 end;
 
 function Arm64Irq(frame: QWord): QWord; cdecl; public name 'Arm64Irq';
