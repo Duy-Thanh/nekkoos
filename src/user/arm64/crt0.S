@@ -58,3 +58,11 @@ FPC_MOVE:
         subs    x2, x2, #1
         b.ne    1b
 3:      ret
+
+// QWord uapi_sys0(n, a0): for syscalls that read their argument from x0.
+        .global uapi_sys0
+uapi_sys0:
+        mov     x8, x0
+        mov     x0, x1
+        svc     #0
+        ret

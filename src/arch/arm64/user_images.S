@@ -15,14 +15,14 @@ user_mmio_start:
         .incbin "build/arm64/mmio.elf"
 user_mmio_end:
         .balign 16
-        .global user_vblk_start, user_vblk_end, user_blktest_start, user_blktest_end
+        .global user_vblk_start, user_vblk_end, user_fat16_start, user_fat16_end
 user_vblk_start:
         .incbin "build/arm64/vblk.elf"
 user_vblk_end:
         .balign 16
-user_blktest_start:
-        .incbin "build/arm64/blktest.elf"
-user_blktest_end:
+user_fat16_start:
+        .incbin "build/arm64/fat16.elf"
+user_fat16_end:
         .balign 16
         .global user_snoop_start, user_snoop_end
 user_snoop_start:

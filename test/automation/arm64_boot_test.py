@@ -6,8 +6,10 @@ EXPECT = [
     "snoop: raw disk request refused by the kernel OK",
     "arm64 EL0: mapphys MMIO read OK",
     "[+] VBLK daemon (EL0) ready, sectors: ",
-    "blktest: sector 0 via daemon: NEKKO-VIRTIO-OK",
-    "blktest: write/read-back via daemon OK",
+    "[+] FAT Server (Ring 3) Online & Listening for File Requests!",
+    "arm64: ATA.EXE (virtio) and FAT16.EXE are up",
+    "arm64: HELLO.TXT from disk: Hello from the FAT16 volume on virtio-blk",
+    "arm64 EL0: DISKAPP.ELF loaded from the FAT16 disk",
     "arm64 EL0: hello from user mode",
     "arm64 EL0: getuid syscall OK",
     "arm64 EL0: user program exiting",
@@ -28,7 +30,7 @@ BAD = ["UNIMPLEMENTED", "FATAL"]
 p = subprocess.Popen(
     ["./run_arm64.sh"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-time.sleep(10)
+time.sleep(14)
 p.kill()
 out = p.communicate()[0].replace("\r", "")
 ok = True
@@ -43,7 +45,7 @@ hit = 200 <= n <= 260
 ok &= hit
 print(("[PASS] " if hit else "[FAIL] ") + f"timer ticks at ~250 Hz (got {n} in 1 s)")
 # User-program output is interleaved with the A/B stream, so take the longest A/B run.
-tail = out.split("scheduler started", 1)[-1]
+tail = out.split("scheduler demo", 1)[-1]
 runs = re.findall(r"[AB]+", tail)
 seq = max(runs, key=len) if runs else ""
 switches = sum(1 for a, b in zip(seq, seq[1:]) if a != b)

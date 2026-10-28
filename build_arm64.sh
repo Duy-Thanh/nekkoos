@@ -30,7 +30,7 @@ for m in "${PAS_MODULES[@]}"; do
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/arch/arm64/$m.pas"
 done
 # User programs (ELF, linked at 4 GiB, one RWX segment) are embedded in the kernel.
-for u in hello crash mmio snoop; do
+for u in hello crash mmio snoop diskapp; do
     clang --target=aarch64-none-elf -c "src/user/arm64/$u.S" -o "$OUT/user_$u.o"
     ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$u.elf" "$OUT/user_$u.o"
 done
@@ -43,13 +43,19 @@ cat > "$UCFG" <<EOF
 -Fusrc/user/arm64
 EOF
 clang --target=aarch64-none-elf -c src/user/arm64/crt0.S -o "$UOUT/crt0.o"
-build_user() {   # build_user <unit> <output name>
-    ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$UCFG" -FU"$UOUT" "src/user/arm64/$1.pas" >/dev/null
-    ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$2.elf" \
-        "$UOUT/crt0.o" "$UOUT/$1.o" "$UOUT/uapi.o" "$UOUT/kstring.o"
+upas() {          # upas <source.pas>: compile one user unit into $UOUT
+    ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$UCFG" -FU"$UOUT" "$1" >/dev/null
 }
-build_user vblk_daemon vblk
-build_user blktest blktest
+# The ARM64 app_api twin is compiled first: -Ur keeps FPC from rebuilding it
+# from src/apps/app_api.pas (x86) when an app in src/apps is compiled.
+upas src/user/arm64/app_api.pas
+upas src/user/arm64/vblk_daemon.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/vblk.elf" \
+    "$UOUT/crt0.o" "$UOUT/vblk_daemon.o" "$UOUT/uapi.o" "$UOUT/kstring.o"
+# FAT16.EXE: the x86 app source, unchanged, on the ARM64 app_api.
+upas src/apps/fat16_app.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/fat16.elf" \
+    "$UOUT/crt0.o" "$UOUT/fat16_app.o" "$UOUT/app_api.o" "$UOUT/libc.o" "$UOUT/fat16.o" "$UOUT/kstring.o"
 
 for s in start hardware_arm64 user_images; do
     echo "[arm64] asm $s"
@@ -60,7 +66,11 @@ for m in "${PAS_MODULES[@]}" "${GENERIC_MODULES[@]}"; do OBJS+=("$OUT/$m.o"); do
 ld.lld -T src/arch/arm64/link.ld -o "$OUT/kernel.elf" "${OBJS[@]}"
 # QEMU only passes the device-tree pointer (x0) to a raw Image, not to an ELF.
 llvm-objcopy -O binary "$OUT/kernel.elf" "$OUT/kernel.bin"
-# Test disk: sector 0 carries a signature the kernel prints back.
-dd if=/dev/zero of="$OUT/disk.img" bs=1M count=1 status=none
-printf 'NEKKO-VIRTIO-OK\n' | dd of="$OUT/disk.img" conv=notrunc status=none
+# Test disk: a FAT16 volume (superfloppy, like hdd.img) with a text file and a
+# user program that exists nowhere else.
+rm -f "$OUT/disk.img"
+mkfs.fat -F 16 -C "$OUT/disk.img" 16384 >/dev/null
+printf 'Hello from the FAT16 volume on virtio-blk' > "$OUT/hello.txt"
+mcopy -i "$OUT/disk.img" "$OUT/hello.txt" ::/HELLO.TXT
+mcopy -i "$OUT/disk.img" "$OUT/diskapp.elf" ::/DISKAPP.ELF
 echo "[arm64] built $OUT/kernel.bin"

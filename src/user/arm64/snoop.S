@@ -29,7 +29,7 @@ out:    mov     x8, #1
         mov     x8, #0
         svc     #0
         .balign 2
-vblk:   .hword 86, 66, 76, 75, 0
+vblk:   .hword 65, 84, 65, 46, 69, 88, 69, 0     // ATA.EXE
 refused:                                 // "snoop: raw disk request refused by the kernel OK\n" as UTF-16
         .hword 115, 110, 111, 111, 112, 58, 32, 114, 97, 119, 32, 100, 105, 115, 107, 32, 114, 101, 113, 117, 101, 115, 116, 32, 114, 101, 102, 117, 115, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 107, 101, 114, 110, 101, 108, 32, 79, 75, 10, 0
 accepted:                                 // "snoop: raw disk request ACCEPTED (policy broken)\n" as UTF-16

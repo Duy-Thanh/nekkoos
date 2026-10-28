@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, ata_kernel, fat16_kernel;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, ata_kernel, fat16_kernel, kstring;
 
 var
   UserHelloStart: Byte; external name 'user_hello_start';
@@ -34,8 +34,8 @@ var
   UserMmioEnd: Byte; external name 'user_mmio_end';
   UserVblkStart: Byte; external name 'user_vblk_start';
   UserVblkEnd: Byte; external name 'user_vblk_end';
-  UserBlktestStart: Byte; external name 'user_blktest_start';
-  UserBlktestEnd: Byte; external name 'user_blktest_end';
+  UserFat16Start: Byte; external name 'user_fat16_start';
+  UserFat16End: Byte; external name 'user_fat16_end';
   UserSnoopStart: Byte; external name 'user_snoop_start';
   UserSnoopEnd: Byte; external name 'user_snoop_end';
 
@@ -102,14 +102,16 @@ begin
   Puts(' pages leaked'#10);
 end;
 
-{ Each thread prints its letter once per timer tick it observes; the output
-  alternating AB proves the timer interrupt really switches between them. }
+{ Each thread prints its letter once per timer tick it observes, for about two
+  seconds; the output alternating AB proves the timer interrupt really switches
+  between them. Then it ends, so the busy loop does not slow the daemons. }
 procedure Spin(letter: Byte);
 var
-  last, now: QWord;
+  last, now, stop: QWord;
 begin
   last := Hal_Ticks;
-  while True do
+  stop := last + Hal_MsToTicks(2000);
+  while Hal_Ticks < stop do
   begin
     now := Hal_Ticks;
     if now <> last then
@@ -118,6 +120,7 @@ begin
       last := now;
     end;
   end;
+  Sched_TerminateCurrentTask;
 end;
 
 procedure ThreadA;
@@ -161,9 +164,81 @@ const
   HelloName: array[0..5] of Word = (72, 69, 76, 76, 79, 0);          { HELLO }
   CrashName: array[0..5] of Word = (67, 82, 65, 83, 72, 0);          { CRASH }
   MmioName: array[0..4] of Word = (77, 77, 73, 79, 0);              { MMIO }
-  VblkName: array[0..4] of Word = (86, 66, 76, 75, 0);              { VBLK }
-  BlktestName: array[0..7] of Word = (66, 76, 75, 84, 69, 83, 84, 0); { BLKTEST }
+  { The disk and filesystem daemons run under their role names, the names the
+    x86 daemons have, so FAT16.EXE finds the disk daemon by asking for ATA.EXE. }
+  AtaRoleName: array[0..7] of Word = (65, 84, 65, 46, 69, 88, 69, 0);       { ATA.EXE }
+  FatRoleName: array[0..9] of Word = (70, 65, 84, 49, 54, 46, 69, 88, 69, 0); { FAT16.EXE }
+  LoaderName: array[0..6] of Word = (76, 79, 65, 68, 69, 82, 0);           { LOADER }
   SnoopName: array[0..5] of Word = (83, 78, 79, 79, 80, 0);         { SNOOP }
+
+var
+  SpawnedAta: Integer = -1;
+  SpawnedFat: Integer = -1;
+
+{ Kernel thread that brings the filesystem up and loads from it. It, and only
+  it, reads thread 0's mailbox for the daemons' handshakes (one receiver per
+  mailbox, AGENTS.md 15.0). File reads go through FAT16.EXE -> ATA.EXE over
+  IPC because this thread is not thread 0 (thread 0 would take the raw path,
+  which needs a kernel disk driver ARM64 does not have). }
+procedure LoaderThread;
+const
+  DEADLINE_MS = 20000;
+var
+  t, snd: Cardinal;
+  pay, start: QWord;
+  data: PByte;
+  size, i: Cardinal;
+begin
+  start := Hal_Ticks;
+  while not (Ata_GetUseDaemon and Fat16K_GetUseDaemon) do
+  begin
+    t := 0; snd := 0; pay := 0;
+    while IpcK_ReceiveForRaw(0, t, snd, pay) do
+      if (t = 9) and (Integer(snd) = SpawnedAta) then Ata_SetUseDaemon(True)
+      else if (t = 39) and (Integer(snd) = SpawnedFat) then
+      begin
+        Fat16K_SetDaemonId(snd);
+        Fat16K_SetUseDaemon(True);
+      end;
+    if Hal_Ticks - start > Hal_MsToTicks(DEADLINE_MS) then
+    begin
+      Puts('arm64: TIMEOUT waiting for the disk/filesystem daemons'#10);
+      Sched_TerminateCurrentTask;
+    end;
+    Sched_Yield;
+  end;
+  Puts('arm64: ATA.EXE (virtio) and FAT16.EXE are up'#10);
+
+  size := 0;
+  data := Fat16K_ReadFile(W('HELLO.TXT'), @size, -1);
+  if (data <> nil) and (size > 0) then
+  begin
+    Puts('arm64: HELLO.TXT from disk: ');
+    for i := 0 to size - 1 do
+      if data[i] >= 32 then Arch_WriteMmio32(QWord($09000000), data[i]);
+    Puts(#10);
+    Heap_Free(data);
+  end
+  else
+    Puts('arm64: reading HELLO.TXT FAILED'#10);
+
+  size := 0;
+  data := Fat16K_ReadFile(W('DISKAPP.ELF'), @size, -1);
+  if (data <> nil) and (size > 0) then
+  begin
+    if ElfLoader_Spawn(data, size, W('DISKAPP'), 5) < 0 then
+      Puts('arm64: DISKAPP.ELF rejected by the loader'#10);
+    Heap_Free(data);
+  end
+  else
+    Puts('arm64: reading DISKAPP.ELF FAILED'#10);
+  { The context-switch demo runs last so its output does not interleave with
+    the lines above. }
+  Puts('arm64: scheduler demo'#10);
+  Sched_CreateTask(QWord(@ThreadA));
+  Sched_CreateTask(QWord(@ThreadB));
+  Sched_TerminateCurrentTask;
+end;
 
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
@@ -214,8 +289,6 @@ begin
   Arch_DisableInterrupts;
   Kernel_InitServices;
   CheckServices;
-  Sched_CreateTask(QWord(@ThreadA));
-  Sched_CreateTask(QWord(@ThreadB));
   Puts('arm64: scheduler started'#10);
   if ElfLoader_Spawn(@UserHelloStart, QWord(@UserHelloEnd) - QWord(@UserHelloStart),
        PWord(@HelloName[0]), 5) < 0 then Puts('arm64: could not start hello'#10);
@@ -229,14 +302,15 @@ begin
     thread send it raw sector requests. (Waiting for the handshake left a
     window in which any program could, and thread 0 drains that mailbox only
     when idle.) }
-  tid := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart),
-       PWord(@VblkName[0]), 3);
-  if tid < 0 then Puts('arm64: could not start the disk daemon'#10)
-  else Ata_SetDaemonId(Cardinal(tid));
-  tid := ElfLoader_Spawn(@UserBlktestStart, QWord(@UserBlktestEnd) - QWord(@UserBlktestStart),
-       PWord(@BlktestName[0]), 5);
-  if tid < 0 then Puts('arm64: could not start blktest'#10)
-  else Fat16K_SetTrustedThreadId(tid);
+  SpawnedAta := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart),
+       PWord(@AtaRoleName[0]), 3);
+  if SpawnedAta < 0 then Puts('arm64: could not start the disk daemon'#10)
+  else Ata_SetDaemonId(Cardinal(SpawnedAta));
+  SpawnedFat := ElfLoader_Spawn(@UserFat16Start, QWord(@UserFat16End) - QWord(@UserFat16Start),
+       PWord(@FatRoleName[0]), 3);
+  if SpawnedFat < 0 then Puts('arm64: could not start the filesystem daemon'#10)
+  else Fat16K_SetTrustedThreadId(SpawnedFat);
+  Sched_CreateTask(QWord(@LoaderThread));
   if ElfLoader_Spawn(@UserSnoopStart, QWord(@UserSnoopEnd) - QWord(@UserSnoopStart),
        PWord(@SnoopName[0]), 5) < 0 then Puts('arm64: could not start snoop'#10);
   Arch_EnableInterrupts;
