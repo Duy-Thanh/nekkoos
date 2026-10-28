@@ -14,3 +14,17 @@ user_crash_end:
 user_mmio_start:
         .incbin "build/arm64/mmio.elf"
 user_mmio_end:
+        .balign 16
+        .global user_vblk_start, user_vblk_end, user_blktest_start, user_blktest_end
+user_vblk_start:
+        .incbin "build/arm64/vblk.elf"
+user_vblk_end:
+        .balign 16
+user_blktest_start:
+        .incbin "build/arm64/blktest.elf"
+user_blktest_end:
+        .balign 16
+        .global user_snoop_start, user_snoop_end
+user_snoop_start:
+        .incbin "build/arm64/snoop.elf"
+user_snoop_end:

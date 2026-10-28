@@ -23,7 +23,7 @@ procedure Arm64Main; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, virtio_blk;
+uses arch_interface, arch_hal, pmm, fdt, scheduler, heap, kernel_core, ipc_kernel, elf_loader, ata_kernel, fat16_kernel;
 
 var
   UserHelloStart: Byte; external name 'user_hello_start';
@@ -32,6 +32,12 @@ var
   UserCrashEnd: Byte; external name 'user_crash_end';
   UserMmioStart: Byte; external name 'user_mmio_start';
   UserMmioEnd: Byte; external name 'user_mmio_end';
+  UserVblkStart: Byte; external name 'user_vblk_start';
+  UserVblkEnd: Byte; external name 'user_vblk_end';
+  UserBlktestStart: Byte; external name 'user_blktest_start';
+  UserBlktestEnd: Byte; external name 'user_blktest_end';
+  UserSnoopStart: Byte; external name 'user_snoop_start';
+  UserSnoopEnd: Byte; external name 'user_snoop_end';
 
 var
   Arm64_DtbPhys: QWord; external name 'Arm64_DtbPhys';
@@ -155,48 +161,14 @@ const
   HelloName: array[0..5] of Word = (72, 69, 76, 76, 79, 0);          { HELLO }
   CrashName: array[0..5] of Word = (67, 82, 65, 83, 72, 0);          { CRASH }
   MmioName: array[0..4] of Word = (77, 77, 73, 79, 0);              { MMIO }
-
-{ Disk check: read sector 0 (the build plants a signature), then write a
-  pattern to sector 1, read it back and compare. }
-procedure CheckDisk;
-var
-  buf: PByte;
-  i: Integer;
-  ok: Boolean;
-begin
-  if not VirtioBlk_Init then
-  begin
-    Puts('arm64: no virtio-blk disk'#10);
-    Exit;
-  end;
-  Puts('arm64: virtio-blk: ');
-  PutDec(VirtioBlk_Capacity);
-  Puts(' sectors'#10);
-  buf := PByte(Pmm_AllocatePage);
-  if buf = nil then Exit;
-  if VirtioBlk_Read(0, 1, buf) then
-  begin
-    Puts('arm64: disk sector 0: ');
-    for i := 0 to 15 do
-      if buf[i] <> 0 then Arch_WriteMmio32(QWord($09000000), buf[i]);
-    Puts(#10);
-  end
-  else
-    Puts('arm64: disk read FAILED'#10);
-  for i := 0 to 511 do buf[i] := Byte(i * 7 + 3);
-  ok := VirtioBlk_Write(1, 1, buf);
-  for i := 0 to 511 do buf[i] := 0;
-  ok := ok and VirtioBlk_Read(1, 1, buf);
-  for i := 0 to 511 do ok := ok and (buf[i] = Byte(i * 7 + 3));
-  { A read past the end must be refused, not sent to the device. }
-  ok := ok and (not VirtioBlk_Read(VirtioBlk_Capacity, 1, buf));
-  if ok then Puts('arm64: disk write/read-back OK'#10) else Puts('arm64: disk write/read-back FAILED'#10);
-  Pmm_FreePage(buf);
-end;
+  VblkName: array[0..4] of Word = (86, 66, 76, 75, 0);              { VBLK }
+  BlktestName: array[0..7] of Word = (66, 76, 75, 84, 69, 83, 84, 0); { BLKTEST }
+  SnoopName: array[0..5] of Word = (83, 78, 79, 79, 80, 0);         { SNOOP }
 
 procedure Arm64Main; cdecl; public name 'Arm64Main';
 var
   t0, ramBase, ramSize, freeStart, ramEnd: QWord;
+  tid: Integer;
 begin
   Hal_EarlyInit;
   if not Fdt_FindMemory(PByte(Arm64_DtbPhys), ramBase, ramSize) then
@@ -242,7 +214,6 @@ begin
   Arch_DisableInterrupts;
   Kernel_InitServices;
   CheckServices;
-  CheckDisk;
   Sched_CreateTask(QWord(@ThreadA));
   Sched_CreateTask(QWord(@ThreadB));
   Puts('arm64: scheduler started'#10);
@@ -252,6 +223,22 @@ begin
        PWord(@CrashName[0]), 5) < 0 then Puts('arm64: could not start crash'#10);
   if ElfLoader_Spawn(@UserMmioStart, QWord(@UserMmioEnd) - QWord(@UserMmioStart),
        PWord(@MmioName[0]), 5) < 0 then Puts('arm64: could not start mmio'#10);
+  { The disk daemon, then a client standing in for the FAT16 daemon. }
+  { Record the disk daemon's thread id the moment it is spawned, not when its
+    handshake is read: from then on syscall 5 lets only the trusted filesystem
+    thread send it raw sector requests. (Waiting for the handshake left a
+    window in which any program could, and thread 0 drains that mailbox only
+    when idle.) }
+  tid := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart),
+       PWord(@VblkName[0]), 3);
+  if tid < 0 then Puts('arm64: could not start the disk daemon'#10)
+  else Ata_SetDaemonId(Cardinal(tid));
+  tid := ElfLoader_Spawn(@UserBlktestStart, QWord(@UserBlktestEnd) - QWord(@UserBlktestStart),
+       PWord(@BlktestName[0]), 5);
+  if tid < 0 then Puts('arm64: could not start blktest'#10)
+  else Fat16K_SetTrustedThreadId(tid);
+  if ElfLoader_Spawn(@UserSnoopStart, QWord(@UserSnoopEnd) - QWord(@UserSnoopStart),
+       PWord(@SnoopName[0]), 5) < 0 then Puts('arm64: could not start snoop'#10);
   Arch_EnableInterrupts;
   Kernel_IdleLoop;
 end;

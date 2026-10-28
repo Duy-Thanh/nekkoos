@@ -3,10 +3,11 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "snoop: raw disk request refused by the kernel OK",
     "arm64 EL0: mapphys MMIO read OK",
-    "arm64: virtio-blk: 2048 sectors",
-    "arm64: disk sector 0: NEKKO-VIRTIO-OK",
-    "arm64: disk write/read-back OK",
+    "[+] VBLK daemon (EL0) ready, sectors: ",
+    "blktest: sector 0 via daemon: NEKKO-VIRTIO-OK",
+    "blktest: write/read-back via daemon OK",
     "arm64 EL0: hello from user mode",
     "arm64 EL0: getuid syscall OK",
     "arm64 EL0: user program exiting",
@@ -27,7 +28,7 @@ BAD = ["UNIMPLEMENTED", "FATAL"]
 p = subprocess.Popen(
     ["./run_arm64.sh"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-time.sleep(6)
+time.sleep(10)
 p.kill()
 out = p.communicate()[0].replace("\r", "")
 ok = True

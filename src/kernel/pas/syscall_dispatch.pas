@@ -298,6 +298,9 @@ begin
     { 12: map physical memory }
     12: Disp_MapPhysicalMemory(id, isKing, ctx);
 
+    { 102: DMA buffer for a driver daemon; physical address in the second result }
+    102: Disp_AllocDma(id, isKing, ctx);
+
     { 13: hardware report }
     13:
       begin

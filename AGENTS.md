@@ -226,6 +226,7 @@ Thêm kiến trúc: tạo `src/arch/<arch>/arch_interface_<arch>.pas` cùng API;
 | [34] | AcquireAtaHw | 60 | |
 | [35] | ReleaseAtaHw | 61 | |
 | [36] | SudoRun | 94 | |
+| — | AllocDma | 102 | Root only; RAX/x0 = user VA, RBX/x1 = physical address (chưa có slot vDSO) |
 
 ### 4.2 KASLR + vDSO
 

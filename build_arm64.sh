@@ -24,16 +24,33 @@ for m in "${GENERIC_MODULES[@]}"; do
     echo "[arm64] Pascal (generic) $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "$(ls src/kernel/pas/$m.pas src/drivers/$m.pas 2>/dev/null | head -1)" >/dev/null
 done
-PAS_MODULES=(arch_interface serial terminal syscall_impl virtio_blk fdt arch_hal traps_arm64 boot_arm64)
+PAS_MODULES=(arch_interface serial terminal syscall_impl fdt arch_hal traps_arm64 boot_arm64)
 for m in "${PAS_MODULES[@]}"; do
     echo "[arm64] Pascal $m"
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/arch/arm64/$m.pas"
 done
 # User programs (ELF, linked at 4 GiB, one RWX segment) are embedded in the kernel.
-for u in hello crash mmio; do
+for u in hello crash mmio snoop; do
     clang --target=aarch64-none-elf -c "src/user/arm64/$u.S" -o "$OUT/user_$u.o"
     ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$u.elf" "$OUT/user_$u.o"
 done
+# Pascal user programs: crt0 + uapi (+ kstring), linked at 4 GiB like the asm ones.
+UOUT="$OUT/user"; mkdir -p "$UOUT"
+UCFG="$UOUT/fpc.cfg"
+cat > "$UCFG" <<EOF
+-Fu$FPC_A64/units
+-Fusrc/kernel/pas
+-Fusrc/user/arm64
+EOF
+clang --target=aarch64-none-elf -c src/user/arm64/crt0.S -o "$UOUT/crt0.o"
+build_user() {   # build_user <unit> <output name>
+    ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$UCFG" -FU"$UOUT" "src/user/arm64/$1.pas" >/dev/null
+    ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$2.elf" \
+        "$UOUT/crt0.o" "$UOUT/$1.o" "$UOUT/uapi.o" "$UOUT/kstring.o"
+}
+build_user vblk_daemon vblk
+build_user blktest blktest
+
 for s in start hardware_arm64 user_images; do
     echo "[arm64] asm $s"
     clang --target=aarch64-none-elf -c "src/arch/arm64/$s.S" -o "$OUT/$s.o"

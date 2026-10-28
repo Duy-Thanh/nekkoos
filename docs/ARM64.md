@@ -53,7 +53,9 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] Generic scheduler running on it: timer IRQ -> `Sched_SwitchTask` -> resume another thread's trap frame (two kernel threads alternate)
 - [x] Shared boot services via `kernel_core` (heap, IPC, PRNG, strand engine, scheduler, idle loop) used by both x86 `kernel_main` and `boot_arm64`
 - [x] `MapPhys` (syscall 12) for driver daemons: generic body in `syscall_core`, MMIO mapped Device-nGnRnE via `HAL_MAP_USER_DEVICE`; an EL0 program reads the virtio magic register
-- [x] virtio-blk (modern MMIO transport, polled) — currently IN THE KERNEL; to be moved into a user-space daemon (microkernel rule): read/write sectors, bounds-checked; `run_arm64.sh` attaches `build/arm64/disk.img`
+- [x] Disk daemon `vblk_daemon` at EL0 (virtio-blk, modern MMIO transport, polled), speaking ATA.EXE's IPC protocol (9 handshake, 10/12/14 requests, 11/13/15/111 replies, sector via the shared window); the kernel only provides `MapPhys` and `AllocDma` (syscall 102). The in-kernel driver is gone.
+- [x] ARM64 user runtime for Pascal programs: `src/user/arm64/crt0.S` (entry, `svc` trampoline, FPC helpers) + `uapi.pas`
+- [x] Access policy holds: the kernel records the disk daemon's id at spawn, and only the trusted filesystem thread may send it raw requests (`snoop.elf` is refused): read/write sectors, bounds-checked; `run_arm64.sh` attaches `build/arm64/disk.img`
 - [ ] A filesystem on that disk (FAT16 code is generic but sits behind the x86 ATA daemon), then loading user programs from it
 - [ ] Daemons / `SpawnDaemon` on ARM64 (PE x86 apps; need ELF builds of ATA/FAT16/ACPI/MOUSE or ARM64 replacements)
 - [x] EL0 user mode: `svc` syscalls (number in x8, "arg 1" in x1, result in x0; exit/print/uptime/yield), generic `elf_loader`, user-pointer vetting via `Hal_IsUserPageMapped`; a user program that touches kernel memory is reported and terminated, the system keeps running

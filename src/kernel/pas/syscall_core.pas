@@ -29,6 +29,12 @@ function IsValidUserPtr(ptr: QWord): Boolean;
   else is marked phantom-dead. Returns via ctx the user address of arg 1, or 0.
   Status code, NOT an RSP (AGENTS.md 2.3). }
 function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
+{ Syscall 102: allocate `numPages` (arg 1, 1..16) of physically contiguous,
+  zeroed memory for a driver daemon to hand to a DMA-capable device. Root only;
+  anyone else is marked phantom-dead. Returns the user address in the primary
+  result and the physical address in the secondary one (Ctx_SetRet2).
+  Status code, NOT an RSP. }
+function Disp_AllocDma(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_Print(threadId: Integer; str: PWord): QWord;
 function Disp_DrawPixel(threadId: Integer; x, y, color: QWord): QWord;
 function Disp_ClearScreen(threadId: Integer; color: QWord): QWord;
@@ -117,6 +123,53 @@ begin
 
   Ctx_SetRet(ctx, virtAddr + offset);
   Disp_MapPhysicalMemory := 1;
+end;
+
+{ ── Syscall 102: DMA buffers ─────────────────────────────────────────────── }
+
+function Disp_AllocDma(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
+const
+  MAX_DMA_PAGES = 16;
+var
+  numPages, phys, virtAddr, space, p: QWord;
+  irq: Boolean;
+begin
+  Disp_AllocDma := 0;
+  { Read the argument before writing any result: on ARM64 the second result
+    register (x1) is also argument 1. }
+  numPages := Ctx_GetArg(ctx, 1);
+  Ctx_SetRet(ctx, 0);
+  Ctx_SetRet2(ctx, 0);
+  if not isKing then
+  begin
+    Sched_SetThreadPhantomDead(threadId, 1);
+    Exit;
+  end;
+  if (numPages = 0) or (numPages > MAX_DMA_PAGES) then Exit;
+
+  phys := QWord(Pmm_AllocateContiguousPages(numPages));
+  if phys = 0 then Exit;
+
+  irq := Sched_AcquireSchedLockSafe;
+  space := Sched_GetThreadAddrSpaceRaw(threadId);
+  if (not Hal_AddressSpaceValid(space)) or (space <> Hal_CurrentAddressSpace) then
+  begin
+    Sched_ReleaseSchedLockSafe(irq);
+    for p := 0 to numPages - 1 do Pmm_FreePage(Pointer(phys + p * PAGE));
+    Exit;
+  end;
+  virtAddr := Sched_GetThreadHeapBase(threadId);
+  for p := 0 to numPages - 1 do
+    Hal_MapPageIn(phys + p * PAGE, virtAddr + p * PAGE, HAL_MAP_USER_RW, space);
+  Hal_MapPageIn(0, virtAddr + numPages * PAGE, HAL_MAP_USER_GUARD, space);
+  Sched_SetThreadHeapBase(threadId, virtAddr + numPages * PAGE + PAGE);
+  Sched_SetThreadPhysPages(threadId, Sched_GetThreadPhysPages(threadId) + Cardinal(numPages));
+  Sched_SetThreadVirtPages(threadId, Sched_GetThreadVirtPages(threadId) + Cardinal(numPages) + 1);
+  Sched_ReleaseSchedLockSafe(irq);
+
+  Ctx_SetRet(ctx, virtAddr);
+  Ctx_SetRet2(ctx, phys);
+  Disp_AllocDma := 1;
 end;
 
 { ── Console I/O ──────────────────────────────────────────────────────────── }
