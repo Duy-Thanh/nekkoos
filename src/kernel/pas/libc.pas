@@ -84,6 +84,11 @@ var
   p: PByte;
   i: Cardinal;
 begin
+  { count is unsigned: `0 to count - 1` with count = 0 is 0 to $FFFFFFFF, i.e.
+    a 4 GiB fill. Same for MemCopy and MemCmp below. A caller copying the
+    remainder of a block (dsrv.exe's framebuffer blit, remainder 0) walked
+    off the end of its buffers and page-faulted. }
+  if count = 0 then Exit;
   p := PByte(dest);
   for i := 0 to count - 1 do
   begin
@@ -99,6 +104,7 @@ var
   s: PByte;
   i: Cardinal;
 begin
+  if count = 0 then Exit;
   dst := PByte(dest);
   s := PByte(src);
 
@@ -117,6 +123,8 @@ var
   p2: PByte;
   i: Cardinal;
 begin
+  MemCmp := 0;
+  if count = 0 then Exit;
   p1 := PByte(ptr1);
   p2 := PByte(ptr2);
 
