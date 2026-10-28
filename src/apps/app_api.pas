@@ -141,7 +141,10 @@ function  App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
 { Run a command as another user. Args: appName, password, optional content
   buffer and its length. Slot 36. }
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
-procedure App_RedirectTerminal(tid: Cardinal);
+{ Syscall 52: point the kernel console at another framebuffer (root only).
+  The kernel reads (framebuffer, width, height, scanline); the old wrapper took
+  a thread id, which matched nothing. No app calls it yet. }
+procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal);
 function  App_InByte(port: Word): Word;
 procedure App_OutByte(port: Word; value: Word);
 function  App_InWord(port: Word): Word;
@@ -417,8 +420,15 @@ type TFn = function: QWord; cdecl;
 begin App_RequestFramebuffer := TFn(AppApi_Slot(APP_SLOT_REQUEST_FRAMEBUFFER))(); end;
 
 function App_GetScreenInfo(out w, h, ppsl: QWord): LongInt;
-type TFn = function(w, h, p: QWord): LongInt; cdecl;
-begin App_GetScreenInfo := TFn(AppApi_Slot(APP_SLOT_GET_SCREEN_INFO))(w, h, ppsl); end;
+{ Syscall 51 writes through the three pointers. This used to pass the
+  variables' VALUES (uninitialised, usually 0); the kernel skipped the invalid
+  pointers, returned 1 and left width 0, so dsrv.exe and explorer.exe quietly
+  exited at start-up. }
+type TFn = function(w, h, p: PQWord): LongInt; cdecl;
+begin
+  w := 0; h := 0; ppsl := 0;
+  App_GetScreenInfo := TFn(AppApi_Slot(APP_SLOT_GET_SCREEN_INFO))(@w, @h, @ppsl);
+end;
 
 function App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
   out targetVAddr: QWord): QWord;
@@ -454,9 +464,9 @@ function App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord
 type TFn = function(a, p: PWord; c: PByte; n: QWord): QWord; cdecl;
 begin App_SudoRun := TFn(AppApi_Slot(APP_SLOT_SUDO_RUN))(appName, password, content, contentLen); end;
 
-procedure App_RedirectTerminal(tid: Cardinal);
-type TFn = procedure(t: Cardinal); cdecl;
-begin TFn(AppApi_Slot(APP_SLOT_REDIRECT_TERMINAL))(tid); end;
+procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal);
+type TFn = procedure(fb: QWord; w, h, sl: Cardinal); cdecl;
+begin TFn(AppApi_Slot(APP_SLOT_REDIRECT_TERMINAL))(newFb, w, h, scanLine); end;
 
 function App_InByte(port: Word): Word;
 type TFn = function(p: Word): Word; cdecl;

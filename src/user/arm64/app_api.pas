@@ -128,7 +128,10 @@ function  App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
 { Run a command as another user. Args: appName, password, optional content
   buffer and its length. Slot 36. }
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
-procedure App_RedirectTerminal(tid: Cardinal);
+{ Syscall 52: point the kernel console at another framebuffer (root only).
+  The kernel reads (framebuffer, width, height, scanline); the old wrapper took
+  a thread id, which matched nothing. No app calls it yet. }
+procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal);
 function  App_InByte(port: Word): Word;
 procedure App_OutByte(port: Word; value: Word);
 function  App_InWord(port: Word): Word;
@@ -297,7 +300,7 @@ function  S_RequestFramebuffer: QWord; cdecl;       begin S_RequestFramebuffer :
 function  S_GetScreenInfo(w, h, p: QWord): LongInt; cdecl; begin S_GetScreenInfo := LongInt(Sys(51, w, h, p, 0)); end;
 function  S_CreateSharedBuffer(d: Cardinal; n: QWord; outTarget: PQWord): QWord; cdecl;
 begin S_CreateSharedBuffer := Sys2(101, d, n, QWord(outTarget), outTarget); end;
-procedure S_RedirectTerminal(t: Cardinal); cdecl;   begin Sys(52, t, 0, 0, 0); end;
+procedure S_RedirectTerminal(fb: QWord; w, h, sl: Cardinal); cdecl; begin Sys(52, fb, w, h, sl); end;
 function  S_InByte(port: Word): Word; cdecl;        begin S_InByte := 0; end;
 procedure S_OutByte(port, value: Word); cdecl;      begin end;
 function  S_InWord(port: Word): Word; cdecl;        begin S_InWord := 0; end;
@@ -384,7 +387,7 @@ begin
 end;
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 begin App_SudoRun := S_SudoRun(appName, password, content, contentLen); end;
-procedure App_RedirectTerminal(tid: Cardinal);       begin S_RedirectTerminal(tid); end;
+procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal); begin S_RedirectTerminal(newFb, w, h, scanLine); end;
 function  App_InByte(port: Word): Word;              begin App_InByte := S_InByte(port); end;
 procedure App_OutByte(port: Word; value: Word);      begin S_OutByte(port, value); end;
 function  App_InWord(port: Word): Word;              begin App_InWord := S_InWord(port); end;
