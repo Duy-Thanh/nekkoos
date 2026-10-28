@@ -269,19 +269,22 @@ begin
   rType := 0; rSender := 0; rPayload := 0;
   while IpcK_ReceiveForRaw(0, rType, rSender, rPayload) do Arch_CompilerFence;
 
-  { The ATA daemon's id is recorded at spawn, not when its handshake is read:
-    from this moment syscall 5 lets only the FAT16 daemon send it raw sector
-    requests. Waiting for the handshake left a window in which any program
-    could. }
+  { Both ids are recorded from SpawnDaemon's return value, never from a
+    handshake (anyone can send one). But the ATA rule in syscall 5 ("only the
+    FAT16 daemon may send raw sector requests to ATA") must be switched on only
+    once the FAT16 daemon's id is known as well. A spawned daemon can run on
+    another core before SpawnDaemon even returns, and FAT16 starts by reading
+    the boot sector from ATA: with the rule on and FAT16 not yet trusted, that
+    request was refused, FAT16 waited forever for the reply and its handshake
+    timed out. No untrusted program exists yet at this point of the boot, so
+    the short window before enforcement starts gives nothing away. }
   SpawnedAtaId := SpawnDaemon(W('ATA.EXE'), True, 3);
-  if SpawnedAtaId > 0 then Ata_SetDaemonId(Cardinal(SpawnedAtaId));
 
-  { Record the FAT16 daemon's thread id the moment it is spawned, before it can
-    call ATA at all. Syscall 5 uses this, not the (user-chosen) process name, to
-    decide who may talk to the ATA daemon directly. }
   fatDaemonId := SpawnDaemon(W('FAT16.EXE'), True, 3);
   Fat16K_SetTrustedThreadId(fatDaemonId);
   SpawnedFatId := fatDaemonId;
+
+  if SpawnedAtaId > 0 then Ata_SetDaemonId(Cardinal(SpawnedAtaId));
 
   { The id is needed later: a lost mouse handshake is repaired by killing this
     thread and starting a fresh one. }

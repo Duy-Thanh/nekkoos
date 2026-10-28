@@ -54,6 +54,13 @@ def main():
         st.mon_send(key_commands(KEY) + ["sendkey ret"], 0.08)
         ok = st.wait_for(r"Username:", timeout=150, window=300)
         res.record("typing the key lets boot continue to login", ok)
+        # Reaching "Username:" is not enough: the kernel prints the prompt even
+        # after giving up on a daemon ("Proceeding anyway"), which is how a
+        # FAT16 handshake timeout after the gate went unnoticed.
+        log = st.read_serial_log()
+        res.record("all daemons handshook (no timeout, no respawn)",
+                   ok and "Timeout waiting for" not in log and "deadline hit" not in log
+                   and "FAT Server (Ring 3) Online" in log)
     finally:
         try:
             time.sleep(1.0)

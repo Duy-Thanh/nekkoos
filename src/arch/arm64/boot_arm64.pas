@@ -297,19 +297,18 @@ begin
   if ElfLoader_Spawn(@UserMmioStart, QWord(@UserMmioEnd) - QWord(@UserMmioStart),
        PWord(@MmioName[0]), 5) < 0 then Puts('arm64: could not start mmio'#10);
   { The disk daemon, then a client standing in for the FAT16 daemon. }
-  { Record the disk daemon's thread id the moment it is spawned, not when its
-    handshake is read: from then on syscall 5 lets only the trusted filesystem
-    thread send it raw sector requests. (Waiting for the handshake left a
-    window in which any program could, and thread 0 drains that mailbox only
-    when idle.) }
+  { Both daemon ids come from the spawn, never from a handshake. }
   SpawnedAta := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart),
        PWord(@AtaRoleName[0]), 3);
-  if SpawnedAta < 0 then Puts('arm64: could not start the disk daemon'#10)
-  else Ata_SetDaemonId(Cardinal(SpawnedAta));
+  if SpawnedAta < 0 then Puts('arm64: could not start the disk daemon'#10);
   SpawnedFat := ElfLoader_Spawn(@UserFat16Start, QWord(@UserFat16End) - QWord(@UserFat16Start),
        PWord(@FatRoleName[0]), 3);
   if SpawnedFat < 0 then Puts('arm64: could not start the filesystem daemon'#10)
   else Fat16K_SetTrustedThreadId(SpawnedFat);
+  { Enforce "only FAT16.EXE talks to the disk daemon" only now that FAT16's id
+    is known: it may already be running and reading the boot sector (same
+    ordering as x86 kernel_main). }
+  if SpawnedAta > 0 then Ata_SetDaemonId(Cardinal(SpawnedAta));
   Sched_CreateTask(QWord(@LoaderThread));
   if ElfLoader_Spawn(@UserSnoopStart, QWord(@UserSnoopEnd) - QWord(@UserSnoopStart),
        PWord(@SnoopName[0]), 5) < 0 then Puts('arm64: could not start snoop'#10);
