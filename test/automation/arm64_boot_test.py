@@ -3,6 +3,9 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "memtest: AllocMem/FreeMem OK",
+    "arm64: memtest left no frames behind",
+    "arm64: page reference counting OK",
     "arm64: SYSLOGON.EXE started",
     "[+] AUTHENTICATED! Welcome to the Multiverse!",
     "NEKKO OS USERLAND SHELL (RING 3)",

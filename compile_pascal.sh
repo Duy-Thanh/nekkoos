@@ -21,7 +21,7 @@ mod_src() {
         gdt|idt|context|vmm|rtc|apic|ioapic|pit|pic|isr|vdso|smp|platform_bootstrap)
             echo "src/arch/x86_64/$1.pas" ;;
         power|input_drv|pci) echo "src/drivers/$1.pas" ;;
-        app_api|mouse_app|shell_app|login_app|ata_app|fat16_app|acpi_app|top_app|dsrv_app|explorer_app|stress_app)
+        app_api|mouse_app|shell_app|login_app|ata_app|fat16_app|acpi_app|top_app|dsrv_app|explorer_app|stress_app|memtest_app)
             echo "src/apps/$1.pas" ;;
         *)              echo "src/kernel/pas/$1.pas" ;;
     esac
@@ -29,7 +29,7 @@ mod_src() {
 
 PASCAL_MODULES=(libc kstring kstate ata_hw fat16fs prng kerncrypto pmm heap fat16_kernel strandscheduler ipc terminal arch_interface fat16 fpc_runtime pe_loader elf_loader program_loader syscall_security memmap_scan scheduler_dispatch acpi_parse passwd_parser internal_shell spinlock sudo_dispatch syscall_core syscall_dispatch kernel_main kernel_core scheduler ipc_kernel ata_kernel power console input_drv pci io serial)
 ARCH_X86_64_MODULES=(interrupt_impl rtc timer_impl mmu_impl platform_impl gdt idt context vdso vmm pic isr pit apic ioapic platform_bootstrap interrupt_handlers smp syscall_impl hardware_checks arch_hal)
-APP_MODULES=(app_api mouse_app shell_app login_app ata_app fat16_app top_app dsrv_app explorer_app stress_app acpi_app)
+APP_MODULES=(app_api mouse_app shell_app login_app ata_app fat16_app top_app dsrv_app explorer_app stress_app acpi_app memtest_app)
 
 for mod in "${PASCAL_MODULES[@]}"; do
     echo "[Pascal] Compiling ${mod}.pas for Win64 target using native fpc with custom config..."

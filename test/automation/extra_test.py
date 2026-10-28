@@ -125,6 +125,9 @@ def main():
         res.record("desktop (dsrv + explorer) runs without a fault",
                    "FAULT IN RING 3" not in out and "EXCEPTION" not in out
                    and out.count("Process Started") >= 2, out[-200:])
+        # AllocMem + write + FreeMem (syscall 103) + bad arguments refused.
+        step_builtin(res, "run memtest.exe", r"memtest: AllocMem/FreeMem OK",
+                     "memtest: AllocMem/FreeMem round trip")
         step_builtin(res, "mkdir extradir", r"root@nekkoOS#", "mkdir via daemon")
         step_builtin(res, "ls", r"(?i)extradir", "mkdir result visible in ls")
         step_builtin(res, "rmdir extradir", r"root@nekkoOS#", "rmdir via daemon")

@@ -59,6 +59,9 @@ ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/syslogon.elf" \
 upas src/apps/shell_app.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/shell.elf" \
     "$UOUT/crt0.o" "$UOUT/shell_app.o" "$UOUT/app_api.o" "$UOUT/libc.o" "$UOUT/kstring.o"
+upas src/apps/memtest_app.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/memtest.elf" \
+    "$UOUT/crt0.o" "$UOUT/memtest_app.o" "$UOUT/app_api.o" "$UOUT/kstring.o"
 # FAT16.EXE: the x86 app source, unchanged, on the ARM64 app_api.
 upas src/apps/fat16_app.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/fat16.elf" \
@@ -80,6 +83,7 @@ mkfs.fat -F 16 -C "$OUT/disk.img" 16384 >/dev/null
 printf 'Hello from the FAT16 volume on virtio-blk' > "$OUT/hello.txt"
 mcopy -i "$OUT/disk.img" "$OUT/hello.txt" ::/HELLO.TXT
 mcopy -i "$OUT/disk.img" "$OUT/diskapp.elf" ::/DISKAPP.ELF
+mcopy -i "$OUT/disk.img" "$OUT/memtest.elf" ::/MEMTEST.ELF
 # Same names and accounts as the x86 hdd.img: the login program starts
 # "run SHELL.EXE", and the internal shell picks the loader by file format.
 python3 scripts/gen_auth.py >/dev/null

@@ -138,6 +138,7 @@ link_app FAT16.exe build/fat16_app.o build/app_api.o build/libc.o build/fat16.o 
 link_app top.exe       build/top_app.o       build/app_api.o build/libc.o
 link_app dsrv.exe      build/dsrv_app.o      build/app_api.o build/libc.o
 link_app explorer.exe  build/explorer_app.o  build/app_api.o build/libc.o
+link_app memtest.exe   build/memtest_app.o   build/app_api.o build/kstring.o
 link_app stresstest.exe build/stress_app.o  build/app_api.o build/libc.o
 link_app acpi.exe       build/acpi_app.o      build/app_api.o build/kstring.o build/acpi_parse.o build/fpc_runtime.o
 
@@ -248,6 +249,7 @@ mcopy -i hdd.img dsrv.exe ::/
 mcopy -i hdd.img top.exe ::/
 mcopy -i hdd.img stresstest.exe ::/
 mcopy -i hdd.img Mouse.exe ::/
+mcopy -i hdd.img memtest.exe ::/
 mcopy -i hdd.img explorer.exe ::/
 mcopy -i hdd.img smp.bin ::/
 

@@ -79,6 +79,7 @@ const
   APP_SLOT_ACQUIRE_ATA_HW        = 34;
   APP_SLOT_RELEASE_ATA_HW        = 35;
   APP_SLOT_SUDO_RUN              = 36;
+  APP_SLOT_FREE_MEM              = 37;
 
   { TMessage and TProcessInfo are deliberately NOT exposed here. A record
     reachable from the interface makes FPC emit RTTI for it and for its field
@@ -140,6 +141,9 @@ function  App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
   out targetVAddr: QWord): QWord;
 { Run a command as another user. Args: appName, password, optional content
   buffer and its length. Slot 36. }
+{ Return `pages` pages of your own memory starting at `addr` (page aligned) to
+  the system; result = pages actually released. Slot 37. }
+function  App_FreeMem(addr, pages: QWord): QWord;
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 { Syscall 52: point the kernel console at another framebuffer (root only).
   The kernel reads (framebuffer, width, height, scanline); the old wrapper took
@@ -463,6 +467,10 @@ end;
 function App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 type TFn = function(a, p: PWord; c: PByte; n: QWord): QWord; cdecl;
 begin App_SudoRun := TFn(AppApi_Slot(APP_SLOT_SUDO_RUN))(appName, password, content, contentLen); end;
+
+function App_FreeMem(addr, pages: QWord): QWord;
+type TFn = function(a, n: QWord): QWord; cdecl;
+begin App_FreeMem := TFn(AppApi_Slot(APP_SLOT_FREE_MEM))(addr, pages); end;
 
 procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal);
 type TFn = procedure(fb: QWord; w, h, sl: Cardinal); cdecl;

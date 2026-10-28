@@ -66,6 +66,7 @@ const
   APP_SLOT_ACQUIRE_ATA_HW        = 34;
   APP_SLOT_RELEASE_ATA_HW        = 35;
   APP_SLOT_SUDO_RUN              = 36;
+  APP_SLOT_FREE_MEM              = 37;
 
   { TMessage and TProcessInfo are deliberately NOT exposed here. A record
     reachable from the interface makes FPC emit RTTI for it and for its field
@@ -127,6 +128,9 @@ function  App_CreateSharedBuffer(destPid: Cardinal; numPages: QWord;
   out targetVAddr: QWord): QWord;
 { Run a command as another user. Args: appName, password, optional content
   buffer and its length. Slot 36. }
+{ Return `pages` pages of your own memory starting at `addr` (page aligned) to
+  the system; result = pages actually released. Slot 37. }
+function  App_FreeMem(addr, pages: QWord): QWord;
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 { Syscall 52: point the kernel console at another framebuffer (root only).
   The kernel reads (framebuffer, width, height, scanline); the old wrapper took
@@ -308,11 +312,12 @@ procedure S_OutWord(port, value: Word); cdecl;      begin end;
 procedure S_OutDword(port: Word; value: Cardinal); cdecl; begin end;
 procedure S_AcquireAtaHw; cdecl;                    begin Sys(60, 0, 0, 0, 0); end;
 procedure S_ReleaseAtaHw; cdecl;                    begin Sys(61, 0, 0, 0, 0); end;
+function  S_FreeMem(a, n: QWord): QWord; cdecl; begin S_FreeMem := Sys(103, a, n, 0, 0); end;
 function  S_SudoRun(a, p: PWord; c: PByte; n: QWord): QWord; cdecl;
 begin S_SudoRun := Sys(94, QWord(a), QWord(p), QWord(c), n); end;
 
 const
-  SLOT_COUNT = 37;
+  SLOT_COUNT = 38;
 var
   Slots: array[0..SLOT_COUNT - 1] of Pointer;
 
@@ -337,6 +342,7 @@ begin
   Slots[APP_SLOT_OUT_WORD] := @S_OutWord;           Slots[APP_SLOT_OUT_DWORD] := @S_OutDword;
   Slots[APP_SLOT_ACQUIRE_ATA_HW] := @S_AcquireAtaHw; Slots[APP_SLOT_RELEASE_ATA_HW] := @S_ReleaseAtaHw;
   Slots[APP_SLOT_SUDO_RUN] := @S_SudoRun;
+  Slots[APP_SLOT_FREE_MEM] := @S_FreeMem;
 end;
 
 function AppApi_Slot(index: Cardinal): Pointer;
@@ -387,6 +393,7 @@ begin
 end;
 function  App_SudoRun(appName, password: PWord; content: PByte; contentLen: QWord): QWord;
 begin App_SudoRun := S_SudoRun(appName, password, content, contentLen); end;
+function  App_FreeMem(addr, pages: QWord): QWord; begin App_FreeMem := S_FreeMem(addr, pages); end;
 procedure App_RedirectTerminal(newFb: QWord; w, h, scanLine: Cardinal); begin S_RedirectTerminal(newFb, w, h, scanLine); end;
 function  App_InByte(port: Word): Word;              begin App_InByte := S_InByte(port); end;
 procedure App_OutByte(port: Word; value: Word);      begin S_OutByte(port, value); end;

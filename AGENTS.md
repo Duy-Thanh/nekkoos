@@ -170,6 +170,19 @@ thời gian (`Hal_Ticks`, `Hal_MsToTicks`), `Hal_FreezeOtherCores`.
 (không phải vi phạm): `syscall_impl` (thân syscall phụ thuộc phần cứng + `Ctx_*` truy cập thanh ghi), `interrupt_handlers`, `smp`,
 `hardware_checks`, và các driver legacy x86 (`input_drv`, `pci`). `Ctx_*` (truy cập thanh ghi syscall) đã nằm trong `arch_hal`; thân syscall generic (print, uid/gid, heap, shared memory, khoá ATA) nằm ở `kernel/pas/syscall_core.pas` và chỉ dùng `Hal_*` (`Hal_MapPageIn`, `Hal_CurrentAddressSpace`, `Hal_AddressSpaceValid`, `Hal_ActivateAddressSpace`); `syscall_impl` chỉ giữ phần chạm phần cứng (bàn phím, MapPhys, framebuffer, cổng I/O).
 
+### 3.2b Quản lý bộ nhớ
+
+- **PMM** (`pmm.pas`): bitmap 1 bit/trang + **đếm tham chiếu** 1 byte/trang (nằm ngay sau bitmap). `Pmm_Allocate*` cấp trang với 1 chủ;
+  `Pmm_RefPage` thêm chủ (map cùng frame vào không gian thứ hai); `Pmm_FreePage` bớt một chủ và chỉ trả frame khi chủ cuối thả.
+  Free một trang **reserved** (thanh ghi thiết bị, bảng firmware, ảnh kernel — allocator chưa từng cấp) là no-op, free trang đã
+  free bị báo `PMM WARNING`. Mọi nơi map một frame vào thêm một không gian PHẢI gọi `Pmm_RefPage` trước.
+- **Heap kernel** (`heap.pas`): một khối liên tục, first-fit, kích thước theo máy (1/64 không gian địa chỉ, kẹp 4–64 MB).
+- **Không gian tiến trình**: mỗi không gian tự giải phóng mọi trang lá của nó khi huỷ (qua refcount), kể cả các L0 slot khác slot 0 (ARM64).
+- **Cấp phát của app**: `AllocMem`/`MapPhys`/`AllocDma` cắt dần từ `HeapBase` (bump, VA không dùng lại). `FreeMem` (syscall 103) trả
+  **frame** của chính tiến trình (không trả VA). Tiến trình là đơn luồng nên chỉ cần flush TLB cục bộ.
+- **Buffer chia sẻ** (syscall 101): map vào cả bên gọi lẫn bên đích, mỗi bên giữ một ref; ai chết trước chỉ bỏ phần của mình.
+- Giới hạn: AllocMem ≤256 trang (root 1024), MapPhys ≤256, AllocDma ≤16, FreeMem ≤256, buffer chia sẻ ≤4096.
+
 ### 3.3 arch_interface.pas — AAL primitives
 
 `src/arch/arch_interface.pas` khai báo mọi `Arch_*` implement trong `Hardware.asm`:
@@ -226,6 +239,7 @@ Thêm kiến trúc: tạo `src/arch/<arch>/arch_interface_<arch>.pas` cùng API;
 | [34] | AcquireAtaHw | 60 | |
 | [35] | ReleaseAtaHw | 61 | |
 | [36] | SudoRun | 94 | |
+| [37] | FreeMem | 103 | Trả frame của chính tiến trình (VA không dùng lại) |
 | — | AllocDma | 102 | Root only; RAX/x0 = user VA, RBX/x1 = physical address (chưa có slot vDSO) |
 
 ### 4.2 KASLR + vDSO

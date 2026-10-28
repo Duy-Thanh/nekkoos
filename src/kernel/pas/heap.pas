@@ -309,11 +309,25 @@ var
 
 procedure Heap_Init;
 const
-  HEAP_PAGES = 1000;     { 4 MB solid block }
+  HEAP_MIN_PAGES = 1000;     { 4 MB: the floor on a tiny machine }
+  HEAP_MAX_PAGES = 16384;    { 64 MB: the ceiling, the block must be contiguous }
 var
   hb: Pointer;
+  HEAP_PAGES: QWord;
 begin
+  { One block, sized with the machine (1/64 of the address space, clamped)
+    rather than a fixed 4 MB: the kernel buffers whole files (FAT16 reads,
+    program images) here. }
+  HEAP_PAGES := Pmm_GetTotalPages div 64;
+  if HEAP_PAGES < HEAP_MIN_PAGES then HEAP_PAGES := HEAP_MIN_PAGES;
+  if HEAP_PAGES > HEAP_MAX_PAGES then HEAP_PAGES := HEAP_MAX_PAGES;
   hb := Pmm_AllocateContiguousPages(HEAP_PAGES);
+  while (hb = nil) and (HEAP_PAGES > HEAP_MIN_PAGES) do
+  begin
+    HEAP_PAGES := HEAP_PAGES div 2;           { fragmented RAM: take what fits }
+    if HEAP_PAGES < HEAP_MIN_PAGES then HEAP_PAGES := HEAP_MIN_PAGES;
+    hb := Pmm_AllocateContiguousPages(HEAP_PAGES);
+  end;
   if hb = nil then
   begin
     Terminal_SetColor_Pas($00FF0000);
@@ -349,7 +363,9 @@ begin
   Arch_StoreFence;
 
   Terminal_SetColor_Pas($0000FF00);
-  Terminal_Print_Pas(W('[+] Fortress MPU Heap Initialized! (4MB Solid Block)'#13#10));
+  Terminal_Print_Pas(W('[+] Fortress MPU Heap Initialized! ('));
+  Terminal_PrintDec_Pas(HEAP_PAGES * 4 div 1024);
+  Terminal_Print_Pas(W(' MB Solid Block)'#13#10));
 end;
 
 function Heap_Alloc(size: Cardinal): Pointer;
