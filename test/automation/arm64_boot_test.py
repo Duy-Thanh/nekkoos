@@ -3,6 +3,7 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "arm64 EL0: mapphys MMIO read OK",
     "arm64: virtio-blk: 2048 sectors",
     "arm64: disk sector 0: NEKKO-VIRTIO-OK",
     "arm64: disk write/read-back OK",

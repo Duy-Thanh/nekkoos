@@ -30,7 +30,7 @@ for m in "${PAS_MODULES[@]}"; do
     ppca64 -Paarch64 -Tlinux -XPaarch64-linux- -O1 -Ur -g- -Si -CD "@$CFG" -FU"$OUT" "src/arch/arm64/$m.pas"
 done
 # User programs (ELF, linked at 4 GiB, one RWX segment) are embedded in the kernel.
-for u in hello crash; do
+for u in hello crash mmio; do
     clang --target=aarch64-none-elf -c "src/user/arm64/$u.S" -o "$OUT/user_$u.o"
     ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/$u.elf" "$OUT/user_$u.o"
 done

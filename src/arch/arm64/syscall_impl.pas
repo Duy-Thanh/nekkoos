@@ -26,7 +26,6 @@ function Disp_KeyboardRead(threadId: Integer; isKing: Boolean; ctx: PQWord;
   currentRsp: QWord): QWord;
 
 { The functions below return a status code, NOT an RSP. }
-function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_HardwareReport(hwType: Cardinal; payload: QWord; isKing: Boolean): QWord;
 function Disp_MapFramebuffer(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_FramebufferDims(ptrWidth, ptrHeight, ptrScanLine: PQWord): QWord;
@@ -43,12 +42,6 @@ begin
   { No keyboard: "no key available", and the caller keeps running. }
   Ctx_SetRet(ctx, 0);
   Disp_KeyboardRead := currentRsp;
-end;
-
-function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
-begin
-  Ctx_SetRet(ctx, 0);
-  Disp_MapPhysicalMemory := 0;
 end;
 
 function Disp_HardwareReport(hwType: Cardinal; payload: QWord; isKing: Boolean): QWord;

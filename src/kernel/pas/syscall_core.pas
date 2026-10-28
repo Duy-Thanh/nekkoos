@@ -24,6 +24,11 @@ interface
 
 { Does the running thread own this user address? }
 function IsValidUserPtr(ptr: QWord): Boolean;
+{ Syscall 12: map `numPages` (arg 2) of physical memory starting at arg 1 into
+  the caller, for driver daemons (MMIO, firmware tables). Root only; anyone
+  else is marked phantom-dead. Returns via ctx the user address of arg 1, or 0.
+  Status code, NOT an RSP (AGENTS.md 2.3). }
+function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_Print(threadId: Integer; str: PWord): QWord;
 function Disp_DrawPixel(threadId: Integer; x, y, color: QWord): QWord;
 function Disp_ClearScreen(threadId: Integer; color: QWord): QWord;
@@ -67,6 +72,51 @@ begin
   fg := Sched_GetForegroundTask;
   MayUseScreen := not ((fg >= 0) and (fg < Sched_GetThreadCount) and
     (Sched_GetThreadActive(fg) <> 0) and (fg <> threadId));
+end;
+
+{ ── Syscall 12: map physical memory ───────────────────────────────────────── }
+
+function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
+var
+  physAddr, numPages, alignedPhys, offset, virtAddr, space, p: QWord;
+  irq: Boolean;
+begin
+  Disp_MapPhysicalMemory := 0;
+  if not isKing then
+  begin
+    Sched_SetThreadPhantomDead(threadId, 1);
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  physAddr := Ctx_GetArg(ctx, 1);
+  numPages := Ctx_GetArg(ctx, 2);
+  if (numPages = 0) or (numPages > 256) then begin Ctx_SetRet(ctx, 0); Exit; end;
+
+  irq := Sched_AcquireSchedLockSafe;
+
+  alignedPhys := physAddr and (not QWord(PAGE - 1));
+  offset := physAddr and (PAGE - 1);
+  virtAddr := Sched_GetThreadHeapBase(threadId);
+
+  space := Sched_GetThreadAddrSpaceRaw(threadId);
+  if (not Hal_AddressSpaceValid(space)) or (space <> Hal_CurrentAddressSpace) then
+  begin
+    Sched_ReleaseSchedLockSafe(irq);
+    Ctx_SetRet(ctx, 0);
+    Exit;
+  end;
+
+  for p := 0 to numPages - 1 do
+    Hal_MapPageIn(alignedPhys + p * PAGE, virtAddr + p * PAGE, HAL_MAP_USER_DEVICE, space);
+  { Guard page after the window. }
+  Hal_MapPageIn(0, virtAddr + numPages * PAGE, HAL_MAP_USER_GUARD, space);
+
+  Sched_SetThreadHeapBase(threadId, Sched_GetThreadHeapBase(threadId) + numPages * PAGE + PAGE);
+  Sched_ReleaseSchedLockSafe(irq);
+
+  Ctx_SetRet(ctx, virtAddr + offset);
+  Disp_MapPhysicalMemory := 1;
 end;
 
 { ── Console I/O ──────────────────────────────────────────────────────────── }

@@ -35,6 +35,7 @@ const
   HAL_MAP_USER_RW   = QWord(2);     { user read/write/execute }
   HAL_MAP_USER_RO   = QWord(3);     { user read-only }
   HAL_MAP_USER_GUARD = QWord(4);    { user, NOT present: a guard page }
+  HAL_MAP_USER_DEVICE = QWord(5);  { user read/write device memory (MMIO), never executable }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }
@@ -584,6 +585,10 @@ begin
     HAL_MAP_KERNEL_RW: pte := pte or PTE_XN;
     HAL_MAP_USER_RW:   pte := pte or PTE_AP_EL0 or PTE_PXN;
     HAL_MAP_USER_RO:   pte := pte or PTE_AP_EL0 or PTE_AP_RO or PTE_PXN;
+    HAL_MAP_USER_DEVICE:
+      { Device-nGnRnE, not shareable-cacheable: MMIO must never be cached. }
+      pte := (phys and ADDR_MASK) or PTE_PAGE or PTE_AF or PTE_ATTR_DEVICE or
+             PTE_AP_EL0 or PTE_XN;
   else
     pte := PTE_GUARD;
   end;

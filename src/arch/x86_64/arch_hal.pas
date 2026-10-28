@@ -36,6 +36,7 @@ const
   HAL_MAP_USER_RW   = QWord($07);   { present + writable + user }
   HAL_MAP_USER_RO   = QWord($05);   { present + user, read-only }
   HAL_MAP_USER_GUARD = QWord($04);  { user, NOT present: a guard page }
+  HAL_MAP_USER_DEVICE = QWord($07);  { device registers: same bits as user RW here }
   HAL_PAGE_SIZE     = 4096;
 
 { ── Syscall register frame ────────────────────────────────────────────────── }

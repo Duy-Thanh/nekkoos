@@ -32,7 +32,6 @@ function Disp_KeyboardRead(threadId: Integer; isKing: Boolean; ctx: PQWord;
   currentRsp: QWord): QWord;
 
 { The functions below return a status code, NOT an RSP. }
-function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_HardwareReport(hwType: Cardinal; payload: QWord; isKing: Boolean): QWord;
 function Disp_MapFramebuffer(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
 function Disp_FramebufferDims(ptrWidth, ptrHeight, ptrScanLine: PQWord): QWord;
@@ -137,50 +136,6 @@ begin
 end;
 
 { ── Syscall 12: map physical memory ──────────────────────────────────────── }
-
-function Disp_MapPhysicalMemory(threadId: Integer; isKing: Boolean; ctx: PQWord): QWord;
-var
-  physAddr, numPages, alignedPhys, offset, virtAddr, threadPml4, currentPml4, p: QWord;
-  irq: Boolean;
-begin
-  Disp_MapPhysicalMemory := 0;
-  if not isKing then
-  begin
-    Sched_SetThreadPhantomDead(threadId, 1);
-    Ctx_SetRet(ctx, 0);
-    Exit;
-  end;
-
-  physAddr := Ctx_GetArg(ctx, 1);
-  numPages := Ctx_GetArg(ctx, 2);
-  if (numPages = 0) or (numPages > 256) then begin Ctx_SetRet(ctx, 0); Exit; end;
-
-  irq := Sched_AcquireSchedLockSafe;
-
-  alignedPhys := physAddr and (not QWord($FFF));
-  offset := physAddr and $FFF;
-  virtAddr := Sched_GetThreadHeapBase(threadId);
-
-  threadPml4 := Sched_GetThreadAddrSpaceRaw(threadId);
-  currentPml4 := CurrentRoot;
-  if (not RootOk(threadPml4)) or (threadPml4 <> currentPml4) then
-  begin
-    Sched_ReleaseSchedLockSafe(irq);
-    Ctx_SetRet(ctx, 0);
-    Exit;
-  end;
-
-  for p := 0 to numPages - 1 do
-    Vmm_MapPageIn(alignedPhys + p * PAGE, virtAddr + p * PAGE, $07, Pointer(currentPml4));
-  { Guard page after the window. }
-  Vmm_MapPageIn(0, virtAddr + numPages * PAGE, $04, Pointer(currentPml4));
-
-  Sched_SetThreadHeapBase(threadId, Sched_GetThreadHeapBase(threadId) + numPages * PAGE + PAGE);
-  Sched_ReleaseSchedLockSafe(irq);
-
-  Ctx_SetRet(ctx, virtAddr + offset);
-  Disp_MapPhysicalMemory := 1;
-end;
 
 { ── Syscall 13: hardware report ──────────────────────────────────────────── }
 
