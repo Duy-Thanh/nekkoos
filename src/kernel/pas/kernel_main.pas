@@ -77,6 +77,15 @@ begin
   Sched_TerminateTask(id);
 end;
 
+var
+  { Thread ids of the daemons, recorded when they are spawned. A handshake
+    only counts when it comes from the thread that was started for that
+    role: otherwise any program could send "I am the disk daemon" to thread 0
+    and receive every sector request. }
+  SpawnedAtaId: Integer = -1;
+  SpawnedFatId: Integer = -1;
+  SpawnedMouseId: Integer = -1;
+
 { Drain the boot thread's mailbox, recording who answered the handshake. }
 procedure DrainHandshakes;
 var
@@ -86,17 +95,17 @@ begin
   rType := 0; rSender := 0; rPayload := 0;
   while IpcK_ReceiveForRaw(0, rType, rSender, rPayload) do
   begin
-    if rType = IPC_ATA_READY then
+    if (rType = IPC_ATA_READY) and (Integer(rSender) = SpawnedAtaId) then
     begin
       Ata_SetDaemonId(rSender);
       Ata_SetUseDaemon(True);
     end
-    else if rType = IPC_FAT16_READY then
+    else if (rType = IPC_FAT16_READY) and (Integer(rSender) = SpawnedFatId) then
     begin
       Fat16K_SetDaemonId(rSender);
       Fat16K_SetUseDaemon(True);
     end
-    else if rType = IPC_MOUSE_READY then
+    else if (rType = IPC_MOUSE_READY) and (Integer(rSender) = SpawnedMouseId) then
     begin
       Mouse_SetDaemonId(rSender);
       Mouse_SetUseDaemon(True);
@@ -260,17 +269,24 @@ begin
   rType := 0; rSender := 0; rPayload := 0;
   while IpcK_ReceiveForRaw(0, rType, rSender, rPayload) do Arch_CompilerFence;
 
-  SpawnDaemon(W('ATA.EXE'), True, 3);
+  { The ATA daemon's id is recorded at spawn, not when its handshake is read:
+    from this moment syscall 5 lets only the FAT16 daemon send it raw sector
+    requests. Waiting for the handshake left a window in which any program
+    could. }
+  SpawnedAtaId := SpawnDaemon(W('ATA.EXE'), True, 3);
+  if SpawnedAtaId > 0 then Ata_SetDaemonId(Cardinal(SpawnedAtaId));
 
   { Record the FAT16 daemon's thread id the moment it is spawned, before it can
     call ATA at all. Syscall 5 uses this, not the (user-chosen) process name, to
     decide who may talk to the ATA daemon directly. }
   fatDaemonId := SpawnDaemon(W('FAT16.EXE'), True, 3);
   Fat16K_SetTrustedThreadId(fatDaemonId);
+  SpawnedFatId := fatDaemonId;
 
   { The id is needed later: a lost mouse handshake is repaired by killing this
     thread and starting a fresh one. }
   mouseDaemonId := SpawnDaemon(W('MOUSE.EXE'), True, 3);
+  SpawnedMouseId := mouseDaemonId;
 
   { Wait for the three handshakes. Halt rather than Yield: under KVM a bare
     yield does not always let the daemons run, whereas HLT sleeps until the
@@ -324,6 +340,7 @@ begin
 
             KillThread(oldMouseId);
             mouseDaemonId := newMouseId;
+            SpawnedMouseId := newMouseId;
             Mouse_SetUseDaemon(False);
             Mouse_SetDaemonId(0);
             { The replacement gets a whole deadline of its own. }
