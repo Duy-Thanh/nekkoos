@@ -23,10 +23,11 @@ unit elf_loader;
 interface
 
 { Parse and load `image` (size bytes) and start it as a user thread named
-  `name` (UTF-16). Returns the thread id, or -1 when the image is rejected or
-  memory runs out; nothing is left allocated on failure. }
-function ElfLoader_Spawn(image: PByte; size: QWord; name: PWord;
-  priority: Byte): Integer;
+  `name` (UTF-16). Flags as for PELoader_LoadAndRun. Returns the thread id, or
+  -1 when the image is rejected or memory runs out; nothing is left allocated
+  on failure. }
+function ElfLoader_Spawn(image: PByte; size: QWord; runInBackground, isJailed,
+  forceRoot: Boolean; name: PWord; priority: Byte): Integer;
 
 implementation
 
@@ -58,8 +59,8 @@ begin
   Rd64 := QWord(Rd32(p)) or (QWord(Rd32(p + 4)) shl 32);
 end;
 
-function ElfLoader_Spawn(image: PByte; size: QWord; name: PWord;
-  priority: Byte): Integer;
+function ElfLoader_Spawn(image: PByte; size: QWord; runInBackground, isJailed,
+  forceRoot: Boolean; name: PWord; priority: Byte): Integer;
 var
   phoff, phentsize, phnum, entry: QWord;
   i, mapped: Integer;
@@ -147,7 +148,8 @@ begin
 
   if (hi = 0) or (entry < lo) or (entry >= hi) then begin Abort; Exit; end;
 
-  mapped := Sched_CreateUserTask(entry, space, False, False, True, name, pagesUsed, priority);
+  mapped := Sched_CreateUserTask(entry, space, not runInBackground, isJailed, forceRoot,
+    name, pagesUsed, priority);
   if mapped < 0 then begin Abort; Exit; end;
   ElfLoader_Spawn := mapped;
 end;

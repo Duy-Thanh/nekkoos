@@ -42,7 +42,7 @@ function Sudo_Dispatch_Pas(id: Integer; ctx: Pointer): Integer; cdecl;
 implementation
 
 uses arch_interface, libc, kstring, console, heap, kerncrypto, passwd_parser,
-  syscall_security, syscall_impl, syscall_core, arch_hal, pmm, scheduler, fat16_kernel, pe_loader;
+  syscall_security, syscall_impl, syscall_core, arch_hal, pmm, scheduler, fat16_kernel, program_loader;
 
 const
   RET_DENIED     = 0;
@@ -397,7 +397,7 @@ begin
 
     appFileSize := 0;
     rawData := Fat16K_ReadFile(appName, @appFileSize, id);
-    if (rawData = nil) or (rawData[0] <> Ord('M')) or (rawData[1] <> Ord('Z')) then
+    if (rawData = nil) or (not Program_IsRunnable(rawData, appFileSize)) then
     begin
       if rawData <> nil then Heap_Free(rawData);
       Heap_Free(passBuf);
@@ -405,7 +405,7 @@ begin
       Exit;
     end;
 
-    PELoader_LoadAndRun(rawData, False, False, True, appName, 1);
+    Program_LoadAndRun(rawData, appFileSize, False, False, True, appName, 1);
     Heap_Free(passBuf);
     Ctx_SetRet(ctx, RET_OK);
     Exit;

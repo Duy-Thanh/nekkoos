@@ -176,6 +176,9 @@ function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
   AArch64: 183). }
 function Hal_ElfMachine: Word;
 
+{ PE Machine value of this architecture's PE programs, or 0 when it runs none. }
+function Hal_PeMachine: Word;
+
 { Lowest virtual address user mappings may use; below it the kernel owns the
   address space. }
 function Hal_UserVaMin: QWord;
@@ -481,6 +484,11 @@ function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
 begin
   Hal_IsUserPageMapped := (virt <= QWord($00007FFFFFFFFFFF)) and
     (IsValidUserPtr_Pas(0, virt, space, Pmm_GetTotalPages) <> 0);
+end;
+
+function Hal_PeMachine: Word;
+begin
+  Hal_PeMachine := $8664;   { IMAGE_FILE_MACHINE_AMD64 }
 end;
 
 function Hal_ElfMachine: Word;

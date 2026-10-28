@@ -36,7 +36,7 @@ implementation
 
 uses arch_interface, arch_hal, io, kstring, libc, pmm, memmap_scan, heap,
   ipc_kernel, prng, strandscheduler, scheduler, ata_kernel, fat16_kernel,
-  input_drv, pe_loader, console, terminal, kstate, kernel_core;
+  input_drv, program_loader, console, terminal, kstate, kernel_core;
 
 const
   { How long a daemon may take to report ready before it is treated as stuck. }
@@ -151,7 +151,7 @@ begin
     end;
     Exit;
   end;
-  tid := PELoader_LoadAndRun(raw, True, False, True, name, priority);
+  tid := Program_LoadAndRun(raw, size, True, False, True, name, priority);
   SpawnDaemon := tid;
 end;
 
@@ -382,7 +382,7 @@ begin
   size := 0;
   raw := Fat16K_ReadFile(W('SYSLOGON.EXE'), @size, -1);
   if raw <> nil then
-    PELoader_LoadAndRun(raw, False, False, True, W('SYSLOGON.EXE'), 2)
+    Program_LoadAndRun(raw, size, False, False, True, W('SYSLOGON.EXE'), 2)
   else
     HaltForever;
 

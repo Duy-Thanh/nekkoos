@@ -42,7 +42,7 @@ function InternalShell_Dispatch(id: Integer; currentTicks: QWord; isKing: Boolea
 implementation
 
 uses arch_interface, console, kstring, heap, pmm, scheduler, syscall_security,
-  syscall_impl, syscall_core, arch_hal, fat16_kernel, pe_loader, power, pci, terminal;
+  syscall_impl, syscall_core, arch_hal, fat16_kernel, program_loader, power, pci, terminal;
 
 { TShellAction lives here, not in the interface: an enum reachable from the
   interface makes FPC emit RTTI that lld cannot resolve (AGENTS.md §6.3b).
@@ -312,9 +312,9 @@ begin
     Exit;
   end;
 
-  if (rawData[0] <> Ord('M')) or (rawData[1] <> Ord('Z')) then
+  if not Program_IsRunnable(rawData, fileSize) then
   begin
-    SayRed('[!] Kernel FATAL: Corrupted PE Header!'#13#10);
+    SayRed('[!] Kernel FATAL: Not a program for this machine!'#13#10);
     Heap_Free(rawData);
     Ctx_SetRet(ctx, 0);
     Exit;
@@ -328,7 +328,7 @@ begin
     Say('[!] ZERO TRUST: Untrusted App detected! Jailing in Phantom Sandbox...'#13#10);
   end;
 
-  PELoader_LoadAndRun(rawData, isDaemon, isJailed, False, arg, 1);
+  Program_LoadAndRun(rawData, fileSize, isDaemon, isJailed, False, arg, 1);
 
   if isDaemon then Con_SetColor($0000FF00);
 end;
@@ -353,8 +353,8 @@ begin
     syslogon.exe.) }
   Fat16K_Cd(W(''), -1);
   rawData := Fat16K_ReadFile(W('syslogon.exe'), @fileSize, id);
-  if (rawData <> nil) and (rawData[0] = Ord('M')) and (rawData[1] = Ord('Z')) then
-    PELoader_LoadAndRun(rawData, False, False, True, W('syslogon.exe'), 1)
+  if (rawData <> nil) and Program_IsRunnable(rawData, fileSize) then
+    Program_LoadAndRun(rawData, fileSize, False, False, True, W('syslogon.exe'), 1)
   else
   begin
     SayRed('[!] FATAL: Cannot find syslogon.exe! System Halt!'#13#10);

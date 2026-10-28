@@ -228,7 +228,8 @@ begin
   data := Fat16K_ReadFile(W('DISKAPP.ELF'), @size, -1);
   if (data <> nil) and (size > 0) then
   begin
-    if ElfLoader_Spawn(data, size, W('DISKAPP'), 5) < 0 then
+    if ElfLoader_Spawn(data, size, True, False, True,
+       W('DISKAPP'), 5) < 0 then
       Puts('arm64: DISKAPP.ELF rejected by the loader'#10);
     Heap_Free(data);
   end
@@ -238,7 +239,8 @@ begin
   data := Fat16K_ReadFile(W('ECHO.ELF'), @size, -1);
   if (data <> nil) and (size > 0) then
   begin
-    if ElfLoader_Spawn(data, size, W('ECHO'), 5) < 0 then
+    if ElfLoader_Spawn(data, size, False, False, True,
+       W('ECHO'), 5) < 0 then
       Puts('arm64: ECHO.ELF rejected by the loader'#10);
     Heap_Free(data);
   end
@@ -320,18 +322,18 @@ begin
   Kernel_InitServices;
   CheckServices;
   Puts('arm64: scheduler started'#10);
-  if ElfLoader_Spawn(@UserHelloStart, QWord(@UserHelloEnd) - QWord(@UserHelloStart),
+  if ElfLoader_Spawn(@UserHelloStart, QWord(@UserHelloEnd) - QWord(@UserHelloStart), True, False, True,
        PWord(@HelloName[0]), 5) < 0 then Puts('arm64: could not start hello'#10);
-  if ElfLoader_Spawn(@UserCrashStart, QWord(@UserCrashEnd) - QWord(@UserCrashStart),
+  if ElfLoader_Spawn(@UserCrashStart, QWord(@UserCrashEnd) - QWord(@UserCrashStart), True, False, True,
        PWord(@CrashName[0]), 5) < 0 then Puts('arm64: could not start crash'#10);
-  if ElfLoader_Spawn(@UserMmioStart, QWord(@UserMmioEnd) - QWord(@UserMmioStart),
+  if ElfLoader_Spawn(@UserMmioStart, QWord(@UserMmioEnd) - QWord(@UserMmioStart), True, False, True,
        PWord(@MmioName[0]), 5) < 0 then Puts('arm64: could not start mmio'#10);
   { The disk daemon, then a client standing in for the FAT16 daemon. }
   { Both daemon ids come from the spawn, never from a handshake. }
-  SpawnedAta := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart),
+  SpawnedAta := ElfLoader_Spawn(@UserVblkStart, QWord(@UserVblkEnd) - QWord(@UserVblkStart), True, False, True,
        PWord(@AtaRoleName[0]), 3);
   if SpawnedAta < 0 then Puts('arm64: could not start the disk daemon'#10);
-  SpawnedFat := ElfLoader_Spawn(@UserFat16Start, QWord(@UserFat16End) - QWord(@UserFat16Start),
+  SpawnedFat := ElfLoader_Spawn(@UserFat16Start, QWord(@UserFat16End) - QWord(@UserFat16Start), True, False, True,
        PWord(@FatRoleName[0]), 3);
   if SpawnedFat < 0 then Puts('arm64: could not start the filesystem daemon'#10)
   else Fat16K_SetTrustedThreadId(SpawnedFat);
@@ -340,7 +342,7 @@ begin
     ordering as x86 kernel_main). }
   if SpawnedAta > 0 then Ata_SetDaemonId(Cardinal(SpawnedAta));
   Sched_CreateTask(QWord(@LoaderThread));
-  if ElfLoader_Spawn(@UserSnoopStart, QWord(@UserSnoopEnd) - QWord(@UserSnoopStart),
+  if ElfLoader_Spawn(@UserSnoopStart, QWord(@UserSnoopEnd) - QWord(@UserSnoopStart), True, False, True,
        PWord(@SnoopName[0]), 5) < 0 then Puts('arm64: could not start snoop'#10);
   Arch_EnableInterrupts;
   Kernel_IdleLoop;
