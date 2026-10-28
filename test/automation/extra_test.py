@@ -98,6 +98,33 @@ def main():
                    "Comprehensive OS Stability Test" in out and "SHM=" in out
                    and "FAULT IN RING 3" not in out and "EXCEPTION" not in out,
                    out[-200:])
+        # Backspace used to print the literal text "#8#32#8" (a control
+        # character written inside the quotes of a string literal).
+        offset = st.serial_size()
+        st.type_text("abc")
+        st.mon_send(["sendkey backspace", "sendkey backspace"], 0.15)
+        st.wait_quiet(timeout=8, quiet_for=1.0)
+        out = st.tail_since_bytes(offset).replace("\r", "")
+        res.record("backspace erases instead of printing #8#32#8",
+                   "#8" not in out and "#32" not in out, repr(out[-120:]))
+        st.mon_send(["sendkey ctrl-u"], 0.1)
+        for _ in range(4):
+            st.mon_send(["sendkey backspace"], 0.1)
+        st.type_text("\n")
+        st.wait_quiet(timeout=8, quiet_for=1.0)
+
+        # The desktop: dsrv.exe (compositor) plus explorer.exe (backdrop).
+        # explorer shares a buffer with dsrv through syscall 101; dsrv used to
+        # fault reading it because it was never mapped into dsrv.
+        offset = st.serial_size()
+        st.type_text("daemon dsrv.exe\n")
+        st.wait_quiet(timeout=10, quiet_for=1.5)
+        st.type_text("daemon explorer.exe\n")
+        time.sleep(6)
+        out = st.tail_since_bytes(offset).replace("\r", "")
+        res.record("desktop (dsrv + explorer) runs without a fault",
+                   "FAULT IN RING 3" not in out and "EXCEPTION" not in out
+                   and out.count("Process Started") >= 2, out[-200:])
         step_builtin(res, "mkdir extradir", r"root@nekkoOS#", "mkdir via daemon")
         step_builtin(res, "ls", r"(?i)extradir", "mkdir result visible in ls")
         step_builtin(res, "rmdir extradir", r"root@nekkoOS#", "rmdir via daemon")

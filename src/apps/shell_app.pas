@@ -267,7 +267,7 @@ begin
     else if (c = 8) and (len > 0) then
     begin
       Dec(len);
-      ShellPrint(W('#8#32#8'));
+      ShellPrint(W(#8#32#8));
     end
     else if (c >= 32) and (c <= 126) and (len < maxLen) then
     begin
@@ -310,7 +310,7 @@ begin
       else if (c = 8) and (lineLen > 0) then
       begin
         Dec(lineLen);
-        ShellPrint(W('#8#32#8'));
+        ShellPrint(W(#8#32#8));
       end
       else if (c >= 32) and (c <= 126) and (lineLen < 255) then
       begin
@@ -576,7 +576,7 @@ begin
       else if (c = 8) and (cmdLen > 0) then
       begin
         Dec(cmdLen);
-        ShellPrint(W('#8#32#8'));
+        ShellPrint(W(#8#32#8));
       end
       else if (c >= 32) and (c <= 126) and (cmdLen < CMD_MAX) then
       begin

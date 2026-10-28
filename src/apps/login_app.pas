@@ -178,7 +178,7 @@ begin
     else if (c = 8) and (len > 0) then
     begin
       Dec(len);
-      App_Print(W('#8#32#8'));
+      App_Print(W(#8#32#8));
     end
     else if (c >= 32) and (c <= 126) and (len < maxLen) then
     begin

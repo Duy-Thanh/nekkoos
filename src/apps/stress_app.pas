@@ -272,6 +272,14 @@ procedure UpdateDisplay;
 begin
   FrameIdx := 0;
 
+  AppendStr('====================================================' + LF);
+  AppendStr('   NekkoOS Reliability (Formerly NekkoBurn)         ' + LF);
+  AppendStr('   Copyright (C) 2026 Nekkochan. All right reserved ' + LF);
+  AppendStr(LF);
+  AppendStr('   INTERNAL SOFTWARE. DO NOT RESALE OR COPY!        ' + LF);
+  AppendStr('====================================================' + LF);
+  AppendStr(LF);
+  AppendStr(LF);
   AppendStr('[STRESS TEST] Comprehensive OS Stability Test' + LF);
   AppendStr('[STRESS] ''q''=quit | ''f''=page fault | ''z''=div by zero | ''g''=GPF | ''i''=ISR test' + LF);
 
