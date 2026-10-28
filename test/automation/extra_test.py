@@ -85,6 +85,19 @@ def main():
                    clean[-200:])
         st.type_text("q")
         st.wait_quiet(timeout=10, quiet_for=1.5)
+        # stresstest.exe (8.3 alias STRESS~1.EXE) hammers IPC, memory and the
+        # shared-buffer syscall; it used to page-fault within a second because
+        # App_CreateSharedBuffer handed the vDSO stub a garbage out-pointer.
+        offset = st.serial_size()
+        st.type_text("run stress~1.exe\n")
+        time.sleep(8)
+        st.type_text("q")
+        st.wait_quiet(timeout=15, quiet_for=2)
+        out = st.tail_since_bytes(offset).replace("\r", "")
+        res.record("stresstest runs 8 s without faulting",
+                   "Comprehensive OS Stability Test" in out and "SHM=" in out
+                   and "FAULT IN RING 3" not in out and "EXCEPTION" not in out,
+                   out[-200:])
         step_builtin(res, "mkdir extradir", r"root@nekkoOS#", "mkdir via daemon")
         step_builtin(res, "ls", r"(?i)extradir", "mkdir result visible in ls")
         step_builtin(res, "rmdir extradir", r"root@nekkoOS#", "rmdir via daemon")

@@ -430,16 +430,22 @@ var
   tgt: QWord;
   stub: Pointer;
 begin
-  tgt := targetVAddr;
+  { The stub stores the second result through R8 (`mov [r8], rbx`), so R8
+    must be the ADDRESS of tgt. It used to be its value (whatever the caller
+    left in targetVAddr, usually 0), and the stub's store page-faulted the
+    app: stresstest.exe died within a second. RBX is callee-saved and the
+    trap returns the target address in it, so it is saved around the call. }
+  tgt := 0;
   stub := AppApi_Slot(APP_SLOT_CREATE_SHARED_BUFFER);
   asm
+    push rbx
     mov  rcx, destPid
     mov  rdx, numPages
-    mov  r8,  tgt
+    lea  r8,  tgt
     call stub
-    mov  tgt, rbx
     mov  res, rax
-  end;
+    pop  rbx
+  end ['rax', 'rcx', 'rdx', 'r8', 'r9', 'r10', 'r11'];
   targetVAddr := tgt;
   App_CreateSharedBuffer := res;
 end;
