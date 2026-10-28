@@ -74,6 +74,17 @@ def main():
         step_builtin(res, "date", r"\d", "date prints something numeric")
         step_builtin(res, "pci", r"Total PCI devices found", "pci scan")
         step_builtin(res, "bogus-command", r"Unknown Command|not found", "unknown command")
+        # top.exe reads every process record with GetProcessInfo; a wrapper bug
+        # made the kernel write the 55-byte record over an 8-byte pointer on
+        # the app's stack, and top died with a GPF on its first return.
+        ok, snap = st.run_cmd("run top.exe", timeout=20, quiet_for=3)
+        clean = snap.replace("\r", "")
+        res.record("run top.exe shows the process table",
+                   "NEKKOTOP" in clean and "SHELL.EXE" in clean
+                   and "GENERAL PROTECTION" not in clean and "EXCEPTION" not in clean,
+                   clean[-200:])
+        st.type_text("q")
+        st.wait_quiet(timeout=10, quiet_for=1.5)
         step_builtin(res, "mkdir extradir", r"root@nekkoOS#", "mkdir via daemon")
         step_builtin(res, "ls", r"(?i)extradir", "mkdir result visible in ls")
         step_builtin(res, "rmdir extradir", r"root@nekkoOS#", "rmdir via daemon")

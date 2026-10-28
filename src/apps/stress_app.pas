@@ -417,7 +417,7 @@ begin
   pid := 0;
   while pid < PID_SCAN do
   begin
-    p := @InfoBuf;
+    p := @InfoBuf;                     { filled in place }
     if App_GetProcessInfo(pid, p) = 1 then
     begin
       { THE NASM GATE. It loaded the first DWORD of ProcessInfo believing
@@ -500,6 +500,8 @@ end;
 
 { ---- stage 5: hand the kernel pointers it must reject ---- }
 procedure InvalidSyscallStage;
+type
+  TInfoFn = function(t: Cardinal; buf: Pointer): LongInt; cdecl;
 var
   nilPtr: Pointer;
 begin
@@ -507,7 +509,9 @@ begin
   begin
     nilPtr := nil;
     App_ReceiveIPC(nilPtr);
-    App_GetProcessInfo(0, nilPtr);
+    { Through the slot, so the kernel really receives a nil buffer: the
+      App_GetProcessInfo wrapper substitutes its own buffer for nil. }
+    TInfoFn(AppApi_Slot(APP_SLOT_GET_PROCESS_INFO))(0, nil);
     PokeSlot := 0;
   end;
 end;

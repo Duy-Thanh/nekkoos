@@ -115,7 +115,14 @@ procedure App_Yield;
 procedure App_WaitIPC;
 function  App_GetThreadGID(targetTid: Cardinal): Cardinal;
 procedure App_SetGID(gid: Cardinal);
-function  App_GetProcessInfo(tid: Cardinal; out info: Pointer): LongInt;
+{ Fill a process record (55 bytes, read it with App_Proc*) for thread `tid`.
+  `info` names the buffer: pass a pointer to your own record, or nil to use a
+  buffer inside app_api (overwritten by the next call). On success (1) `info`
+  points at the filled record. The kernel writes the record WHERE info points;
+  this wrapper used to pass the address of the `info` variable itself, so the
+  kernel wrote 55 bytes over an 8-byte pointer on the caller's stack and
+  top.exe died with a GPF on return. }
+function  App_GetProcessInfo(tid: Cardinal; var info: Pointer): LongInt;
 procedure App_Clear(color: Cardinal);
 procedure App_Sleep(ms: QWord);
 function  App_GetUptime: QWord;
@@ -363,9 +370,15 @@ procedure App_SetGID(gid: Cardinal);
 type TFn = procedure(g: Cardinal); cdecl;
 begin TFn(AppApi_Slot(APP_SLOT_SET_GID))(gid); end;
 
-function App_GetProcessInfo(tid: Cardinal; out info: Pointer): LongInt;
-type TFn = function(t: Cardinal; out i: Pointer): LongInt; cdecl;
-begin App_GetProcessInfo := TFn(AppApi_Slot(APP_SLOT_GET_PROCESS_INFO))(tid, info); end;
+var
+  ProcInfoBuf: array[0..63] of Byte;
+
+function App_GetProcessInfo(tid: Cardinal; var info: Pointer): LongInt;
+type TFn = function(t: Cardinal; buf: Pointer): LongInt; cdecl;
+begin
+  if info = nil then info := @ProcInfoBuf[0];
+  App_GetProcessInfo := TFn(AppApi_Slot(APP_SLOT_GET_PROCESS_INFO))(tid, info);
+end;
 
 procedure App_Clear(color: Cardinal);
 type TFn = procedure(c: Cardinal); cdecl;

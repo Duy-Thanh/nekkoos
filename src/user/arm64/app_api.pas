@@ -102,7 +102,14 @@ procedure App_Yield;
 procedure App_WaitIPC;
 function  App_GetThreadGID(targetTid: Cardinal): Cardinal;
 procedure App_SetGID(gid: Cardinal);
-function  App_GetProcessInfo(tid: Cardinal; out info: Pointer): LongInt;
+{ Fill a process record (55 bytes, read it with App_Proc*) for thread `tid`.
+  `info` names the buffer: pass a pointer to your own record, or nil to use a
+  buffer inside app_api (overwritten by the next call). On success (1) `info`
+  points at the filled record. The kernel writes the record WHERE info points;
+  this wrapper used to pass the address of the `info` variable itself, so the
+  kernel wrote 55 bytes over an 8-byte pointer on the caller's stack and
+  top.exe died with a GPF on return. }
+function  App_GetProcessInfo(tid: Cardinal; var info: Pointer): LongInt;
 procedure App_Clear(color: Cardinal);
 procedure App_Sleep(ms: QWord);
 function  App_GetUptime: QWord;
@@ -276,8 +283,8 @@ procedure S_Yield; cdecl;                           begin Sys(98, 0, 0, 0, 0); e
 procedure S_WaitIPC; cdecl;                         begin Sys(100, 0, 0, 0, 0); end;
 function  S_GetThreadGID(tid: Cardinal): Cardinal; cdecl; begin S_GetThreadGID := Cardinal(Sys0(92, tid)); end;
 procedure S_SetGID(g: Cardinal); cdecl;             begin Sys0(93, g); end;
-function  S_GetProcessInfo(t: Cardinal; out i: Pointer): LongInt; cdecl;
-begin S_GetProcessInfo := LongInt(Sys(10, t, QWord(@i), 0, 0)); end;
+function  S_GetProcessInfo(t: Cardinal; buf: Pointer): LongInt; cdecl;
+begin S_GetProcessInfo := LongInt(Sys(10, t, QWord(buf), 0, 0)); end;
 procedure S_Clear(c: Cardinal); cdecl;              begin Sys(3, c, 0, 0, 0); end;
 procedure S_Sleep(m: QWord); cdecl;                 begin Sys(97, m, 0, 0, 0); end;
 function  S_GetUptime: QWord; cdecl;                begin S_GetUptime := Sys(96, 0, 0, 0, 0); end;
@@ -351,7 +358,14 @@ procedure App_Yield;                                 begin S_Yield; end;
 procedure App_WaitIPC;                               begin S_WaitIPC; end;
 function  App_GetThreadGID(targetTid: Cardinal): Cardinal; begin App_GetThreadGID := S_GetThreadGID(targetTid); end;
 procedure App_SetGID(gid: Cardinal);                 begin S_SetGID(gid); end;
-function  App_GetProcessInfo(tid: Cardinal; out info: Pointer): LongInt; begin App_GetProcessInfo := S_GetProcessInfo(tid, info); end;
+var
+  ProcInfoBuf: array[0..63] of Byte;
+
+function  App_GetProcessInfo(tid: Cardinal; var info: Pointer): LongInt;
+begin
+  if info = nil then info := @ProcInfoBuf[0];
+  App_GetProcessInfo := S_GetProcessInfo(tid, info);
+end;
 procedure App_Clear(color: Cardinal);                begin S_Clear(color); end;
 procedure App_Sleep(ms: QWord);                      begin S_Sleep(ms); end;
 function  App_GetUptime: QWord;                      begin App_GetUptime := S_GetUptime; end;
