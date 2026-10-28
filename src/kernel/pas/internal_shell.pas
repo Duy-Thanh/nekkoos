@@ -127,12 +127,15 @@ const
   CMD_CLEAR    : array[0..5] of Word = (Ord('c'), Ord('l'), Ord('e'), Ord('a'), Ord('r'), 0);
   CMD_HELP     : array[0..4] of Word = (Ord('h'), Ord('e'), Ord('l'), Ord('p'), 0);
   CMD_MEM      : array[0..3] of Word = (Ord('m'), Ord('e'), Ord('m'), 0);
-  CMD_UPTIME   : array[0..5] of Word = (Ord('u'), Ord('p'), Ord('t'), Ord('i'), Ord('m'), Ord('e'));
+  { Every entry must end in 0: the matchers stop at the terminator. uptime
+    and "daemon " had none and read past their array; on x86 the next bytes
+    happened to be 0, on ARM64 `uptime` was "Unknown Command". }
+  CMD_UPTIME   : array[0..6] of Word = (Ord('u'), Ord('p'), Ord('t'), Ord('i'), Ord('m'), Ord('e'), 0);
   CMD_PCI      : array[0..3] of Word = (Ord('p'), Ord('c'), Ord('i'), 0);
   CMD_DATE     : array[0..4] of Word = (Ord('d'), Ord('a'), Ord('t'), Ord('e'), 0);
   CMD_UNAME    : array[0..5] of Word = (Ord('u'), Ord('n'), Ord('a'), Ord('m'), Ord('e'), 0);
   CMD_RUN      : array[0..4] of Word = (Ord('r'), Ord('u'), Ord('n'), Ord(' '), 0);
-  CMD_DAEMON   : array[0..6] of Word = (Ord('d'), Ord('a'), Ord('e'), Ord('m'), Ord('o'), Ord('n'), Ord(' '));
+  CMD_DAEMON   : array[0..7] of Word = (Ord('d'), Ord('a'), Ord('e'), Ord('m'), Ord('o'), Ord('n'), Ord(' '), 0);
   CMD_POWEROFF : array[0..8] of Word = (Ord('s'), Ord('h'), Ord('u'), Ord('t'), Ord('d'), Ord('o'), Ord('w'), Ord('n'), 0);
   CMD_LOGOUT   : array[0..6] of Word = (Ord('l'), Ord('o'), Ord('g'), Ord('o'), Ord('u'), Ord('t'), 0);
   CMD_REBOOT   : array[0..6] of Word = (Ord('r'), Ord('e'), Ord('b'), Ord('o'), Ord('o'), Ord('t'), 0);
@@ -438,7 +441,11 @@ begin
       if isKing then Power_Reboot
       else SayRed('[!] Permission Denied: Only Root can reboot the system!'#13#10);
     SA_UNAME:
-      Say('NekkoOS Microkernel x86_64'#13#10);
+      begin
+        Say('NekkoOS Microkernel ');
+        Con_Print(Hal_ArchName);
+        Say(#13#10);
+      end;
     SA_CAT:
       HandleCat(@arg[0], argLen);
     SA_RUN, SA_DAEMON:

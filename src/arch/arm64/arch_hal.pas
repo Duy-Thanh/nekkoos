@@ -169,6 +169,14 @@ function Hal_InterruptsEnabled: Boolean;
   pointers handed to the kernel by user programs. }
 function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
 
+{ Name of this architecture as `uname` prints it (UTF-16, static). }
+function Hal_ArchName: PWord;
+
+{ Does this architecture have x86-style I/O ports (IN/OUT)? Code that drives
+  legacy PC hardware directly (the kernel's IDE fallback) checks this first;
+  on ARM64 a port access would stop the machine. }
+function Hal_HasPortIo: Boolean;
+
 { ── User images ───────────────────────────────────────────────────────────── }
 
 { ELF e_machine value of this architecture's user programs (x86_64: 62,
@@ -215,7 +223,7 @@ procedure Arm64_UartClearInterrupt;
 
 implementation
 
-uses arch_interface, pmm;
+uses arch_interface, pmm, terminal;
 
 const
   UART_BASE = QWord($09000000);
@@ -504,15 +512,55 @@ end;
 
 { ── Cores ────────────────────────────────────────────────────────────────── }
 
+const
+  RtcLabel: array[0..23] of Word = (91, 42, 93, 32, 72, 97, 114, 100, 119, 97, 114, 101, 32, 82, 84, 67, 32, 84, 105, 109, 101, 58, 32, 0);
+
+{ PL031 real-time clock at 0x09010000: RTCDR is seconds since 1970-01-01 UTC. }
+const
+  RTC_BASE = QWord($09010000);
+  TZ_HOURS = 7;                       { same GMT+7 the x86 CMOS reader applies }
+
 function Hal_WallClockSeconds: QWord;
 begin
-  Unimplemented('Hal_WallClockSeconds (PL031 RTC)');
-  Hal_WallClockSeconds := 0;
+  { x86 returns the RTC's seconds field (0-59); keep that meaning. }
+  Hal_WallClockSeconds := QWord(Arch_ReadMmio32(RTC_BASE)) mod 60;
 end;
 
-procedure Hal_PrintWallClock;
+procedure PrintTwo(v: QWord);
 begin
-  Unimplemented('Hal_PrintWallClock (PL031 RTC)');
+  if v < 10 then Terminal_DrawChar_Pas(Ord('0'));
+  Terminal_PrintDec_Pas(v);
+end;
+
+{ Same format as the x86 CMOS reader: "dd/mm/yyyy  hh:mm:ss". }
+procedure Hal_PrintWallClock;
+var
+  t, days, secs, y, m, d, era, doe, yoe, doy, mp: QWord;
+  z: Int64;
+begin
+  t := QWord(Arch_ReadMmio32(RTC_BASE)) + TZ_HOURS * 3600;
+  days := t div 86400;
+  secs := t mod 86400;
+  { Civil date from days since 1970-01-01 (Howard Hinnant's algorithm). }
+  z := Int64(days) + 719468;
+  era := QWord(z div 146097);
+  doe := QWord(z - Int64(era) * 146097);
+  yoe := (doe - doe div 1460 + doe div 36524 - doe div 146096) div 365;
+  y := yoe + era * 400;
+  doy := doe - (365 * yoe + yoe div 4 - yoe div 100);
+  mp := (5 * doy + 2) div 153;
+  d := doy - (153 * mp + 2) div 5 + 1;
+  if mp < 10 then m := mp + 3 else m := mp - 9;
+  if m <= 2 then Inc(y);
+  Terminal_Print_Pas(PWord(@RtcLabel[0]));
+  PrintTwo(d);  Terminal_DrawChar_Pas(Ord('/'));
+  PrintTwo(m);  Terminal_DrawChar_Pas(Ord('/'));
+  Terminal_PrintDec_Pas(y);
+  Terminal_DrawChar_Pas(Ord(' '));  Terminal_DrawChar_Pas(Ord(' '));
+  PrintTwo(secs div 3600);  Terminal_DrawChar_Pas(Ord(':'));
+  PrintTwo((secs div 60) mod 60);  Terminal_DrawChar_Pas(Ord(':'));
+  PrintTwo(secs mod 60);
+  Terminal_DrawChar_Pas(10);
 end;
 
 function Hal_MultiCoreActive: Boolean;
@@ -744,6 +792,19 @@ begin
   l3 := PQWord(e and ADDR_MASK);
   e := l3[(virt shr 12) and 511];
   Hal_IsUserPageMapped := ((e and 3) = 3) and ((e and PTE_AP_EL0) <> 0);
+end;
+
+const
+  ArchNameStr: array[0..7] of Word = (Ord('a'), Ord('a'), Ord('r'), Ord('c'), Ord('h'), Ord('6'), Ord('4'), 0);
+
+function Hal_ArchName: PWord;
+begin
+  Hal_ArchName := @ArchNameStr[0];
+end;
+
+function Hal_HasPortIo: Boolean;
+begin
+  Hal_HasPortIo := False;
 end;
 
 function Hal_PeMachine: Word;

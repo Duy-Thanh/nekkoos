@@ -47,7 +47,7 @@ function  Ata_GetSharedMem: PByte;
 implementation
 
 uses arch_interface, io, kstring, kstate, libc, pmm, spinlock, terminal,
-  scheduler, ipc_kernel;
+  scheduler, ipc_kernel, arch_hal;
 
 const
   { KernelSharedMemBlock: ShellCommand(4K) + FatRequest(4K) + FatResponse(8K)
@@ -253,6 +253,7 @@ var
   identify: array[0..255] of Word;
   total: Cardinal;
 begin
+  if not Hal_HasPortIo then Exit;
   if not WaitAtaHardware then Exit;
 
   Io_Out8(ATA_PORT_DRIVE, $A0);
@@ -332,13 +333,17 @@ begin
     Exit;
   end;
 
-  if not IsLbaInRange(lba) then
+  caller := Sched_GetCurrentThreadId;
+
+  { The range check probes the controller (IDENTIFY over port I/O), so it
+    belongs to the direct path only. Through the daemon, the daemon checks
+    the LBA against its own device, and the kernel must not touch hardware it
+    may not even have (ARM64: there are no I/O ports; the probe hung). }
+  if not (UseDaemon and (caller <> 0)) and (not IsLbaInRange(lba)) then
   begin
     Fatal('[!] FATAL: Invalid LBA address in ATA ReadSector!'#13#10);
     Exit;
   end;
-
-  caller := Sched_GetCurrentThreadId;
 
   if UseDaemon and (caller <> 0) then
   begin
@@ -371,6 +376,13 @@ begin
       end;
       Sched_Yield;
     end;
+  end;
+
+  { Direct controller access: only where the controller can exist. }
+  if not Hal_HasPortIo then
+  begin
+    Fatal('[!] ATA: no direct disk access on this architecture (daemon not up)'#13#10);
+    Exit;
   end;
 
   irq := Spinlock_AcquireSafe_Pas(@AtaHardwareLock);
@@ -424,13 +436,17 @@ begin
     Exit;
   end;
 
-  if not IsLbaInRange(lba) then
+  caller := Sched_GetCurrentThreadId;
+
+  { The range check probes the controller (IDENTIFY over port I/O), so it
+    belongs to the direct path only. Through the daemon, the daemon checks
+    the LBA against its own device, and the kernel must not touch hardware it
+    may not even have (ARM64: there are no I/O ports; the probe hung). }
+  if not (UseDaemon and (caller <> 0)) and (not IsLbaInRange(lba)) then
   begin
     Fatal('[!] FATAL: Invalid LBA address in ATA WriteSector!'#13#10);
     Exit;
   end;
-
-  caller := Sched_GetCurrentThreadId;
 
   if UseDaemon and (caller <> 0) then
   begin
@@ -465,6 +481,13 @@ begin
       end;
       Sched_Yield;
     end;
+  end;
+
+  { Direct controller access: only where the controller can exist. }
+  if not Hal_HasPortIo then
+  begin
+    Fatal('[!] ATA: no direct disk access on this architecture (daemon not up)'#13#10);
+    Exit;
   end;
 
   irq := Spinlock_AcquireSafe_Pas(@AtaHardwareLock);
@@ -558,6 +581,13 @@ begin
       end;
       Sched_Yield;
     end;
+  end;
+
+  { Direct controller access: only where the controller can exist. }
+  if not Hal_HasPortIo then
+  begin
+    { The disk daemon flushes (or writes through) on its own. }
+    Exit;
   end;
 
   irq := Spinlock_AcquireSafe_Pas(@AtaHardwareLock);

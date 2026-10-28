@@ -210,6 +210,10 @@ begin
     Sched_Yield;
   end;
   Puts('arm64: ATA.EXE (virtio) and FAT16.EXE are up'#10);
+  { The kernel's own FAT16 view (used by sudo to read /ETC/PASSWD and by
+    logout), as x86 kernel_main sets up at boot. Its sector reads go to the
+    disk daemon because this thread is not thread 0. }
+  Fat16K_Init;
 
   size := 0;
   data := Fat16K_ReadFile(W('HELLO.TXT'), @size, -1);

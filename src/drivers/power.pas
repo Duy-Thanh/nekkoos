@@ -233,15 +233,27 @@ begin
   WaitAtaIdleBeforeApocalypse(2000);
   BroadcastApocalypse;
 
+  { Without an ACPI daemon (ARM64: power is PSCI, owned by the HAL) this is
+    the normal path, not a failure. }
+  if acpiPid = -1 then
+  begin
+    Terminal_SetColor_Pas($00FFFF00);
+    if isShutdown then
+      Terminal_Print_Pas(W(#13#10'   [*] Powering off through the platform firmware.'#13#10))
+    else
+      Terminal_Print_Pas(W(#13#10'   [*] Resetting through the platform firmware.'#13#10));
+  end;
   Terminal_SetColor_Pas($00FF0000);
   if isShutdown then
   begin
-    Terminal_Print_Pas(W(#13#10'   [!!!] FATAL: ACPI DAEMON FAILED TO SHUTDOWN HARDWARE! SYSTEM HALTED!'#13#10));
+    if acpiPid <> -1 then
+      Terminal_Print_Pas(W(#13#10'   [!!!] FATAL: ACPI DAEMON FAILED TO SHUTDOWN HARDWARE! SYSTEM HALTED!'#13#10));
     HAL_Shutdown;
   end
   else
   begin
-    Terminal_Print_Pas(W(#13#10'   [!!!] FATAL: ACPI DAEMON FAILED TO REBOOT HARDWARE! SYSTEM HALTED!'#13#10));
+    if acpiPid <> -1 then
+      Terminal_Print_Pas(W(#13#10'   [!!!] FATAL: ACPI DAEMON FAILED TO REBOOT HARDWARE! SYSTEM HALTED!'#13#10));
     Power_HardReboot;
     while True do Io_Hlt;
   end;

@@ -170,6 +170,14 @@ function Hal_InterruptsEnabled: Boolean;
   pointers handed to the kernel by user programs. }
 function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
 
+{ Name of this architecture as `uname` prints it (UTF-16, static). }
+function Hal_ArchName: PWord;
+
+{ Does this architecture have x86-style I/O ports (IN/OUT)? Code that drives
+  legacy PC hardware directly (the kernel's IDE fallback) checks this first;
+  on ARM64 a port access would stop the machine. }
+function Hal_HasPortIo: Boolean;
+
 { ── User images ───────────────────────────────────────────────────────────── }
 
 { ELF e_machine value of this architecture's user programs (x86_64: 62,
@@ -484,6 +492,19 @@ function Hal_IsUserPageMapped(space, virt: QWord): Boolean;
 begin
   Hal_IsUserPageMapped := (virt <= QWord($00007FFFFFFFFFFF)) and
     (IsValidUserPtr_Pas(0, virt, space, Pmm_GetTotalPages) <> 0);
+end;
+
+const
+  ArchNameStr: array[0..6] of Word = (Ord('x'), Ord('8'), Ord('6'), Ord('_'), Ord('6'), Ord('4'), 0);
+
+function Hal_ArchName: PWord;
+begin
+  Hal_ArchName := @ArchNameStr[0];
+end;
+
+function Hal_HasPortIo: Boolean;
+begin
+  Hal_HasPortIo := True;
 end;
 
 function Hal_PeMachine: Word;

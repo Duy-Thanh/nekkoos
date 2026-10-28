@@ -24,6 +24,7 @@ Also needs `qemu-system-aarch64` (`zypper in qemu-arm`).
     ./build_arm64.sh    # build/arm64/kernel.bin (arm64 Image; QEMU passes the DTB only to an Image, not to an ELF)
     ./run_arm64.sh      # QEMU virt, serial on stdio, Ctrl-A X quits
     python3 test/automation/arm64_boot_test.py
+    python3 test/automation/arm64_extra_test.py   # builtins, mkdir/rmdir, write/cat, sudo, reboot, shutdown
 
 ## Layout
 
@@ -63,5 +64,6 @@ x86-only `Arch_*` symbols are stubs that halt, so `arch_interface.o` links.
 - [x] The generic `syscall_dispatch` serves EL0 (arm64 `syscall_impl` reports hardware-only calls as unavailable); `Hal_IsUserPageMapped` replaced the x86 pointer walker in dispatch/shell/sudo; PSCI `HAL_Reboot`/`HAL_Shutdown` (shutdown verified)
 - [x] Login and shell: SYSLOGON.EXE (`login_app.pas`) and SHELL.EXE (`shell_app.pas`), the x86 sources unchanged, built as ELF and stored on the FAT16 disk with the same /ETC/PASSWD; `run SHELL.EXE` goes through `program_loader`. Logging in as root and `ls` work over the serial console.
 - [x] Keyboard = serial console: PL011 receive interrupt (SPI 33) -> IPC type 1 from sender 34 -> `Disp_KeyboardRead` (same foreground rule and atomic claim as x86)
+- [x] Shell builtins, files and sudo match x86 (`arm64_extra_test.py`, 21 checks): uname via `Hal_ArchName`, `date` from the PL031 RTC, `pci` reports no port-I/O config space, reboot/shutdown through PSCI
 - [ ] Framebuffer (no display on this port yet)
 - [ ] Secondary cores via PSCI
