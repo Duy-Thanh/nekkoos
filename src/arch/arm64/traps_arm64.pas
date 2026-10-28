@@ -25,7 +25,7 @@ function Arm64Sync(frame: QWord): QWord; cdecl;
 
 implementation
 
-uses arch_interface, arch_hal, scheduler, terminal, serial;
+uses arch_interface, arch_hal, scheduler, terminal, serial, ipc_kernel;
 
 const
   EC_SVC64 = $15;
@@ -33,6 +33,28 @@ const
 procedure Fault(esr, elr, far: QWord); cdecl; external name 'Arm64Fault';
 function ReadEsr: QWord; cdecl; external name 'Arch_ReadEsr';
 function ReadFar: QWord; cdecl; external name 'Arch_ReadFar';
+
+{ Keyboard input on this platform is the serial console. Each received byte
+  becomes an IPC message (type 1, sender KBD_SENDER) for Disp_KeyboardRead,
+  the same channel the x86 keyboard interrupt uses (there the sender is 33 and
+  the payload a scancode; here it is already a character). }
+const
+  KBD_SENDER = 34;
+
+procedure UartInput;
+var
+  b: Byte;
+  c: Word;
+begin
+  while Arm64_UartReadByte(b) do
+  begin
+    c := b;
+    if c = 13 then c := 10;          { Enter: the x86 keymap delivers LF }
+    if c = 127 then c := 8;          { DEL from a terminal = backspace }
+    IpcK_SendFromInterrupt(1, KBD_SENDER, 0, c);
+  end;
+  Arm64_UartClearInterrupt;
+end;
 
 function Arm64Irq(frame: QWord): QWord; cdecl; public name 'Arm64Irq';
 var
@@ -47,6 +69,7 @@ begin
     if Sched_IsReady and (Hal_CurrentCoreId = 0) then Sched_BumpSystemTicks(1);
     if Sched_IsReady then Arm64Irq := Sched_SwitchTask(frame);
   end;
+  if (iar and $3FF) = ARM64_UART_INTID then UartInput;
   Arm64_IrqEnd(iar);
 end;
 

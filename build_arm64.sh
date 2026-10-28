@@ -52,6 +52,9 @@ upas src/user/arm64/app_api.pas
 upas src/user/arm64/vblk_daemon.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/vblk.elf" \
     "$UOUT/crt0.o" "$UOUT/vblk_daemon.o" "$UOUT/uapi.o" "$UOUT/kstring.o"
+upas src/user/arm64/echo_app.pas
+ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/echo.elf" \
+    "$UOUT/crt0.o" "$UOUT/echo_app.o" "$UOUT/app_api.o" "$UOUT/kstring.o"
 # FAT16.EXE: the x86 app source, unchanged, on the ARM64 app_api.
 upas src/apps/fat16_app.pas
 ld.lld -N -Ttext=0x100000000 -e _start -o "$OUT/fat16.elf" \
@@ -73,6 +76,7 @@ mkfs.fat -F 16 -C "$OUT/disk.img" 16384 >/dev/null
 printf 'Hello from the FAT16 volume on virtio-blk' > "$OUT/hello.txt"
 mcopy -i "$OUT/disk.img" "$OUT/hello.txt" ::/HELLO.TXT
 mcopy -i "$OUT/disk.img" "$OUT/diskapp.elf" ::/DISKAPP.ELF
+mcopy -i "$OUT/disk.img" "$OUT/echo.elf" ::/ECHO.ELF
 # 64 KiB of (offset mod 251), for the read-throughput check.
 python3 -c "import sys; sys.stdout.buffer.write(bytes(i % 251 for i in range(65536)))" > "$OUT/big.bin"
 mcopy -i "$OUT/disk.img" "$OUT/big.bin" ::/BIG.BIN

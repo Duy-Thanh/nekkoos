@@ -204,6 +204,12 @@ function Arm64_IrqAcknowledge: Cardinal;
 procedure Arm64_IrqEnd(iar: Cardinal);
 procedure Arm64_TimerTick;
 
+const
+  ARM64_UART_INTID = 33;   { PL011 on QEMU virt: SPI 1 }
+{ Next byte the UART received, if any. Called from the UART interrupt. }
+function Arm64_UartReadByte(out b: Byte): Boolean;
+procedure Arm64_UartClearInterrupt;
+
 implementation
 
 uses arch_interface, pmm;
@@ -212,6 +218,11 @@ const
   UART_BASE = QWord($09000000);
   UART_FR   = $18;
   UART_FR_TXFF = $20;
+  UART_FR_RXFE = $10;
+  UART_IMSC = $038;
+  UART_ICR  = $044;
+  UART_RXIM = $10;
+  UART_RTIM = $40;
 
   { Saved register frame, in QWords from the frame pointer: x0..x30 at 0..30.
     Syscall number in x8, arguments x0..x4, results x0 and x1. }
@@ -355,6 +366,13 @@ begin
   Arch_WriteMmio32(GICD_BASE + GICD_CTLR, 0);
   { Enable the EL1 physical timer PPI (INTID 30) in the banked ISENABLER0. }
   Arch_WriteMmio32(GICD_BASE + GICD_ISENABLER0, Cardinal(1) shl TIMER_INTID);
+  { UART receive interrupt: enable SPI 33, route it to CPU 0 (ITARGETSR byte
+    33 = bit 0), then unmask receive and receive-timeout in the PL011. }
+  Arch_WriteMmio32(GICD_BASE + GICD_ISENABLER0 + 4, Cardinal(1) shl (ARM64_UART_INTID - 32));
+  Arch_WriteMmio32(GICD_BASE + $800 + 32,
+    Arch_ReadMmio32(GICD_BASE + $800 + 32) or (Cardinal(1) shl 8));
+  Arch_WriteMmio32(UART_BASE + UART_ICR, $7FF);
+  Arch_WriteMmio32(UART_BASE + UART_IMSC, UART_RXIM or UART_RTIM);
   Arch_WriteMmio32(GICD_BASE + GICD_CTLR, 1);
   Arch_WriteMmio32(GICC_BASE + GICC_PMR, $FF);
   Arch_WriteMmio32(GICC_BASE + GICC_CTLR, 1);
@@ -379,6 +397,18 @@ end;
 procedure Arm64_IrqEnd(iar: Cardinal);
 begin
   if (iar and $3FF) < 1020 then Arch_WriteMmio32(GICC_BASE + GICC_EOIR, iar);
+end;
+
+function Arm64_UartReadByte(out b: Byte): Boolean;
+begin
+  b := 0;
+  Arm64_UartReadByte := (Arch_ReadMmio32(UART_BASE + UART_FR) and UART_FR_RXFE) = 0;
+  if Arm64_UartReadByte then b := Byte(Arch_ReadMmio32(UART_BASE) and $FF);
+end;
+
+procedure Arm64_UartClearInterrupt;
+begin
+  Arch_WriteMmio32(UART_BASE + UART_ICR, UART_RXIM or UART_RTIM);
 end;
 
 procedure Arm64_TimerTick;

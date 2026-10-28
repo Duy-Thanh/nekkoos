@@ -234,6 +234,17 @@ begin
   end
   else
     Puts('arm64: reading DISKAPP.ELF FAILED'#10);
+  size := 0;
+  data := Fat16K_ReadFile(W('ECHO.ELF'), @size, -1);
+  if (data <> nil) and (size > 0) then
+  begin
+    if ElfLoader_Spawn(data, size, W('ECHO'), 5) < 0 then
+      Puts('arm64: ECHO.ELF rejected by the loader'#10);
+    Heap_Free(data);
+  end
+  else
+    Puts('arm64: reading ECHO.ELF FAILED'#10);
+
   { Throughput: a 64 KiB file through FAT16.EXE -> ATA.EXE. }
   size := 0;
   t0 := Hal_Ticks;

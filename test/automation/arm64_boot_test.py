@@ -3,6 +3,7 @@
 import subprocess, sys, time
 
 EXPECT = [
+    "echo: hi nekko\n",
     "snoop: raw disk request refused by the kernel OK",
     "arm64 EL0: mapphys MMIO read OK",
     "[+] VBLK daemon (EL0) ready, sectors: ",
@@ -28,9 +29,16 @@ EXPECT = [
 BAD = ["UNIMPLEMENTED", "FATAL"]
 
 p = subprocess.Popen(
-    ["./run_arm64.sh"],
+    ["./run_arm64.sh"], stdin=subprocess.PIPE,
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-time.sleep(14)
+# Keyboard = serial console: type a line for ECHO.ELF once it is running,
+# one byte at a time, with a DEL (backspace) in the middle.
+time.sleep(6)
+for ch in "hi nekko\x7fo\r":
+    p.stdin.write(ch)
+    p.stdin.flush()
+    time.sleep(0.05)
+time.sleep(8)
 p.kill()
 out = p.communicate()[0].replace("\r", "")
 ok = True
